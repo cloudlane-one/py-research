@@ -1,0 +1,19 @@
+{
+  "recommendations": [
+    "eamodio.gitlens",
+    "yzhang.markdown-all-in-one",
+    "redhat.vscode-yaml",
+    "tamasfe.even-better-toml",
+    "janisdd.vscode-edit-csv",
+    "grapecity.gc-excelviewer",
+    "ms-python.black-formatter",
+    "ms-toolsai.jupyter",
+    "ms-python.python",
+    "donjayamanne.python-environment-manager",
+    "github.vscode-pull-request-github",
+    "dotenv.dotenv-vscode",
+    "ms-toolsai.datawrangler",
+    "charliermarsh.ruff",
+    "tomoyukim.vscode-mermaid-editor"
+  ]
+}

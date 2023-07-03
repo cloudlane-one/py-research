@@ -1,0 +1,24 @@
+# Untracked top-level directories
+/docs-html
+/docs-pdf
+/target
+
+# Untracked directory names (on any level)
+.cache/
+local/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Untracked file types
+*.pdf
+*.pyc
+*.gz
+*.local.*
+
+# Env files
+.env*
+
+# Running cross-platform with the same lock file is error-prone
+/poetry.lock

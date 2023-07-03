@@ -1,0 +1,32 @@
+{
+    "python.formatting.provider": "black",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+        "source.organizeImports": true
+    },
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.extraPaths": [
+        "${workspaceFolder}\\src"
+    ],
+    "terminal.integrated.env.windows": {
+        "PYTHONPATH": "${workspaceFolder}\\src"
+    },
+    "terminal.integrated.env.linux": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+    },
+    "csv-preview.separator": ";",
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "[json]": {
+        "editor.defaultFormatter": "vscode.json-language-features"
+    },
+    "python.linting.lintOnSave": true,
+    "python.linting.enabled": true,
+    "dotenv.enableAutocloaking": true,
+    "[toml]": {
+        "editor.defaultFormatter": "tamasfe.even-better-toml"
+    },
+    "autoDocstring.docstringFormat": "google-notypes",
+    "[html]": {
+        "editor.defaultFormatter": "vscode.html-language-features"
+    }
+}

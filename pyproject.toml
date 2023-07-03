@@ -1,0 +1,79 @@
+[tool.poetry]
+name = "py-research"
+version = "0.1.0"
+description = "Smooth the corners of Python-based datascience work."
+authors = ["Lorenzo Wormer <l.wormer@pm.me>"]
+readme = "README.md"
+packages = [{ include = "py_research", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+requests = "^2.27.1"
+pandas = "^1.3.5"
+PyYAML = "^6.0"
+openpyxl = "^3.0.9"
+matplotlib = "^3.5.1"
+plotly = "^5.5.0"
+country-converter = "^0.7.4"
+pydantic = "^1.9.0"
+streamlit = "^1.7.0"
+tqdm = "^4.62.3"
+kaleido = "0.2.1"
+customtkinter = "^4.5.10"
+oracledb = "^1.2.2"
+sqlalchemy = "^2.0.7"
+ipywidgets = "^8.0.6"
+strenum = "^0.4.10"
+stqdm = "^0.0.5"
+structlog = "^23.1.0"
+webcolors = "^1.13"
+inflect = "^6.0.4"
+deep-translator = "^1.11.0"
+babel = "^2.12.1"
+numpy = "^1.24.3"
+python-dotenv = "^1.0.0"
+deepmerge = "^1.1.0"
+pdfkit = "^1.0.0"
+imgkit = "^1.2.3"
+
+[tool.poetry.group.dev.dependencies]
+black = "^22.10.0"
+notebook = "^6.5.1"
+pytest = "^7.1.3"
+sphinx = "^5.3.0"
+pygments = "^2.13.0"
+nbsphinx = "^0.8.10"
+myst-parser = "^0.18.1"
+pydata-sphinx-theme = "^0.12.0"
+autodoc-pydantic = "^1.8.0"
+deptry = "^0.11.0"
+ruff = "^0.0.275"
+
+[tool.ruff]
+# Enable following linters:
+# - pycodestyle (`E`, `W`)
+# - Pyflakes (`F`)
+# - mccabe (`C90`)
+# - pep8-naming (`N`)
+# - pydocstyle (`D`)
+# - pyupgrade (`UP`)
+select = ["E", "W", "F", "C90", "N", "D", "UP"]
+
+[tool.ruff.pydocstyle]
+convention = "google"
+
+[tool.ruff.mccabe]
+# Flag errors (`C901`) whenever the complexity level exceeds 5.
+max-complexity = 12
+
+[tool.deptry]
+ignore_unused = ["kaleido", "oracledb", "ipywidgets"]
+known_first_party = ["py_research"]
+
+[tool.pytest.ini_options]
+addopts = ["--import-mode=importlib"]
+pythonpath = ["src"]
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
