@@ -75,7 +75,8 @@ master_doc = "README"
 # This patterns also effect to html_static_path and html_extra_path
 exclude_patterns = [
     ".*",
-    "local",
+    "**/local",
+    "**/.cache",
     "Thumbs.db",
     ".DS_Store",
     "docs-html",
