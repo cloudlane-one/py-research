@@ -8,21 +8,16 @@ packages = [{ include = "py_research", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
-requests = "^2.27.1"
 pandas = "^1.3.5"
 PyYAML = "^6.0"
 openpyxl = "^3.0.9"
-matplotlib = "^3.5.1"
-plotly = "^5.5.0"
 country-converter = "^0.7.4"
 pydantic = "^1.9.0"
 streamlit = "^1.7.0"
 tqdm = "^4.62.3"
 kaleido = "0.2.1"
-customtkinter = "^4.5.10"
 oracledb = "^1.2.2"
 sqlalchemy = "^2.0.7"
-ipywidgets = "^8.0.6"
 strenum = "^0.4.10"
 stqdm = "^0.0.5"
 structlog = "^23.1.0"
@@ -31,14 +26,15 @@ inflect = "^6.0.4"
 deep-translator = "^1.11.0"
 babel = "^2.12.1"
 numpy = "^1.24.3"
-python-dotenv = "^1.0.0"
 deepmerge = "^1.1.0"
 pdfkit = "^1.0.0"
 imgkit = "^1.2.3"
+typing-extensions = "^4.7.1"
 
 [tool.poetry.group.dev.dependencies]
 black = "^22.10.0"
 notebook = "^6.5.1"
+ipywidgets = "^8.0.6"
 pytest = "^7.1.3"
 sphinx = "^5.3.0"
 pygments = "^2.13.0"
@@ -67,7 +63,7 @@ convention = "google"
 max-complexity = 12
 
 [tool.deptry]
-ignore_unused = ["kaleido", "oracledb", "ipywidgets"]
+ignore_unused = ["kaleido", "oracledb", "openpyxl"]
 known_first_party = ["py_research"]
 
 [tool.pytest.ini_options]
