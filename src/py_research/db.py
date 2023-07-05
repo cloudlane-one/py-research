@@ -418,13 +418,13 @@ class DB(dict[str, pd.DataFrame]):
                 self[link_tab]
                 .merge(
                     node_df.loc[node_df["table"] == tabs[0]],
-                    left_on=f"{tabs[0]}.{self[tabs[0].index.name or 'id']}",
+                    left_on=f"{tabs[0]}.{self[tabs[0]].index.name or 'id'}",
                     right_on="db_index",
                 )
                 .rename(columns={"id": "source"})
                 .merge(
                     node_df.loc[node_df["table"] == tabs[1]],
-                    left_on=f"{tabs[1]}.{self[tabs[1].index.name or 'id']}",
+                    left_on=f"{tabs[1]}.{self[tabs[1]].index.name or 'id'}",
                     right_on="db_index",
                 )
                 .rename(columns={"id": "target"})[["source", "target"]]
