@@ -35,15 +35,18 @@ class TableMap:
     for auto-generating row ids via sha256 hashing.
     """
     match_by_arg: bool | str = False
-    """Match this mapped data to target tabl"""
+    """Match this mapped data to target table"""
+
+    ext_maps: "list[TableMap] | None" = None
+    """Map attributes on the same level to different tables"""
 
 
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
 
 
-def _relmap_to_row(
+def _resolve_relmap(
     node: dict, mapping: RelationalMap
-) -> tuple[pd.Series, dict[str, SubMap]]:
+) -> tuple[pd.Series, dict[str | None, SubMap]]:
     """Extract hierarchical data into set of scalar attributes + linked data objects."""
     # Split the current mapping level into groups based on type.
     target_groups: dict[type, dict] = {
@@ -58,7 +61,7 @@ def _relmap_to_row(
     }  # type: ignore
 
     # First list and handle all scalars, hence data attributes on the current level,
-    # whch are to be mapped to table columns.
+    # which are to be mapped to table columns.
     scalars = dict(
         chain(
             (target_groups.get(str) or {}).items(),
@@ -85,7 +88,7 @@ def _relmap_to_row(
     for attr, sub_map in (target_groups.get(dict) or {}).items():
         sub_node = node.get(attr)
         if isinstance(sub_node, dict):
-            sub_row, sub_links = _relmap_to_row(sub_node, cast(dict, sub_map))
+            sub_row, sub_links = _resolve_relmap(sub_node, cast(dict, sub_map))
             cols = {**cols, **sub_row}
             links = {**links, **sub_links}
 
@@ -110,11 +113,11 @@ NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
 NodeAttributes: TypeAlias = dict[str, str]
 
 
-def _links_to_relational(
+def _resolve_links(
     mapping: TableMap,
     database: DictDB,
     row: pd.Series,
-    links: dict[str, SubMap],
+    links: dict[str | None, SubMap],
 ):
     # Handle nested data, which is to be extracted into separate tables and linked.
     for attr, (sub_data, sub_maps) in links.items():
@@ -138,7 +141,7 @@ def _links_to_relational(
                     rel_row = _nested_to_relational(sub_data_item, sub_map, database)
 
                     link_row, _ = (
-                        _relmap_to_row(sub_data_item, sub_map.link_map)
+                        _resolve_relmap(sub_data_item, sub_map.link_map)
                         if sub_map.link_map is not None
                         else (pd.Series(dtype=object), None)
                     )
@@ -162,7 +165,8 @@ def _nested_to_relational(
         database[mapping.table] = {}
 
     # Extract row of data attributes and links to other objects.
-    row, links = None, None
+    row = None
+    links: dict[str | None, SubMap] = {}
     # If mapping is only a string, extract the target attr directly.
     if isinstance(data, str):
         assert isinstance(mapping.map, str)
@@ -173,15 +177,20 @@ def _nested_to_relational(
                 {k: v for k, v in data.items() if k in mapping.map}, dtype=object
             )
         elif isinstance(mapping.map, dict):
-            row, links = _relmap_to_row(data, mapping.map)
+            row, links = _resolve_relmap(data, mapping.map)
             # After all data attributes were extracted, generate the row id.
             row.name = _gen_row_id(row, mapping.hash_id_subset)
-            _links_to_relational(mapping, database, row, links)
         else:
             raise TypeError(
                 f"Unsupported mapping type {type(mapping.map)}"
                 f" for data of type {type(data)}"
             )
+
+    if mapping.ext_maps is not None:
+        assert isinstance(data, dict)
+        links = {**links, **{None: (data, m) for m in mapping.ext_maps}}
+
+    _resolve_links(mapping, database, row, links)
 
     existing_row = None
     if mapping.match_by_arg is True:
