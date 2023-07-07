@@ -27,6 +27,8 @@ def gen_int_hash(x: Any) -> int:
             return _hash_sequence(x)
         case dict():
             return sum(_hash_sequence(item) for item in x.items())
+        case None:
+            return 0
         case _:
             if hasattr(x, "__getstate__"):
                 state = x.__getstate__()
