@@ -26,7 +26,7 @@ class TableMap:
     """Defines how to map a data item to the database."""
 
     table: str
-    map: RelationalMap
+    map: str | RelationalMap
     name: str | None = None
     link_map: AttrMap | None = None
 
@@ -34,12 +34,16 @@ class TableMap:
     """Supply a list of column names as a subset of all columns to use
     for auto-generating row ids via sha256 hashing.
     """
+    match_by_arg: bool | str = False
+    """Match this mapped data to target tabl"""
 
 
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
 
 
-def _to_row(node: dict, mapping: RelationalMap) -> tuple[pd.Series, dict[str, SubMap]]:
+def _relmap_to_row(
+    node: dict, mapping: RelationalMap
+) -> tuple[pd.Series, dict[str, SubMap]]:
     """Extract hierarchical data into set of scalar attributes + linked data objects."""
     # Split the current mapping level into groups based on type.
     target_groups: dict[type, dict] = {
@@ -81,21 +85,21 @@ def _to_row(node: dict, mapping: RelationalMap) -> tuple[pd.Series, dict[str, Su
     for attr, sub_map in (target_groups.get(dict) or {}).items():
         sub_node = node.get(attr)
         if isinstance(sub_node, dict):
-            sub_row, sub_links = _to_row(sub_node, cast(dict, sub_map))
+            sub_row, sub_links = _relmap_to_row(sub_node, cast(dict, sub_map))
             cols = {**cols, **sub_row}
             links = {**links, **sub_links}
 
     return pd.Series(cols, dtype=object), links
 
 
-def _assign_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> pd.Series:
+def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
     """Generate and assign row id."""
     hash_row = (
         row[list(set(hash_subset) & set(row.index))] if hash_subset is not None else row
     )
     row_id = gen_str_hash(hash_row.to_dict())
 
-    return row.rename(row_id)
+    return row_id
 
 
 DictDB = dict[str, dict[Hashable, dict[str, Any]]]
@@ -106,22 +110,12 @@ NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
 NodeAttributes: TypeAlias = dict[str, str]
 
 
-def _nested_to_relational(
-    data: dict,
+def _links_to_relational(
     mapping: TableMap,
     database: DictDB,
-) -> pd.Series:
-    # Initialize new table as defined by mapping, if it doesn't exist yet.
-    if mapping.table not in database:
-        database[mapping.table] = {}
-
-    # Extract row of data attributes and links to other objects.
-    row, links = _to_row(data, mapping.map)
-
-    # After all data attributes were extracted, set row id from data
-    # or generate it.
-    row = _assign_row_id(row, mapping.hash_id_subset)
-
+    row: pd.Series,
+    links: dict[str, SubMap],
+):
     # Handle nested data, which is to be extracted into separate tables and linked.
     for attr, (sub_data, sub_maps) in links.items():
         # Get info about the link table to use from mapping
@@ -144,7 +138,7 @@ def _nested_to_relational(
                     rel_row = _nested_to_relational(sub_data_item, sub_map, database)
 
                     link_row, _ = (
-                        _to_row(sub_data_item, sub_map.link_map)
+                        _relmap_to_row(sub_data_item, sub_map.link_map)
                         if sub_map.link_map is not None
                         else (pd.Series(dtype=object), None)
                     )
@@ -153,27 +147,66 @@ def _nested_to_relational(
                     link_row[f"{sub_map.table}.id"] = rel_row.name
                     link_row["attribute"] = attr
 
-                    link_row = _assign_row_id(link_row)
+                    link_row.name = _gen_row_id(link_row)
 
                     database[link_table][link_row.name] = link_row.to_dict()
 
-    if row.name is not None:
+
+def _nested_to_relational(
+    data: dict | str,
+    mapping: TableMap,
+    database: DictDB,
+) -> pd.Series:
+    # Initialize new table as defined by mapping, if it doesn't exist yet.
+    if mapping.table not in database:
+        database[mapping.table] = {}
+
+    # Extract row of data attributes and links to other objects.
+    row, links = None, None
+    # If mapping is only a string, extract the target attr directly.
+    if isinstance(data, str):
+        assert isinstance(mapping.map, str)
+        row = pd.Series({mapping.map: data}, dtype=object)
+    else:
+        assert isinstance(mapping.map, dict)
+        row, links = _relmap_to_row(data, mapping.map)
+        # After all data attributes were extracted, generate the row id.
+        row.name = _gen_row_id(row, mapping.hash_id_subset)
+        _links_to_relational(mapping, database, row, links)
+
+    existing_row = None
+    if mapping.match_by_arg is True:
         # Make sure any existing data in database is consistent with new data.
-        if row.name in database[mapping.table]:
-            existing_row = pd.Series(database[mapping.table][row.name], dtype=object)
-            existing_attrs = set(k for k in existing_row.keys() if pd.notna(k))
-            new_attrs = set(k for k in row if pd.notna(k))
-            intersect = existing_attrs & new_attrs
+        match_by = mapping.match_by_arg
+        if mapping.match_by_arg is True:
+            assert isinstance(mapping.map, str)
+            match_by = mapping.map
+        match_by = cast(str, match_by)
+        # Match to existing row or create new one.
+        existing_rows = list(
+            filter(
+                lambda r: r[match_by] == r[match_by], database[mapping.table].values()
+            )
+        )
+        if len(existing_rows) > 0:
+            existing_row = existing_rows[0]
+    else:
+        existing_row = pd.Series(database[mapping.table].get(row.name), dtype=object)
 
-            for k in intersect:
-                assert existing_row[k] == row[k]
+    if existing_row is not None:
+        existing_attrs = set(k for k in existing_row.keys() if pd.notna(k))
+        new_attrs = set(k for k in row if pd.notna(k))
+        intersect = existing_attrs & new_attrs
 
-            merged_row = pd.concat([existing_row, row])
-            merged_row.name = row.name
-            row = merged_row
+        for k in intersect:
+            assert existing_row[k] == row[k]
 
-        # Add row to database table.
-        database[mapping.table][row.name] = row.to_dict()
+        merged_row = pd.concat([existing_row, row])
+        merged_row.name = row.name or existing_row.name
+        row = merged_row
+
+    # Add row to database table or update it.
+    database[mapping.table][row.name] = row.to_dict()
 
     # Return row (used for recursion).
     return row
