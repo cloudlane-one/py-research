@@ -34,7 +34,7 @@ class TableMap:
     """Supply a list of column names as a subset of all columns to use
     for auto-generating row ids via sha256 hashing.
     """
-    match_by_arg: bool | str = False
+    match_by_attr: bool | str = False
     """Match this mapped data to target table"""
 
     ext_maps: "list[TableMap] | None" = None
@@ -179,12 +179,13 @@ def _nested_to_relational(
         elif isinstance(mapping.map, dict):
             row, links = _resolve_relmap(data, mapping.map)
             # After all data attributes were extracted, generate the row id.
-            row.name = _gen_row_id(row, mapping.hash_id_subset)
         else:
             raise TypeError(
                 f"Unsupported mapping type {type(mapping.map)}"
                 f" for data of type {type(data)}"
             )
+
+    row.name = _gen_row_id(row, mapping.hash_id_subset)
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
@@ -192,22 +193,24 @@ def _nested_to_relational(
 
     _resolve_links(mapping, database, row, links)
 
-    existing_row = None
-    if mapping.match_by_arg is True:
+    existing_row: pd.Series | None = None
+    if mapping.match_by_attr is True:
         # Make sure any existing data in database is consistent with new data.
-        match_by = mapping.match_by_arg
-        if mapping.match_by_arg is True:
+        match_by = mapping.match_by_attr
+        if mapping.match_by_attr is True:
             assert isinstance(mapping.map, str)
             match_by = mapping.map
         match_by = cast(str, match_by)
         # Match to existing row or create new one.
-        existing_rows = list(
+        existing_rows: list[pd.Series] = list(
             filter(
                 lambda r: r[match_by] == r[match_by], database[mapping.table].values()
             )
         )
         if len(existing_rows) > 0:
             existing_row = existing_rows[0]
+            # Take over the id of the existing row.
+            row.name = existing_row.name
     else:
         existing_row = pd.Series(database[mapping.table].get(row.name), dtype=object)
 
@@ -220,7 +223,7 @@ def _nested_to_relational(
             assert existing_row[k] == row[k]
 
         merged_row = pd.concat([existing_row, row])
-        merged_row.name = row.name or existing_row.name
+        merged_row.name = row.name
         row = merged_row
 
     # Add row to database table or update it.
