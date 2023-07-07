@@ -8,7 +8,7 @@ import sys
 from collections.abc import Iterable, Mapping
 from functools import wraps
 from logging import StreamHandler
-from typing import IO, Literal
+from typing import IO, Literal, TypeVar, cast
 
 import structlog
 from stqdm import stqdm
@@ -48,8 +48,11 @@ def _check_streamlit():
     return use_streamlit
 
 
+T = TypeVar("T")
+
+
 def tqdm(
-    iterable: Iterable,
+    iterable: Iterable[T],
     desc: str | None = None,
     total: float | None = None,
     leave: bool | None = True,
@@ -76,7 +79,7 @@ def tqdm(
     delay: float | None = 0,
     gui: bool = False,
     **other_kwargs,
-) -> base_tqdm:
+) -> base_tqdm[T]:
     """Return a tqdm instace adapted to the current environment.
 
     (Terminal, Jupyter or Streamlit)
@@ -112,10 +115,8 @@ def tqdm(
     )
 
     res_tqdm = stqdm(**kwargs) if _check_streamlit() else atqdm(**kwargs)  # type: ignore  # noqa: E501
-
     TqdmHandler.tqdm = res_tqdm
-
-    return res_tqdm
+    return cast(base_tqdm[T], res_tqdm)
 
 
 def configure_logging(purpose: Literal["status", "report", "log"] = "status") -> None:
