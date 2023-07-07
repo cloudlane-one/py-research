@@ -26,7 +26,7 @@ class TableMap:
     """Defines how to map a data item to the database."""
 
     table: str
-    map: str | RelationalMap
+    map: RelationalMap | set[str] | str
     name: str | None = None
     link_map: AttrMap | None = None
 
@@ -168,11 +168,20 @@ def _nested_to_relational(
         assert isinstance(mapping.map, str)
         row = pd.Series({mapping.map: data}, dtype=object)
     else:
-        assert isinstance(mapping.map, dict)
-        row, links = _relmap_to_row(data, mapping.map)
-        # After all data attributes were extracted, generate the row id.
-        row.name = _gen_row_id(row, mapping.hash_id_subset)
-        _links_to_relational(mapping, database, row, links)
+        if isinstance(mapping.map, set):
+            row = pd.Series(
+                {k: v for k, v in data.items() if k in mapping.map}, dtype=object
+            )
+        elif isinstance(mapping.map, dict):
+            row, links = _relmap_to_row(data, mapping.map)
+            # After all data attributes were extracted, generate the row id.
+            row.name = _gen_row_id(row, mapping.hash_id_subset)
+            _links_to_relational(mapping, database, row, links)
+        else:
+            raise TypeError(
+                f"Unsupported mapping type {type(mapping.map)}"
+                f" for data of type {type(data)}"
+            )
 
     existing_row = None
     if mapping.match_by_arg is True:
