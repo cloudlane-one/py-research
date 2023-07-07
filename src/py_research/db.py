@@ -46,7 +46,7 @@ SubMap = tuple[dict | list, TableMap | list[TableMap]]
 
 def _resolve_relmap(
     node: dict, mapping: RelationalMap
-) -> tuple[pd.Series, dict[str | None, SubMap]]:
+) -> tuple[pd.Series, dict[str, SubMap]]:
     """Extract hierarchical data into set of scalar attributes + linked data objects."""
     # Split the current mapping level into groups based on type.
     target_groups: dict[type, dict] = {
@@ -117,10 +117,10 @@ def _resolve_links(
     mapping: TableMap,
     database: DictDB,
     row: pd.Series,
-    links: dict[str | None, SubMap],
+    links: list[tuple[str | None, SubMap]],
 ):
     # Handle nested data, which is to be extracted into separate tables and linked.
-    for attr, (sub_data, sub_maps) in links.items():
+    for attr, (sub_data, sub_maps) in links:
         # Get info about the link table to use from mapping
         # (or generate a new for the link table).
 
@@ -166,7 +166,7 @@ def _nested_to_relational(
 
     # Extract row of data attributes and links to other objects.
     row = None
-    links: dict[str | None, SubMap] = {}
+    links: list[tuple[str | None, SubMap]] = []
     # If mapping is only a string, extract the target attr directly.
     if isinstance(data, str):
         assert isinstance(mapping.map, str)
@@ -177,7 +177,8 @@ def _nested_to_relational(
                 {k: v for k, v in data.items() if k in mapping.map}, dtype=object
             )
         elif isinstance(mapping.map, dict):
-            row, links = _resolve_relmap(data, mapping.map)
+            row, link_dict = _resolve_relmap(data, mapping.map)
+            links = [*links, *link_dict.items()]
             # After all data attributes were extracted, generate the row id.
         else:
             raise TypeError(
@@ -189,7 +190,7 @@ def _nested_to_relational(
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
-        links = {**links, **{None: (data, m) for m in mapping.ext_maps}}
+        links = [*links, *((None, (data, m)) for m in mapping.ext_maps)]
 
     _resolve_links(mapping, database, row, links)
 
