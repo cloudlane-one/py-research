@@ -213,7 +213,7 @@ def _nested_to_relational(
 
     if existing_row is not None:
         existing_attrs = set(k for k in existing_row.keys() if pd.notna(k))
-        new_attrs = set(k for k in row if pd.notna(k))
+        new_attrs = set(k for k in row.keys() if pd.notna(k))
         intersect = existing_attrs & new_attrs
 
         for k in intersect:
