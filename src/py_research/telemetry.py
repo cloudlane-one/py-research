@@ -79,7 +79,7 @@ def tqdm(
     delay: float | None = 0,
     gui: bool = False,
     **other_kwargs,
-) -> base_tqdm[T]:
+) -> Iterable[T]:
     """Return a tqdm instace adapted to the current environment.
 
     (Terminal, Jupyter or Streamlit)
@@ -116,7 +116,7 @@ def tqdm(
 
     res_tqdm = stqdm(**kwargs) if _check_streamlit() else atqdm(**kwargs)  # type: ignore  # noqa: E501
     TqdmHandler.tqdm = res_tqdm
-    return cast(base_tqdm[T], res_tqdm)
+    return cast(Iterable[T], res_tqdm)
 
 
 def configure_logging(purpose: Literal["status", "report", "log"] = "status") -> None:
