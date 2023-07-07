@@ -29,7 +29,15 @@ def gen_int_hash(x: Any) -> int:
             return sum(_hash_sequence(item) for item in x.items())
         case _:
             if hasattr(x, "__getstate__"):
-                return sum(gen_int_hash(item) for item in x.__getstate__())
+                state = x.__getstate__()
+                state = state if isinstance(state, tuple) else (state,)
+                state_dicts = [s for s in state if isinstance(s, dict)]
+
+                if len(state_dicts) > 0:
+                    return sum(
+                        sum(_hash_sequence(item) for item in s.items())
+                        for s in state_dicts
+                    )
             if hasattr(x, "__getnewargs_ex__"):
                 args, kwargs = x.__getnewargs_ex__()
                 return sum(gen_int_hash(item) for item in args) + sum(
