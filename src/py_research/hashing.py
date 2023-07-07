@@ -13,7 +13,7 @@ from pandas.util import hash_pandas_object
 
 
 def _hash_sequence(s: Sequence) -> int:
-    return reduce(lambda x, y: hash(str(x) + str(hash(y))), s, 0)
+    return reduce(lambda x, y: gen_int_hash(str(x) + str(gen_int_hash(y))), s, 0)
 
 
 def gen_int_hash(x: Any) -> int:
