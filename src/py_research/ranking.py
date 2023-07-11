@@ -1,13 +1,10 @@
 """Functions for ranking entities by the nature and quantity of their publications."""
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 
-from py_research.colors import default_highlights, to_bg_color
 from py_research.intl import get_localization
-from py_research.tables import ResultTable, TableStyle
 
 RankMode = Literal["ascending", "descending"]
 
