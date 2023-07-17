@@ -6,7 +6,7 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from functools import cached_property, partial
+from functools import partial
 from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
@@ -188,7 +188,7 @@ if texts_file_path.is_file():
 
 def _get_default_locale() -> Locale:
     try:
-        return Locale.parse(normalize(getlocale()[0] or "en_us"), sep="_")
+        return Locale.parse(normalize(getlocale()[0] or "en"), sep="_")
     except UnknownLocaleError:
         return Locale("en")
 
@@ -247,7 +247,6 @@ class Localization:
             self.__translator,
         )
 
-    @cached_property
     def locale(self) -> Locale:
         """Return first locale found up the parent tree or default locale."""
         if self.local_locale is not None:
@@ -278,7 +277,6 @@ class Localization:
 
         return parent_overrides.merge(self_overrides)
 
-    @cached_property
     def overrides(self) -> Overrides:
         """Return merger of all the parents' overrides and self's overrides."""
         return self.get_overrides(self.locale)
