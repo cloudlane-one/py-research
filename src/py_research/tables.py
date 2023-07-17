@@ -116,7 +116,17 @@ class ResultTable:
     @property
     def html_description(self, full_doc: bool = True) -> str:
         """HTML description for table filters and highlights."""
-        highlights = [(h.name, h.css) for h in self.styles]
+        highlights = [
+            (
+                h.name,
+                "; ".join(f"{prop}: {val}" for prop, val in h.css.items())
+                if isinstance(h.css, dict)
+                else str(getattr(h.css, "__name__"))
+                if hasattr(h.css, "__name__")
+                else None,
+            )
+            for h in self.styles
+        ]
         filters = [
             (h.name, h.hide_rows)
             for h in self.styles
@@ -146,7 +156,7 @@ class ResultTable:
                     [
                         '<li style="margin-bottom: 0.5rem;">'
                         f'<span style="display: inline-block; {h};">{h}</span>{f}</li>'
-                        for f, h in highlights if f
+                        for f, h in highlights if f is not None and h is not None
                     ]
                 )
             }
