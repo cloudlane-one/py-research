@@ -326,7 +326,7 @@ class Localization:
     ) -> tuple[str, bool, bool]:
         matched = False
 
-        overrides = self.overrides if locale is None else self.get_overrides(locale)
+        overrides = self.get_overrides(locale or self.locale)
         translations = overrides.get_labels(context)
 
         matched_ctx = False
