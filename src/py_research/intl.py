@@ -11,7 +11,15 @@ from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, Protocol, TypeAlias, runtime_checkable
+from typing import (
+    Any,
+    Literal,
+    ParamSpec,
+    Protocol,
+    TypeAlias,
+    overload,
+    runtime_checkable,
+)
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -503,9 +511,15 @@ class Localization:
             case _:
                 return str(v)
 
-    def message(
-        self, msg: str | DynamicMessage[P], *args: P.args, **kwargs: P.kwargs
-    ) -> str:
+    @overload
+    def message(self, msg: str, *args: Any, **kwargs: Any) -> str:
+        ...
+
+    @overload
+    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
+        ...
+
+    def message(self, msg: str | DynamicMessage[P], *args: Any, **kwargs: Any) -> str:
         """Localize given text."""
         if self.show_raw:
             kwd_str = (
@@ -515,12 +529,13 @@ class Localization:
             )
             return f"text('{msg if isinstance(msg, str) else msg.__name__}'{kwd_str})"
 
-        sub_text, matched, _ = self.__apply_translations(msg, args, kwargs)
+        sub_text, matched, _ = self.__apply_translations(msg, list(args), kwargs)
 
         if self.locale != Locale("en") and not matched:
             sub_text, matched, _ = self.__apply_translations(
-                msg, args, kwargs, locale=Locale("en")
+                msg, list(args), kwargs, locale=Locale("en")
             )
+
             sub_text = self.__machine_translate(sub_text)
 
         return sub_text
