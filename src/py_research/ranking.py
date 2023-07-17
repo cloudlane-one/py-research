@@ -4,7 +4,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from py_research.intl import get_localization
+from py_research.intl import DynamicMessage, get_localization
 
 RankMode = Literal["ascending", "descending"]
 
@@ -69,34 +69,26 @@ def create_ranking_filter(
                 (
                     f"{cutoff} highest-ranked"
                     + (
-                        f" {loc.label(rank_only, 'col_title')}"
+                        f" {rank_only}"
                         if rank_only is not None and len(rank_only) <= 20
                         else ""
                     )
-                    + f" according to '{loc.label(rank_by, 'col_title')}'"
+                    + f" according to '{rank_by}'"
                     + f" ({sort_order})"
                     + (
-                        f", only ranking {loc.label(rank_only, 'col_title')}"
+                        f", only ranking {rank_only}"
                         if rank_only is not None and len(rank_only) > 20
                         else ""
                     )
                 ),
-                (
-                    f"only showing {loc.label(show_only, 'col_title')}"
-                    if show_only is not None
-                    else ""
-                ),
-                (
-                    f"always showing {loc.label(show_always, 'col_title')}"
-                    if show_always is not None
-                    else ""
-                ),
+                (f"only showing {show_only}" if show_only is not None else ""),
+                (f"always showing {show_always}" if show_always is not None else ""),
             ]
             if s
         )
 
     desc = loc.message(
-        _filter_explanation,
+        DynamicMessage(_filter_explanation, context="col_title"),
         cutoff_rank,
         str(rank_by.name),
         sort_order,
