@@ -341,9 +341,9 @@ class Localization:
 
                 if replace is not None:
                     if isinstance(replace, str):
-                        sub = replace.format(label)
+                        sub = replace.format(sub)
                     else:
-                        sub = replace(label)
+                        sub = replace(sub)
 
                     matched = True
                     if ctx is not None:
