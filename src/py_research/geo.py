@@ -299,7 +299,7 @@ def gen_flag_url(cc: pd.Series, width: int) -> pd.Series:
     """Get the URL of a small flag image for a given country code."""
     return (
         "https://flagcdn.com/w"
-        + str(flag_sizes.loc[flag_sizes < width].max())
+        + str(flag_sizes.loc[flag_sizes > width].min())
         + "/"
         + countries_to_scheme(cc, GeoScheme.cc_iso2).str.lower()
         + ".png"
