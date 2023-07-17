@@ -35,7 +35,7 @@ from deep_translator import GoogleTranslator
 from deepmerge import always_merger
 from pydantic import ConfigDict, parse_obj_as
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self, TypeVarTuple, Unpack
+from typing_extensions import Self
 from yaml import CLoader, load
 
 from py_research.caching import get_cache
@@ -128,8 +128,25 @@ class Template:
     param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
 
 
-Kwargs = TypeVarTuple("Kwargs")
-Translation: TypeAlias = str | Template | Callable[[str, Unpack[Kwargs]], str]
+@runtime_checkable
+class TranslationFunc:
+    """DDynamically translate a text with optional args."""
+
+    @overload
+    def __call__(self, text: str) -> str:
+        ...
+
+    @overload
+    def __call__(self, text: str, combined_args: dict[str | int, Any]) -> str:
+        ...
+
+    def __call__(  # noqa: D102
+        self, text: str, combined_args: dict[str | int, Any] | None = None
+    ) -> str:
+        ...
+
+
+Translation: TypeAlias = str | Template | TranslationFunc
 TranslateRule: TypeAlias = (
     dict[str, Translation] | tuple[re.Pattern | tuple[str, ...], Translation]
 )
@@ -352,27 +369,18 @@ class Localization:
 
     def __apply_translations(
         self,
-        msg: str | DynamicMessage,
-        args: list | None = None,
-        kwargs: dict[str, Any] | None = None,
+        search: str,
+        text: str,
+        combined_args: dict[str | int, Any] | None = None,
         context: str | None = None,
         locale: Locale | None = None,
     ) -> tuple[str, bool, bool]:
-        args = args or []
-        kwargs = kwargs or {}
+        combined_args = combined_args or {}
 
         matched = False
 
         overrides = self.overrides if locale is None else self.get_overrides(locale)
         translations = overrides.get_translations(context)
-
-        combined_args = {**dict(enumerate(args)), **kwargs}
-
-        # As a default fallback, template out the original text with english locale.
-        sub_text = self.__apply_template(
-            Template(msg), combined_args, locale=Locale("en")
-        )
-        search = msg if isinstance(msg, str) else msg.__name__
 
         matched_ctx = False
         for ctx, transl in translations.items():
@@ -405,15 +413,15 @@ class Localization:
                                 for k, v in tmpl.given_params.items()
                             )
                         ):
-                            sub_text = self.__apply_template(tmpl, combined_args)
+                            text = self.__apply_template(tmpl, combined_args)
                     else:
-                        sub_text = replace(sub_text, **kwargs)
+                        text = replace(text, combined_args)
 
                     matched = True
                     if ctx is not None:
                         matched_ctx = True
 
-        return sub_text, matched, matched_ctx
+        return text, matched, matched_ctx
 
     def label(
         self, label: str, context: str | None = None, locale: Locale | None = None
@@ -422,15 +430,13 @@ class Localization:
         if self.show_raw:
             return f"label('{label}')"
 
-        locale = locale or self.locale
-
         transl, matched, matched_ctx = self.__apply_translations(
-            label, args=[label], context=context, locale=locale
+            label, label, context=context, locale=locale
         )
 
         if locale != Locale("en") and not matched or not matched_ctx:
             transl_en, _, matched_ctx_en = self.__apply_translations(
-                label, args=[label], context=context, locale=Locale("en")
+                label, label, context=context, locale=Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
                 transl = self.__machine_translate(transl_en, locale)
@@ -529,11 +535,20 @@ class Localization:
             )
             return f"text('{msg if isinstance(msg, str) else msg.__name__}'{kwd_str})"
 
-        sub_text, matched, _ = self.__apply_translations(msg, list(args), kwargs)
+        combined_args = {**dict(enumerate(args)), **kwargs}
+        # As a default fallback, template out the original text with english locale.
+        sub_text = self.__apply_template(
+            Template(msg), combined_args, locale=Locale("en")
+        )
+        search = msg if isinstance(msg, str) else msg.__name__
+
+        sub_text, matched, _ = self.__apply_translations(
+            sub_text, search, combined_args
+        )
 
         if self.locale != Locale("en") and not matched:
             sub_text, matched, _ = self.__apply_translations(
-                msg, list(args), kwargs, locale=Locale("en")
+                sub_text, search, combined_args, locale=Locale("en")
             )
 
             sub_text = self.__machine_translate(sub_text)
