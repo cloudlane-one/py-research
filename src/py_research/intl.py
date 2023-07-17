@@ -214,8 +214,12 @@ class Localization:
     local_overrides: Overrides | dict[Locale, Overrides] | None = None
     show_raw: bool = False
 
-    def __machine_translate(self, text: str) -> str:
-        return _cached_translate(self.locale.language, text, self.__translator)
+    def __machine_translate(self, text: str, locale: Locale | None = None) -> str:
+        return _cached_translate(
+            locale.language if locale is not None else self.locale.language,
+            text,
+            self.__translator,
+        )
 
     @cached_property
     def locale(self) -> Locale:
@@ -290,14 +294,15 @@ class Localization:
 
     def __apply_template(
         self,
-        override: Template,
+        tmpl: Template,
         kwds: dict,
         text: str | None = None,
+        locale: Locale | None = None,
     ) -> str:
         intl_kwds = {}
         for k, v in kwds.items():
-            if k in override.kwd_overrides:
-                o = override.kwd_overrides[k]
+            if k in tmpl.kwd_overrides:
+                o = tmpl.kwd_overrides[k]
                 if isinstance(o, Format):
                     intl_kwds[k] = self.value(v, o)
                 elif isinstance(o, dict):
@@ -311,13 +316,13 @@ class Localization:
         intl_kwds = {
             k: v
             if v is not None
-            else self.text(kwds[k])
+            else self.label(kwds[k], locale=locale)
             if isinstance(kwds[k], str)
-            else self.value(kwds[k])
+            else self.value(kwds[k], locale=locale)
             for k, v in intl_kwds.items()
         }
 
-        return override.scaffold.format(text, **{**kwds, **intl_kwds})
+        return tmpl.scaffold.format(text, **{**kwds, **intl_kwds})
 
     def __apply_translations(
         self, text: str, context: str | None, kwds: dict, locale: Locale | None = None
@@ -367,49 +372,39 @@ class Localization:
                     if ctx is not None:
                         matched_ctx = True
 
-            if not matched:
-                sub_text = self.__apply_template(Template(text), kwds)
-
         return sub_text, matched, matched_ctx
 
-    def text(self, text: str, **kwds: Any) -> str:
-        """Localize given text."""
-        if self.show_raw:
-            kwd_str = (
-                (", " + ", ".join(f"{k}={v}" for k, v in kwds.items()))
-                if len(kwds) > 0
-                else ""
-            )
-            return f"text('{text}'{kwd_str})"
-
-        text, matched, _ = self.__apply_translations(text, None, kwds)
-        if not matched:
-            text, matched, _ = self.__apply_translations(text, None, kwds, Locale("en"))
-            text = self.__machine_translate(text if matched else text.format(**kwds))
-
-        return text
-
-    def label(self, label: str, context: str | None = None) -> str:
+    def label(
+        self, label: str, context: str | None = None, locale: Locale | None = None
+    ) -> str:
         """Localize given text."""
         if self.show_raw:
             return f"label('{label}')"
 
-        transl, matched, matched_ctx = self.__apply_translations(label, context, {})
-        if not matched or not matched_ctx:
+        locale = locale or self.locale
+
+        transl, matched, matched_ctx = self.__apply_translations(
+            label, context, {}, locale
+        )
+
+        if locale != Locale("en") and not matched or not matched_ctx:
             transl_en, _, matched_ctx_en = self.__apply_translations(
                 label, context, {}, Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
-                transl = self.__machine_translate(transl_en)
+                transl = self.__machine_translate(transl_en, locale)
 
         return transl
 
-    def value(self, v: Any, options: Format = Format()) -> str:
+    def value(
+        self, v: Any, options: Format = Format(), locale: Locale | None = None
+    ) -> str:
         """Locale-format arbitrary value as string."""
         if self.show_raw:
             return f"value({v})"
 
-        options = self.overrides.format.merge(options)
+        locale = locale or self.locale
+        options = self.get_overrides(locale).format.merge(options)
 
         match (v):
             case float() | Decimal() | int():
@@ -427,7 +422,7 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}%",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
                     case "scientific":
@@ -435,7 +430,7 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}E00",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
                     case "plain" | _:
@@ -443,47 +438,79 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
             case datetime() | pd.Timestamp():
                 return format_datetime(
-                    v, options.datetime_format or "short", locale=self.locale
+                    v, options.datetime_format or "short", locale=locale
                 )
             case date():
-                return format_date(
-                    v, options.datetime_format or "short", locale=self.locale
-                )
+                return format_date(v, options.datetime_format or "short", locale=locale)
             case time():
-                return format_time(
-                    v, options.datetime_format or "short", locale=self.locale
-                )
+                return format_time(v, options.datetime_format or "short", locale=locale)
             case timedelta() | pd.Timedelta():
                 return format_timedelta(
-                    v, format=(options.datetime_format or "short"), locale=self.locale
+                    v, format=(options.datetime_format or "short"), locale=locale
                 )
             case pd.Interval():
-                return format_interval(v.left, v.right, locale=self.locale)
+                return format_interval(v.left, v.right, locale=locale)
             case Country():
                 if (
                     options.country_format == GeoScheme.country_name
                     or options.country_format is None
                 ):
-                    return self.locale.territories.get(
+                    return locale.territories.get(
                         str(v.to(GeoScheme.cc_iso2))
-                    ) or self.text(str(v.to(GeoScheme.country_name)))
+                    ) or self.label(
+                        str(v.to(GeoScheme.country_name)), context="country_name"
+                    )
                 else:
                     return str(v.to(options.country_format))
             case _:
                 return str(v)
 
-    def formatter(self, options: Format = Format()) -> Callable[[Any], str]:
-        """Return a formatting function bound to this locale."""
-        return partial(self.value, options=options)
+    def text(self, text: str, **kwds: Any) -> str:
+        """Localize given text."""
+        if self.show_raw:
+            kwd_str = (
+                (", " + ", ".join(f"{k}={v}" for k, v in kwds.items()))
+                if len(kwds) > 0
+                else ""
+            )
+            return f"text('{text}'{kwd_str})"
 
-    def format_spec(self, typ: type, options: Format = Format()) -> str:
+        sub_text, matched, _ = self.__apply_translations(text, None, kwds)
+
+        if self.locale != Locale("en") and not matched:
+            sub_text, matched, _ = self.__apply_translations(
+                text, None, kwds, Locale("en")
+            )
+
+            if not matched:
+                # If no manual translation could be found for requested locale, template
+                # out the original text with english labels and formats, then translate
+                # in its entirety.
+                sub_text = self.__apply_template(
+                    Template(text), kwds, locale=Locale("en")
+                )
+
+            sub_text = self.__machine_translate(sub_text)
+
+        return text
+
+    def formatter(
+        self, options: Format = Format(), locale: Locale | None = None
+    ) -> Callable[[Any], str]:
+        """Return a formatting function bound to this locale."""
+        return partial(self.value, options=options, locale=locale)
+
+    def format_spec(
+        self, typ: type, options: Format = Format(), locale: Locale | None = None
+    ) -> str:
         """Return locale-aware format-string for given type."""
-        options = self.overrides.format.merge(options)
+        locale = locale or self.locale
+        options = self.get_overrides(locale).format.merge(options)
 
         if issubclass(typ, int):
             match (options.decimal_notation):
@@ -503,18 +530,16 @@ class Localization:
                     return f".{options.decimal_min_digits or 3}f"
         elif issubclass(typ, datetime | pd.Timestamp):
             opt = options.datetime_format or "medium"
-            date_format = _ldml_to_posix[self.locale.date_formats[opt]]
-            time_format = _ldml_to_posix[self.locale.time_formats[opt]]
-            return str.format(
-                self.locale.datetime_formats[opt], date_format, time_format
-            )
+            date_format = _ldml_to_posix[locale.date_formats[opt]]
+            time_format = _ldml_to_posix[locale.time_formats[opt]]
+            return str.format(locale.datetime_formats[opt], date_format, time_format)
         elif issubclass(typ, date):
             return _ldml_to_posix[
-                self.locale.date_formats[options.datetime_format or "medium"]
+                locale.date_formats[options.datetime_format or "medium"]
             ]
         elif issubclass(typ, time):
             return _ldml_to_posix[
-                self.locale.time_formats[options.datetime_format or "medium"]
+                locale.time_formats[options.datetime_format or "medium"]
             ]
         else:
             return ""
