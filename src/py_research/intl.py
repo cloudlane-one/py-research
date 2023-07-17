@@ -444,7 +444,7 @@ class Localization:
             label, context=context, locale=locale
         )
 
-        if locale != Locale("en") and not matched or not matched_ctx:
+        if locale != Locale("en") and (not matched or not matched_ctx):
             transl_en, _, matched_ctx_en = self.__get_label(
                 label, context=context, locale=Locale("en")
             )
