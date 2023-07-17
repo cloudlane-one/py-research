@@ -11,7 +11,16 @@ from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
 from pathlib import Path
-from typing import Any, Generic, Literal, ParamSpec, TypeAlias, overload
+from typing import (
+    Any,
+    Generic,
+    Literal,
+    ParamSpec,
+    Protocol,
+    TypeAlias,
+    overload,
+    runtime_checkable,
+)
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -94,21 +103,16 @@ class Format:
         )
 
 
-@pydantic_dataclass
-class DynamicMessage(Generic[P]):
+@runtime_checkable
+class DynamicMessage(Protocol[P]):
     """Dynamically generated message with typed args and a name."""
 
-    func: Callable[P, str]
-    name: str | None = None
-    context: str | None = None
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str:  # noqa: D102
+        ...
 
-    def get_name(self) -> str:
-        """Return name of this message."""
-        return (
-            getattr(self.func, "__name__")
-            if hasattr(self.func, "__name__")
-            else self.name or "dyn_msg"
-        )
+    @property
+    def __name__(self) -> str:  # noqa: D105
+        ...
 
 
 KwdOverride: TypeAlias = (
@@ -117,12 +121,13 @@ KwdOverride: TypeAlias = (
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class Template:
+class Template(Generic[P]):
     """Custom override for formatted message."""
 
-    scaffold: str | DynamicMessage
+    scaffold: str | DynamicMessage[P]
     given_params: dict[str, Any] = field(default_factory=dict)
     param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
+    context: str | dict[str, str | None] | None = None
 
 
 LabelOverride: TypeAlias = (
@@ -353,8 +358,11 @@ class Localization:
         tmpl: Template,
         combined_args: dict[str | int, Any],
         locale: Locale | None = None,
-        context: str | None = None,
     ) -> str:
+        context = (
+            tmpl.context if isinstance(tmpl.context, dict) else {None: tmpl.context}
+        )
+
         intl_args = {}
         for k, v in combined_args.items():
             if k in tmpl.param_overrides:
@@ -372,7 +380,9 @@ class Localization:
         intl_args = {
             k: v
             if v is not None or combined_args[k] is None
-            else self.label(combined_args[k], locale=locale, context=context)
+            else self.label(
+                combined_args[k], locale=locale, context=context.get(combined_args[k])
+            )
             if isinstance(combined_args[k], str)
             else self.value(combined_args[k], locale=locale)
             for k, v in intl_args.items()
@@ -382,7 +392,7 @@ class Localization:
             tmpl.scaffold.format if isinstance(tmpl.scaffold, str) else tmpl.scaffold
         )
 
-        return message.func(
+        return message(
             *(v for k, v in intl_args.items() if isinstance(k, int)),
             **{k: v for k, v in intl_args.items() if isinstance(k, str)},
         )
@@ -456,39 +466,42 @@ class Localization:
         ...
 
     @overload
-    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
+    def message(
+        self, msg: DynamicMessage[P] | Template[P], *args: P.args, **kwargs: P.kwargs
+    ) -> str:
         ...
 
-    def message(self, msg: str | DynamicMessage[P], *args: Any, **kwargs: Any) -> str:
+    def message(
+        self, msg: str | DynamicMessage[P] | Template[P], *args: Any, **kwargs: Any
+    ) -> str:
         """Localize given text."""
+        tpl = msg if isinstance(msg, Template) else Template(msg)
+        name = tpl.scaffold if isinstance(tpl.scaffold, str) else tpl.scaffold.__name__
+
         if self.show_raw:
             kwd_str = (
                 (", " + ", ".join(f"{k}={v}" for k, v in kwargs.items()))
                 if len(kwargs) > 0
                 else ""
             )
-            return f"msg('{msg if isinstance(msg, str) else msg.get_name()}'{kwd_str})"
+            return f"msg('{name}'{kwd_str})"
 
         combined_args = {**dict(enumerate(args)), **kwargs}
-        search = msg if isinstance(msg, str) else msg.get_name()
-        context = msg.context if isinstance(msg, DynamicMessage) else None
 
-        tmpl = self.__get_message_template(search, combined_args)
+        matched_tpl = self.__get_message_template(name, combined_args)
 
-        if self.locale != Locale("en") and not tmpl:
-            tmpl = self.__get_message_template(
-                search, combined_args, locale=Locale("en")
-            ) or Template(msg)
+        if self.locale != Locale("en") and not matched_tpl:
+            matched_tpl = self.__get_message_template(
+                name, combined_args, locale=Locale("en")
+            )
 
             return self.__machine_translate(
                 self.__apply_template(
-                    tmpl, combined_args, locale=Locale("en"), context=context
+                    tpl or matched_tpl, combined_args, locale=Locale("en")
                 )
             )
 
-        return self.__apply_template(
-            tmpl or Template(msg), combined_args, context=context
-        )
+        return self.__apply_template(tpl or matched_tpl, combined_args)
 
     def value(
         self, v: Any, options: Format = Format(), locale: Locale | None = None

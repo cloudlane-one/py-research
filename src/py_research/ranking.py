@@ -4,7 +4,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from py_research.intl import DynamicMessage, get_localization
+from py_research.intl import Template, get_localization
 
 RankMode = Literal["ascending", "descending"]
 
@@ -88,7 +88,7 @@ def create_ranking_filter(
         )
 
     desc = loc.message(
-        DynamicMessage(_filter_explanation, context="col_title"),
+        Template(_filter_explanation, context="col_title"),
         cutoff_rank,
         str(rank_by.name),
         sort_order,
