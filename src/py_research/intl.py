@@ -247,6 +247,7 @@ class Localization:
             self.__translator,
         )
 
+    @property
     def locale(self) -> Locale:
         """Return first locale found up the parent tree or default locale."""
         if self.local_locale is not None:
@@ -277,6 +278,7 @@ class Localization:
 
         return parent_overrides.merge(self_overrides)
 
+    @property
     def overrides(self) -> Overrides:
         """Return merger of all the parents' overrides and self's overrides."""
         return self.get_overrides(self.locale)
