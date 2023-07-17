@@ -28,5 +28,8 @@
     "autoDocstring.docstringFormat": "google-notypes",
     "[html]": {
         "editor.defaultFormatter": "vscode.html-language-features"
+    },
+    "[python]": {
+        "editor.defaultFormatter": "ms-python.black-formatter"
     }
 }
