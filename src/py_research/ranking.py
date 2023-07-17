@@ -43,6 +43,38 @@ def create_rank_series(
     return data_table.join(ranks, how="left")[name]
 
 
+def _filter_explanation(
+    cutoff: int,
+    rank_by: str,
+    sort_order: str,
+    rank_only: str | None = None,
+    show_only: str | None = None,
+    show_always: str | None = None,
+) -> str:
+    return "; ".join(
+        s
+        for s in [
+            (
+                f"{cutoff} highest-ranked"
+                + (
+                    f" {rank_only}"
+                    if rank_only is not None and len(rank_only) <= 20
+                    else ""
+                )
+                + f" according to '{rank_by}' ({sort_order})"
+                + (
+                    f", only ranking {rank_only}"
+                    if rank_only is not None and len(rank_only) > 20
+                    else ""
+                )
+            ),
+            (f"only showing {show_only}" if show_only is not None else ""),
+            (f"always showing {show_always}" if show_always is not None else ""),
+        ]
+        if s
+    )
+
+
 def create_ranking_filter(
     rank_by: pd.Series,
     cutoff_rank: int,
@@ -55,42 +87,14 @@ def create_ranking_filter(
     """Create a filter based on ranking."""
     loc = get_localization()
 
-    desc = loc.text(
-        "; ".join(
-            s
-            for s in [
-                (
-                    str(cutoff_rank)
-                    + " highest-ranked"
-                    + (
-                        " " + str(rank_only.name)
-                        if rank_only is not None
-                        and str(rank_only.name)
-                        and len(str(rank_only.name)) <= 20
-                        else ""
-                    )
-                    + (f" according to '{rank_by.name}' ({sort_order})")
-                    + (
-                        ", only ranking " + str(rank_only.name)
-                        if rank_only is not None
-                        and rank_only.name is not None
-                        and len(str(rank_only.name)) > 20
-                        else ""
-                    )
-                ),
-                (
-                    ("only showing " + str(show_always.name))
-                    if show_always is not None and show_always.name is not None
-                    else ""
-                ),
-                (
-                    ("always showing " + str(show_always.name))
-                    if show_always is not None and show_always.name is not None
-                    else ""
-                ),
-            ]
-            if s
-        )
+    desc = loc.message(
+        _filter_explanation,
+        cutoff_rank,
+        str(rank_by.name),
+        sort_order,
+        rank_only=str(rank_only.name) if rank_only is not None else None,
+        show_only=str(show_only.name) if show_only is not None else None,
+        show_always=str(show_always.name) if show_always is not None else None,
     )
 
     rank_by_filter = np.full(len(rank_by), True)

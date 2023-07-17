@@ -11,7 +11,7 @@ from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeAlias
+from typing import Any, Literal, ParamSpec, Protocol, TypeAlias
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -34,6 +34,9 @@ from py_research.caching import get_cache
 from py_research.geo import Country, CountryScheme, GeoScheme
 
 cache = get_cache()
+
+
+P = ParamSpec("P")
 
 
 @pydantic_dataclass
@@ -91,8 +94,19 @@ class Format:
         )
 
 
+class DynamicMessage(Protocol[P]):
+    """Dynamically generated message with typed args and a name."""
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str:  # noqa: D102
+        ...
+
+    @property
+    def __name__(self) -> str:  # noqa: D105
+        ...
+
+
 KwdOverride: TypeAlias = (
-    dict[str, str] | Format | Callable[[Any, dict[str, Any]], str | None]
+    dict[str, str] | Format | Callable[[Any, dict[str | int, Any]], str | None]
 )
 
 
@@ -100,9 +114,9 @@ KwdOverride: TypeAlias = (
 class Template:
     """Custom override for formatted message."""
 
-    scaffold: str
-    given_kwds: dict[str, Any] = field(default_factory=dict)
-    kwd_overrides: dict[str, KwdOverride] = field(default_factory=dict)
+    scaffold: str | DynamicMessage
+    given_params: dict[str, Any] = field(default_factory=dict)
+    param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
 
 
 Kwargs = TypeVarTuple("Kwargs")
@@ -162,9 +176,6 @@ def _get_default_locale() -> Locale:
         return Locale.parse(normalize(getlocale()[0] or "en_us"), sep="_")
     except UnknownLocaleError:
         return Locale("en")
-
-
-P = ParamSpec("P")
 
 
 _ldml_to_posix = {
@@ -295,43 +306,64 @@ class Localization:
     def __apply_template(
         self,
         tmpl: Template,
-        kwds: dict,
-        text: str | None = None,
+        combined_args: dict[str | int, Any],
         locale: Locale | None = None,
     ) -> str:
-        intl_kwds = {}
-        for k, v in kwds.items():
-            if k in tmpl.kwd_overrides:
-                o = tmpl.kwd_overrides[k]
+        intl_args = {}
+        for k, v in combined_args.items():
+            if k in tmpl.param_overrides:
+                o = tmpl.param_overrides[k]
                 if isinstance(o, Format):
-                    intl_kwds[k] = self.value(v, o)
+                    intl_args[k] = self.value(v, o)
                 elif isinstance(o, dict):
-                    intl_kwds[k] = o[k]
+                    intl_args[k] = o[k]
                 else:
-                    intl_kwds[k] = o(v, kwds)
+                    intl_args[k] = o(v, combined_args)
             else:
-                intl_kwds[k] = None
+                intl_args[k] = None
 
         # Replace defaulted with defaults.
-        intl_kwds = {
+        intl_args = {
             k: v
             if v is not None
-            else self.label(kwds[k], locale=locale)
-            if isinstance(kwds[k], str)
-            else self.value(kwds[k], locale=locale)
-            for k, v in intl_kwds.items()
+            else self.label(combined_args[k], locale=locale)
+            if isinstance(combined_args[k], str)
+            else self.value(combined_args[k], locale=locale)
+            for k, v in intl_args.items()
         }
 
-        return tmpl.scaffold.format(text, **{**kwds, **intl_kwds})
+        message = (
+            tmpl.scaffold.format if isinstance(tmpl.scaffold, str) else tmpl.scaffold
+        )
+
+        return message(
+            *(v for k, v in intl_args.items() if isinstance(k, int)),
+            **{k: v for k, v in intl_args.items() if isinstance(k, str)},
+        )
 
     def __apply_translations(
-        self, text: str, context: str | None, kwds: dict, locale: Locale | None = None
+        self,
+        msg: str | DynamicMessage,
+        args: list | None = None,
+        kwargs: dict[str, Any] | None = None,
+        context: str | None = None,
+        locale: Locale | None = None,
     ) -> tuple[str, bool, bool]:
+        args = args or []
+        kwargs = kwargs or {}
+
         matched = False
-        sub_text = text
 
         overrides = self.overrides if locale is None else self.get_overrides(locale)
         translations = overrides.get_translations(context)
+
+        combined_args = {**dict(enumerate(args)), **kwargs}
+
+        # As a default fallback, template out the original text with english locale.
+        sub_text = self.__apply_template(
+            Template(msg), combined_args, locale=Locale("en")
+        )
+        search = msg if isinstance(msg, str) else msg.__name__
 
         matched_ctx = False
         for ctx, transl in translations.items():
@@ -339,13 +371,13 @@ class Localization:
                 replace = None
 
                 if isinstance(override, dict):
-                    replace = override.get(text)
+                    replace = override.get(search)
                 else:
                     if isinstance(override[0], tuple):
-                        if text in override[0]:
+                        if search in override[0]:
                             replace = override[1]
                     else:
-                        m = override[0].search(text)
+                        m = override[0].search(search)
                         if m is not None:
                             replace = override[1]
 
@@ -354,19 +386,19 @@ class Localization:
                         tmpl = (
                             Template(replace) if isinstance(replace, str) else replace
                         )
-                        if len(tmpl.given_kwds) == 0 or all(
+                        if len(tmpl.given_params) == 0 or all(
                             (
                                 (
-                                    v(kwds[k])
+                                    v(combined_args[k])
                                     if isinstance(v, Callable)
-                                    else kwds[k] == v
+                                    else combined_args[k] == v
                                 )
-                                for k, v in tmpl.given_kwds.items()
+                                for k, v in tmpl.given_params.items()
                             )
                         ):
-                            sub_text = self.__apply_template(tmpl, kwds, sub_text)
+                            sub_text = self.__apply_template(tmpl, combined_args)
                     else:
-                        sub_text = replace(sub_text, **kwds)
+                        sub_text = replace(sub_text, **kwargs)
 
                     matched = True
                     if ctx is not None:
@@ -384,12 +416,12 @@ class Localization:
         locale = locale or self.locale
 
         transl, matched, matched_ctx = self.__apply_translations(
-            label, context, {}, locale
+            label, context=context, locale=locale
         )
 
         if locale != Locale("en") and not matched or not matched_ctx:
             transl_en, _, matched_ctx_en = self.__apply_translations(
-                label, context, {}, Locale("en")
+                label, context=context, locale=Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
                 transl = self.__machine_translate(transl_en, locale)
@@ -470,34 +502,27 @@ class Localization:
             case _:
                 return str(v)
 
-    def text(self, text: str, **kwds: Any) -> str:
+    def message(
+        self, msg: str | DynamicMessage[P], *args: P.args, **kwargs: P.kwargs
+    ) -> str:
         """Localize given text."""
         if self.show_raw:
             kwd_str = (
-                (", " + ", ".join(f"{k}={v}" for k, v in kwds.items()))
-                if len(kwds) > 0
+                (", " + ", ".join(f"{k}={v}" for k, v in kwargs.items()))
+                if len(kwargs) > 0
                 else ""
             )
-            return f"text('{text}'{kwd_str})"
+            return f"text('{msg if isinstance(msg, str) else msg.__name__}'{kwd_str})"
 
-        sub_text, matched, _ = self.__apply_translations(text, None, kwds)
+        sub_text, matched, _ = self.__apply_translations(msg, args, kwargs)
 
         if self.locale != Locale("en") and not matched:
             sub_text, matched, _ = self.__apply_translations(
-                text, None, kwds, Locale("en")
+                msg, args, kwargs, locale=Locale("en")
             )
-
-            if not matched:
-                # If no manual translation could be found for requested locale, template
-                # out the original text with english labels and formats, then translate
-                # in its entirety.
-                sub_text = self.__apply_template(
-                    Template(text), kwds, locale=Locale("en")
-                )
-
             sub_text = self.__machine_translate(sub_text)
 
-        return text
+        return sub_text
 
     def formatter(
         self, options: Format = Format(), locale: Locale | None = None
