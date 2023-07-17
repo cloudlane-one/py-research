@@ -47,41 +47,45 @@ def create_ranking_filter(
     rank_by: pd.Series,
     cutoff_rank: int,
     sort_order: Literal["ascending", "descending"] = "descending",
-    always_include: pd.Series | None = None,
-    pre_filter: pd.Series | None = None,
-    post_filter: pd.Series | None = None,
-    count_always_included: bool = False,
+    rank_only: pd.Series | None = None,
+    show_only: pd.Series | None = None,
+    show_always: pd.Series | None = None,
+    count_always_shown: bool = False,
 ) -> pd.Series:
     """Create a filter based on ranking."""
     loc = get_localization()
 
     desc = loc.text(
-        ", ".join(
+        "; ".join(
             s
             for s in [
                 (
-                    "up to "
-                    + str(cutoff_rank)
-                    + " highest-placed"
+                    str(cutoff_rank)
+                    + " highest-ranked"
                     + (
-                        " " + str(pre_filter.name)
-                        if pre_filter is not None
-                        and str(pre_filter.name)
-                        and len(str(pre_filter.name)) <= 20
+                        " " + str(rank_only.name)
+                        if rank_only is not None
+                        and str(rank_only.name)
+                        and len(str(rank_only.name)) <= 20
                         else ""
                     )
                     + (f" according to '{rank_by.name}' ({sort_order})")
                     + (
-                        " only including " + str(pre_filter.name)
-                        if pre_filter is not None
-                        and pre_filter.name is not None
-                        and len(str(pre_filter.name)) > 20
+                        ", only ranking " + str(rank_only.name)
+                        if rank_only is not None
+                        and rank_only.name is not None
+                        and len(str(rank_only.name)) > 20
                         else ""
                     )
                 ),
                 (
-                    ("always including " + str(always_include.name))
-                    if always_include is not None and always_include.name is not None
+                    ("only showing " + str(show_always.name))
+                    if show_always is not None and show_always.name is not None
+                    else ""
+                ),
+                (
+                    ("always showing " + str(show_always.name))
+                    if show_always is not None and show_always.name is not None
                     else ""
                 ),
             ]
@@ -91,23 +95,23 @@ def create_ranking_filter(
 
     rank_by_filter = np.full(len(rank_by), True)
 
-    if pre_filter is not None:
+    if rank_only is not None:
         # Apply a custom filter, if given
-        rank_by_filter &= pre_filter
+        rank_by_filter &= rank_only
 
     rank_series = create_rank_series(
         rank_by.loc[rank_by_filter],
         sort_order,
-        exclude=(always_include if not count_always_included else None),
+        exclude=(show_always if not count_always_shown else None),
     )
     rank_by_filter &= rank_series <= cutoff_rank
 
-    if always_include is not None:
+    if show_always is not None:
         # Apply a custom filter, if given
-        rank_by_filter |= always_include
+        rank_by_filter |= show_always
 
-    if post_filter is not None:
+    if show_only is not None:
         # Apply a custom filter, if given
-        rank_by_filter &= post_filter
+        rank_by_filter &= show_only
 
     return pd.Series(rank_by_filter, index=rank_by.index, name=desc)
