@@ -155,7 +155,9 @@ class ResultTable:
                 ''.join(
                     [
                         '<li style="margin-bottom: 0.5rem;">'
-                        f'<span style="display: inline-block; {h};">{h}</span>{f}</li>'
+                        + f'<span style="display: inline-block; {h};">{h}</span>:'
+                        + f' {f}'
+                        + '</li>'
                         for f, h in highlights if f is not None and h is not None
                     ]
                 )
@@ -170,7 +172,7 @@ class ResultTable:
             <head>
                 <title>{self.title} - highlight-description</title>
             </head>
-            <body>
+            <body style="font-family: sans-serif">
                 {desc}
             </body>
         </html>
