@@ -13,7 +13,6 @@ from os import environ
 from pathlib import Path
 from typing import (
     Any,
-    Generic,
     Literal,
     ParamSpec,
     Protocol,
@@ -121,10 +120,10 @@ KwdOverride: TypeAlias = (
 
 
 @pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class Template(Generic[P]):
+class Template:
     """Custom override for formatted message."""
 
-    scaffold: str | DynamicMessage[P]
+    scaffold: str | DynamicMessage
     given_params: dict[str, Any] = field(default_factory=dict)
     param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
     context: str | dict[str, str | None] | None = None
@@ -462,17 +461,15 @@ class Localization:
         return transl
 
     @overload
-    def message(self, msg: str, *args: Any, **kwargs: Any) -> str:
+    def message(self, msg: str | Template, *args: Any, **kwargs: Any) -> str:
         ...
 
     @overload
-    def message(
-        self, msg: DynamicMessage[P] | Template[P], *args: P.args, **kwargs: P.kwargs
-    ) -> str:
+    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
         ...
 
     def message(
-        self, msg: str | DynamicMessage[P] | Template[P], *args: Any, **kwargs: Any
+        self, msg: str | DynamicMessage[P] | Template, *args: Any, **kwargs: Any
     ) -> str:
         """Localize given text."""
         tpl = msg if isinstance(msg, Template) else Template(msg)
