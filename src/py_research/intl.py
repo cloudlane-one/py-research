@@ -425,12 +425,12 @@ class Localization:
         locale = locale or self.locale
 
         transl, matched, matched_ctx = self.__apply_translations(
-            label, context=context, locale=locale
+            label, args=[label], context=context, locale=locale
         )
 
         if locale != Locale("en") and not matched or not matched_ctx:
             transl_en, _, matched_ctx_en = self.__apply_translations(
-                label, context=context, locale=Locale("en")
+                label, args=[label], context=context, locale=Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
                 transl = self.__machine_translate(transl_en, locale)
