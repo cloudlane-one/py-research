@@ -25,7 +25,7 @@ from babel.dates import (
 from babel.numbers import format_decimal
 from deep_translator import GoogleTranslator
 from deepmerge import always_merger
-from pydantic import parse_obj_as
+from pydantic import ConfigDict, parse_obj_as
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self, TypeVarTuple, Unpack
 from yaml import CLoader, load
@@ -111,7 +111,7 @@ KwdOverride: TypeAlias = (
 )
 
 
-@pydantic_dataclass
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class Template:
     """Custom override for formatted message."""
 
