@@ -128,28 +128,15 @@ class Template:
     param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
 
 
-@runtime_checkable
-class TranslationFunc:
-    """DDynamically translate a text with optional args."""
-
-    @overload
-    def __call__(self, text: str) -> str:
-        ...
-
-    @overload
-    def __call__(self, text: str, combined_args: dict[str | int, Any]) -> str:
-        ...
-
-    def __call__(  # noqa: D102
-        self, text: str, combined_args: dict[str | int, Any] | None = None
-    ) -> str:
-        ...
-
-
-Translation: TypeAlias = str | Template | TranslationFunc
-TranslateRule: TypeAlias = (
-    dict[str, Translation] | tuple[re.Pattern | tuple[str, ...], Translation]
+LabelOverride: TypeAlias = (
+    dict[str, str | Callable[[str], str]]
+    | tuple[tuple[str, ...], str | Callable[[str], str]]
 )
+
+MessageOverride: TypeAlias = (
+    dict[str, str | Template] | tuple[re.Pattern | tuple[str, ...], str | Template]
+)
+
 RegexReplace: TypeAlias = tuple[re.Pattern | str, str | Callable[[str], str]]
 
 
@@ -157,35 +144,33 @@ RegexReplace: TypeAlias = tuple[re.Pattern | str, str | Callable[[str], str]]
 class Overrides:
     """Custom, language-dependent text overrides."""
 
-    translations: list[TranslateRule] | dict[str | None, list[TranslateRule]] = field(
+    labels: list[LabelOverride] | dict[str | None, list[LabelOverride]] = field(
         default_factory=list
     )
-    curations: list[RegexReplace | Callable[[str], str]] = field(default_factory=list)
+    messages: list[MessageOverride] = field(default_factory=list)
     format: Format = field(default_factory=Format)
 
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
         return Overrides(
-            translations=always_merger.merge(
-                self.translations
-                if isinstance(self.translations, dict)
-                else {None: self.translations},
-                other.translations
-                if isinstance(other.translations, dict)
-                else {None: other.translations},
+            labels=always_merger.merge(
+                self.labels if isinstance(self.labels, dict) else {None: self.labels},
+                other.labels
+                if isinstance(other.labels, dict)
+                else {None: other.labels},
             ),
-            curations=always_merger.merge(self.curations, other.curations),
+            messages=always_merger.merge(self.messages, other.messages),
             format=self.format.merge(other.format),
         )
 
-    def get_translations(
+    def get_labels(
         self, context: str | None = None
-    ) -> dict[str | None, list[TranslateRule]]:
+    ) -> dict[str | None, list[LabelOverride]]:
         """Get all translations applicable to given context."""
         return (
-            {k: v for k, v in self.translations.items() if k is None or k == context}
-            if isinstance(self.translations, dict)
-            else {None: self.translations}
+            {k: v for k, v in self.labels.items() if k is None or k == context}
+            if isinstance(self.labels, dict)
+            else {None: self.labels}
         )
 
 
@@ -329,6 +314,39 @@ class Localization:
         memo[id(self)] = c
         return c
 
+    def __get_label(
+        self,
+        label: str,
+        context: str | None = None,
+        locale: Locale | None = None,
+    ) -> tuple[str, bool, bool]:
+        matched = False
+
+        overrides = self.overrides if locale is None else self.get_overrides(locale)
+        transl = overrides.get_labels(context)
+
+        matched_ctx = False
+        for ctx, transl in transl.items():
+            for override in transl:
+                replace = None
+
+                if isinstance(override, dict):
+                    replace = override.get(label)
+                elif label in override[0]:
+                    replace = override[1]
+
+                if replace is not None:
+                    if isinstance(replace, str):
+                        label = replace.format(label)
+                    else:
+                        label = replace(label)
+
+                    matched = True
+                    if ctx is not None:
+                        matched_ctx = True
+
+        return label, matched, matched_ctx
+
     def __apply_template(
         self,
         tmpl: Template,
@@ -367,81 +385,103 @@ class Localization:
             **{k: v for k, v in intl_args.items() if isinstance(k, str)},
         )
 
-    def __apply_translations(
+    def __get_message_template(
         self,
         search: str,
-        text: str,
         combined_args: dict[str | int, Any] | None = None,
-        context: str | None = None,
         locale: Locale | None = None,
-    ) -> tuple[str, bool, bool]:
+    ) -> Template | None:
         combined_args = combined_args or {}
 
-        matched = False
-
         overrides = self.overrides if locale is None else self.get_overrides(locale)
-        translations = overrides.get_translations(context)
+        translations = overrides.messages
 
-        matched_ctx = False
-        for ctx, transl in translations.items():
-            for override in transl:
-                replace = None
+        matched = None
+        for transl in translations:
+            replace = None
 
-                if isinstance(override, dict):
-                    replace = override.get(search)
+            if isinstance(transl, dict):
+                replace = transl.get(search)
+            else:
+                if isinstance(transl[0], tuple):
+                    if search in transl[0]:
+                        replace = transl[1]
                 else:
-                    if isinstance(override[0], tuple):
-                        if search in override[0]:
-                            replace = override[1]
-                    else:
-                        m = override[0].search(search)
-                        if m is not None:
-                            replace = override[1]
+                    m = transl[0].search(search)
+                    if m is not None:
+                        replace = transl[1]
 
-                if replace is not None:
-                    if isinstance(replace, str | Template):
-                        tmpl = (
-                            Template(replace) if isinstance(replace, str) else replace
+            if replace is not None:
+                tmpl = Template(replace) if isinstance(replace, str) else replace
+                if len(tmpl.given_params) == 0 or all(
+                    (
+                        (
+                            v(combined_args[k])
+                            if isinstance(v, Callable)
+                            else combined_args[k] == v
                         )
-                        if len(tmpl.given_params) == 0 or all(
-                            (
-                                (
-                                    v(combined_args[k])
-                                    if isinstance(v, Callable)
-                                    else combined_args[k] == v
-                                )
-                                for k, v in tmpl.given_params.items()
-                            )
-                        ):
-                            text = self.__apply_template(tmpl, combined_args)
-                    else:
-                        text = replace(text, combined_args)
+                        for k, v in tmpl.given_params.items()
+                    )
+                ):
+                    matched = replace
 
-                    matched = True
-                    if ctx is not None:
-                        matched_ctx = True
-
-        return text, matched, matched_ctx
+        return Template(matched) if isinstance(matched, str) else matched
 
     def label(
         self, label: str, context: str | None = None, locale: Locale | None = None
     ) -> str:
         """Localize given text."""
         if self.show_raw:
-            return f"label('{label}')"
+            return (
+                f"label('{label}{f', ctx={context}' if context is not None else ''}')"
+            )
 
-        transl, matched, matched_ctx = self.__apply_translations(
-            label, label, context=context, locale=locale
+        transl, matched, matched_ctx = self.__get_label(
+            label, context=context, locale=locale
         )
 
         if locale != Locale("en") and not matched or not matched_ctx:
-            transl_en, _, matched_ctx_en = self.__apply_translations(
-                label, label, context=context, locale=Locale("en")
+            transl_en, _, matched_ctx_en = self.__get_label(
+                label, context=context, locale=Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
                 transl = self.__machine_translate(transl_en, locale)
 
         return transl
+
+    @overload
+    def message(self, msg: str, *args: Any, **kwargs: Any) -> str:
+        ...
+
+    @overload
+    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
+        ...
+
+    def message(self, msg: str | DynamicMessage[P], *args: Any, **kwargs: Any) -> str:
+        """Localize given text."""
+        if self.show_raw:
+            kwd_str = (
+                (", " + ", ".join(f"{k}={v}" for k, v in kwargs.items()))
+                if len(kwargs) > 0
+                else ""
+            )
+            return f"msg('{msg if isinstance(msg, str) else msg.__name__}'{kwd_str})"
+
+        combined_args = {**dict(enumerate(args)), **kwargs}
+        search = msg if isinstance(msg, str) else msg.__name__
+
+        tmpl = self.__get_message_template(search, combined_args)
+
+        if self.locale != Locale("en") and not tmpl:
+            tmpl = self.__get_message_template(
+                search, combined_args, locale=Locale("en")
+            ) or Template(msg)
+
+            return self.__machine_translate(
+                self.__apply_template(tmpl, combined_args, locale=Locale("en"))
+            )
+
+        return self.__apply_template(tmpl or Template(msg), combined_args)
 
     def value(
         self, v: Any, options: Format = Format(), locale: Locale | None = None
@@ -516,44 +556,6 @@ class Localization:
                     return str(v.to(options.country_format))
             case _:
                 return str(v)
-
-    @overload
-    def message(self, msg: str, *args: Any, **kwargs: Any) -> str:
-        ...
-
-    @overload
-    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
-        ...
-
-    def message(self, msg: str | DynamicMessage[P], *args: Any, **kwargs: Any) -> str:
-        """Localize given text."""
-        if self.show_raw:
-            kwd_str = (
-                (", " + ", ".join(f"{k}={v}" for k, v in kwargs.items()))
-                if len(kwargs) > 0
-                else ""
-            )
-            return f"text('{msg if isinstance(msg, str) else msg.__name__}'{kwd_str})"
-
-        combined_args = {**dict(enumerate(args)), **kwargs}
-        # As a default fallback, template out the original text with english locale.
-        sub_text = self.__apply_template(
-            Template(msg), combined_args, locale=Locale("en")
-        )
-        search = msg if isinstance(msg, str) else msg.__name__
-
-        sub_text, matched, _ = self.__apply_translations(
-            sub_text, search, combined_args
-        )
-
-        if self.locale != Locale("en") and not matched:
-            sub_text, matched, _ = self.__apply_translations(
-                sub_text, search, combined_args, locale=Locale("en")
-            )
-
-            sub_text = self.__machine_translate(sub_text)
-
-        return sub_text
 
     def formatter(
         self, options: Format = Format(), locale: Locale | None = None
