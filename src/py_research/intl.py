@@ -373,7 +373,7 @@ class Localization:
         # Replace defaulted with defaults.
         intl_args = {
             k: v
-            if v is not None
+            if v is not None or combined_args[k] is None
             else self.label(combined_args[k], locale=locale)
             if isinstance(combined_args[k], str)
             else self.value(combined_args[k], locale=locale)
