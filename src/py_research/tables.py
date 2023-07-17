@@ -118,7 +118,7 @@ class ResultTable:
         """HTML description for table filters and highlights."""
         highlights = [
             (
-                h.name,
+                h,
                 "; ".join(f"{prop}: {val}" for prop, val in h.css.items())
                 if isinstance(h.css, dict)
                 else str(getattr(h.css, "__name__"))
@@ -127,43 +127,103 @@ class ResultTable:
             )
             for h in self.styles
         ]
-        filters = [
-            (h.name, h.hide_rows)
-            for h in self.styles
-            if h.filter_inclusive is not None or h.hide_rows is not None
-        ]
 
-        desc = f"""
-        <h1>Description for table '{self.title}'</h1>
-        <h2>Filters</h2>
-        <ul>
-            {
-                ''.join(
-                    [
-                        '<li style="margin-bottom: 0.5rem;">'
-                        + ('hide ' if f[1] else 'show only ')
-                        + 'rows where: ' + str(f[0])
-                        + '</li>'
-                        for f in filters if f[0]
-                    ]
-                )
-            }
-        </ul>
-        <h2>Highlights</h2>
-        <ul>
-            {
-                ''.join(
-                    [
-                        '<li style="margin-bottom: 0.5rem;">'
-                        + f'<span style="display: inline-block; {h};">{h}</span>:'
-                        + f' {f}'
-                        + '</li>'
-                        for f, h in highlights if f is not None and h is not None
-                    ]
-                )
-            }
-        </ul>
-        """
+        exclusive_h = [
+            (h, css)
+            for h, css in highlights
+            if h.name is not None and css is not None and h.filter_exclusive
+        ]
+        inclusive_h = [
+            (h, css)
+            for h, css in highlights
+            if h.name is not None and css is not None and h.filter_inclusive
+        ]
+        highlight_h = [
+            (h, css)
+            for h, css in highlights
+            if h.name is not None
+            and css is not None
+            and not any([h.filter_exclusive, h.filter_inclusive, h.hide_rows])
+        ]
+        hide_h = [h for h, _ in highlights if h.name is not None and h.hide_rows]
+
+        desc = "\n".join(
+            [
+                f"""<h2>Show rows where all of:</h2>
+            <ul>
+                {
+                    ''.join(
+                        [
+                            '<li style="margin-bottom: 0.5rem;">'
+                            + f'<span style="display: inline-block; {css};">'
+                            + css
+                            + '</span>:'
+                            + f' {h.name}'
+                            + '</li>'
+                            for h, css in exclusive_h
+                        ]
+                    )
+                }
+            </ul>
+            """
+                if len(exclusive_h) > 0
+                else "",
+                f"""<h2>Show rows where any of:</h2>
+            <ul>
+                {
+                    ''.join(
+                        [
+                            '<li style="margin-bottom: 0.5rem;">'
+                            + f'<span style="display: inline-block; {css};">'
+                            + css
+                            + '</span>:'
+                            + f' {h.name}'
+                            + '</li>'
+                            for h, css in inclusive_h
+                        ]
+                    )
+                }
+            </ul>
+            """
+                if len(inclusive_h) > 0
+                else "",
+                f"""<h2>Highlight rows where:</h2>
+            <ul>
+                {
+                    ''.join(
+                        [
+                            '<li style="margin-bottom: 0.5rem;">'
+                            + f'<span style="display: inline-block; {css};">'
+                            + css
+                            + '</span>:'
+                            + f' {h.name}'
+                            + '</li>'
+                            for h, css in highlight_h
+                        ]
+                    )
+                }
+            </ul>
+            """
+                if len(highlight_h) > 0
+                else "",
+                f"""<h2>Hide rows where any of:</h2>
+            <ul>
+                {
+                    ''.join(
+                        [
+                            '<li style="margin-bottom: 0.5rem;">'
+                            + f'{h.name}'
+                            + '</li>'
+                            for h in hide_h
+                        ]
+                    )
+                }
+            </ul>
+            """
+                if len(hide_h) > 0
+                else "",
+            ]
+        )
 
         return (
             f"""
@@ -173,6 +233,7 @@ class ResultTable:
                 <title>{self.title} - highlight-description</title>
             </head>
             <body style="font-family: sans-serif">
+                <h1>Description for table '{self.title}'</h1>
                 {desc}
             </body>
         </html>

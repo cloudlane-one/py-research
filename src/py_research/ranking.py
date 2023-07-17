@@ -74,7 +74,7 @@ def create_ranking_filter(
                         else ""
                     )
                     + f" according to '{loc.label(rank_by, 'col_title')}'"
-                    + f"({sort_order})"
+                    + f" ({sort_order})"
                     + (
                         f", only ranking {loc.label(rank_only, 'col_title')}"
                         if rank_only is not None and len(rank_only) > 20
