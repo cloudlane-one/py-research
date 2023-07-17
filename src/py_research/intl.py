@@ -358,9 +358,12 @@ class Localization:
         combined_args: dict[str | int, Any],
         locale: Locale | None = None,
     ) -> str:
-        context = (
-            tmpl.context if isinstance(tmpl.context, dict) else {None: tmpl.context}
-        )
+        def _get_ctx(label: str) -> str | None:
+            return (
+                tmpl.context.get(label)
+                if isinstance(tmpl.context, dict)
+                else tmpl.context
+            )
 
         intl_args = {}
         for k, v in combined_args.items():
@@ -380,7 +383,7 @@ class Localization:
             k: v
             if v is not None or combined_args[k] is None
             else self.label(
-                combined_args[k], locale=locale, context=context.get(combined_args[k])
+                combined_args[k], locale=locale, context=_get_ctx(combined_args[k])
             )
             if isinstance(combined_args[k], str)
             else self.value(combined_args[k], locale=locale)
