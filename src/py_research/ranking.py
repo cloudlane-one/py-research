@@ -43,38 +43,6 @@ def create_rank_series(
     return data_table.join(ranks, how="left")[name]
 
 
-def _filter_explanation(
-    cutoff: int,
-    rank_by: str,
-    sort_order: str,
-    rank_only: str | None = None,
-    show_only: str | None = None,
-    show_always: str | None = None,
-) -> str:
-    return "; ".join(
-        s
-        for s in [
-            (
-                f"{cutoff} highest-ranked"
-                + (
-                    f" {rank_only}"
-                    if rank_only is not None and len(rank_only) <= 20
-                    else ""
-                )
-                + f" according to '{rank_by}' ({sort_order})"
-                + (
-                    f", only ranking {rank_only}"
-                    if rank_only is not None and len(rank_only) > 20
-                    else ""
-                )
-            ),
-            (f"only showing {show_only}" if show_only is not None else ""),
-            (f"always showing {show_always}" if show_always is not None else ""),
-        ]
-        if s
-    )
-
-
 def create_ranking_filter(
     rank_by: pd.Series,
     cutoff_rank: int,
@@ -86,6 +54,46 @@ def create_ranking_filter(
 ) -> pd.Series:
     """Create a filter based on ranking."""
     loc = get_localization()
+
+    def _filter_explanation(
+        cutoff: int,
+        rank_by: str,
+        sort_order: str,
+        rank_only: str | None = None,
+        show_only: str | None = None,
+        show_always: str | None = None,
+    ) -> str:
+        return "; ".join(
+            s
+            for s in [
+                (
+                    f"{cutoff} highest-ranked"
+                    + (
+                        f" {loc.label(rank_only, 'col_title')}"
+                        if rank_only is not None and len(rank_only) <= 20
+                        else ""
+                    )
+                    + f" according to '{loc.label(rank_by, 'col_title')}'"
+                    + f"({sort_order})"
+                    + (
+                        f", only ranking {loc.label(rank_only, 'col_title')}"
+                        if rank_only is not None and len(rank_only) > 20
+                        else ""
+                    )
+                ),
+                (
+                    f"only showing {loc.label(show_only, 'col_title')}"
+                    if show_only is not None
+                    else ""
+                ),
+                (
+                    f"always showing {loc.label(show_always, 'col_title')}"
+                    if show_always is not None
+                    else ""
+                ),
+            ]
+            if s
+        )
 
     desc = loc.message(
         _filter_explanation,
