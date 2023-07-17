@@ -11,7 +11,7 @@ from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, Protocol, TypeAlias
+from typing import Any, Literal, ParamSpec, Protocol, TypeAlias, runtime_checkable
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -94,6 +94,7 @@ class Format:
         )
 
 
+@runtime_checkable
 class DynamicMessage(Protocol[P]):
     """Dynamically generated message with typed args and a name."""
 
