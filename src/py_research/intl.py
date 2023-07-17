@@ -166,9 +166,12 @@ class Overrides:
     def get_labels(
         self, context: str | None = None
     ) -> dict[str | None, list[LabelOverride]]:
-        """Get all translations applicable to given context."""
+        """Get all translations applicable to given context. List default ctx first."""
         return (
-            {k: v for k, v in self.labels.items() if k is None or k == context}
+            {
+                None: self.labels.get(None) or [],
+                **{context: self.labels.get(context) or []},
+            }
             if isinstance(self.labels, dict)
             else {None: self.labels}
         )
@@ -323,10 +326,11 @@ class Localization:
         matched = False
 
         overrides = self.overrides if locale is None else self.get_overrides(locale)
-        transl = overrides.get_labels(context)
+        translations = overrides.get_labels(context)
 
         matched_ctx = False
-        for ctx, transl in transl.items():
+        sub = label
+        for ctx, transl in translations.items():
             for override in transl:
                 replace = None
 
@@ -337,15 +341,15 @@ class Localization:
 
                 if replace is not None:
                     if isinstance(replace, str):
-                        label = replace.format(label)
+                        sub = replace.format(label)
                     else:
-                        label = replace(label)
+                        sub = replace(label)
 
                     matched = True
                     if ctx is not None:
                         matched_ctx = True
 
-        return label, matched, matched_ctx
+        return sub, matched, matched_ctx
 
     def __apply_template(
         self,
