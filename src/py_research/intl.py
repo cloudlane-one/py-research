@@ -6,12 +6,20 @@ from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from functools import cached_property, partial
+from functools import partial
 from locale import LC_ALL, getlocale, normalize, setlocale
 from numbers import Rational
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeAlias
+from typing import (
+    Any,
+    Literal,
+    ParamSpec,
+    Protocol,
+    TypeAlias,
+    overload,
+    runtime_checkable,
+)
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -25,15 +33,18 @@ from babel.dates import (
 from babel.numbers import format_decimal
 from deep_translator import GoogleTranslator
 from deepmerge import always_merger
-from pydantic import parse_obj_as
+from pydantic import ConfigDict, parse_obj_as
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self, TypeVarTuple, Unpack
+from typing_extensions import Self
 from yaml import CLoader, load
 
 from py_research.caching import get_cache
 from py_research.geo import Country, CountryScheme, GeoScheme
 
 cache = get_cache()
+
+
+P = ParamSpec("P")
 
 
 @pydantic_dataclass
@@ -91,25 +102,42 @@ class Format:
         )
 
 
+@runtime_checkable
+class DynamicMessage(Protocol[P]):
+    """Dynamically generated message with typed args and a name."""
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> str:  # noqa: D102
+        ...
+
+    @property
+    def __name__(self) -> str:  # noqa: D105
+        ...
+
+
 KwdOverride: TypeAlias = (
-    dict[str, str] | Format | Callable[[Any, dict[str, Any]], str | None]
+    dict[str, str] | Format | Callable[[Any, dict[str | int, Any]], str | None]
 )
 
 
-@pydantic_dataclass
+@pydantic_dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class Template:
     """Custom override for formatted message."""
 
-    scaffold: str
-    given_kwds: dict[str, Any] = field(default_factory=dict)
-    kwd_overrides: dict[str, KwdOverride] = field(default_factory=dict)
+    scaffold: str | DynamicMessage
+    given_params: dict[str, Any] = field(default_factory=dict)
+    param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
+    context: str | dict[str, str | None] | None = None
 
 
-Kwargs = TypeVarTuple("Kwargs")
-Translation: TypeAlias = str | Template | Callable[[str, Unpack[Kwargs]], str]
-TranslateRule: TypeAlias = (
-    dict[str, Translation] | tuple[re.Pattern | tuple[str, ...], Translation]
+LabelOverride: TypeAlias = (
+    dict[str, str | Callable[[str], str]]
+    | tuple[tuple[str, ...], str | Callable[[str], str]]
 )
+
+MessageOverride: TypeAlias = (
+    dict[str, str | Template] | tuple[re.Pattern | tuple[str, ...], str | Template]
+)
+
 RegexReplace: TypeAlias = tuple[re.Pattern | str, str | Callable[[str], str]]
 
 
@@ -117,35 +145,36 @@ RegexReplace: TypeAlias = tuple[re.Pattern | str, str | Callable[[str], str]]
 class Overrides:
     """Custom, language-dependent text overrides."""
 
-    translations: list[TranslateRule] | dict[str | None, list[TranslateRule]] = field(
+    labels: list[LabelOverride] | dict[str | None, list[LabelOverride]] = field(
         default_factory=list
     )
-    curations: list[RegexReplace | Callable[[str], str]] = field(default_factory=list)
+    messages: list[MessageOverride] = field(default_factory=list)
     format: Format = field(default_factory=Format)
 
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
         return Overrides(
-            translations=always_merger.merge(
-                self.translations
-                if isinstance(self.translations, dict)
-                else {None: self.translations},
-                other.translations
-                if isinstance(other.translations, dict)
-                else {None: other.translations},
+            labels=always_merger.merge(
+                self.labels if isinstance(self.labels, dict) else {None: self.labels},
+                other.labels
+                if isinstance(other.labels, dict)
+                else {None: other.labels},
             ),
-            curations=always_merger.merge(self.curations, other.curations),
+            messages=always_merger.merge(self.messages, other.messages),
             format=self.format.merge(other.format),
         )
 
-    def get_translations(
+    def get_labels(
         self, context: str | None = None
-    ) -> dict[str | None, list[TranslateRule]]:
-        """Get all translations applicable to given context."""
+    ) -> dict[str | None, list[LabelOverride]]:
+        """Get all translations applicable to given context. List default ctx first."""
         return (
-            {k: v for k, v in self.translations.items() if k is None or k == context}
-            if isinstance(self.translations, dict)
-            else {None: self.translations}
+            {
+                None: self.labels.get(None) or [],
+                **{context: self.labels.get(context) or []},
+            }
+            if isinstance(self.labels, dict)
+            else {None: self.labels}
         )
 
 
@@ -159,12 +188,9 @@ if texts_file_path.is_file():
 
 def _get_default_locale() -> Locale:
     try:
-        return Locale.parse(normalize(getlocale()[0] or "en_us"), sep="_")
+        return Locale.parse(normalize(getlocale()[0] or "en"), sep="_")
     except UnknownLocaleError:
         return Locale("en")
-
-
-P = ParamSpec("P")
 
 
 _ldml_to_posix = {
@@ -214,10 +240,14 @@ class Localization:
     local_overrides: Overrides | dict[Locale, Overrides] | None = None
     show_raw: bool = False
 
-    def __machine_translate(self, text: str) -> str:
-        return _cached_translate(self.locale.language, text, self.__translator)
+    def __machine_translate(self, text: str, locale: Locale | None = None) -> str:
+        return _cached_translate(
+            locale.language if locale is not None else self.locale.language,
+            text,
+            self.__translator,
+        )
 
-    @cached_property
+    @property
     def locale(self) -> Locale:
         """Return first locale found up the parent tree or default locale."""
         if self.local_locale is not None:
@@ -248,7 +278,7 @@ class Localization:
 
         return parent_overrides.merge(self_overrides)
 
-    @cached_property
+    @property
     def overrides(self) -> Overrides:
         """Return merger of all the parents' overrides and self's overrides."""
         return self.get_overrides(self.locale)
@@ -288,128 +318,200 @@ class Localization:
         memo[id(self)] = c
         return c
 
-    def __apply_template(
+    def __get_label(
         self,
-        override: Template,
-        kwds: dict,
-        text: str | None = None,
-    ) -> str:
-        intl_kwds = {}
-        for k, v in kwds.items():
-            if k in override.kwd_overrides:
-                o = override.kwd_overrides[k]
-                if isinstance(o, Format):
-                    intl_kwds[k] = self.value(v, o)
-                elif isinstance(o, dict):
-                    intl_kwds[k] = o[k]
-                else:
-                    intl_kwds[k] = o(v, kwds)
-            else:
-                intl_kwds[k] = None
-
-        # Replace defaulted with defaults.
-        intl_kwds = {
-            k: v
-            if v is not None
-            else self.text(kwds[k])
-            if isinstance(kwds[k], str)
-            else self.value(kwds[k])
-            for k, v in intl_kwds.items()
-        }
-
-        return override.scaffold.format(text, **{**kwds, **intl_kwds})
-
-    def __apply_translations(
-        self, text: str, context: str | None, kwds: dict, locale: Locale | None = None
+        label: str,
+        context: str | None = None,
+        locale: Locale | None = None,
     ) -> tuple[str, bool, bool]:
         matched = False
-        sub_text = text
 
-        overrides = self.overrides if locale is None else self.get_overrides(locale)
-        translations = overrides.get_translations(context)
+        overrides = self.get_overrides(locale or self.locale)
+        translations = overrides.get_labels(context)
 
         matched_ctx = False
+        sub = label
         for ctx, transl in translations.items():
             for override in transl:
                 replace = None
 
                 if isinstance(override, dict):
-                    replace = override.get(text)
-                else:
-                    if isinstance(override[0], tuple):
-                        if text in override[0]:
-                            replace = override[1]
-                    else:
-                        m = override[0].search(text)
-                        if m is not None:
-                            replace = override[1]
+                    replace = override.get(label)
+                elif label in override[0]:
+                    replace = override[1]
 
                 if replace is not None:
-                    if isinstance(replace, str | Template):
-                        tmpl = (
-                            Template(replace) if isinstance(replace, str) else replace
-                        )
-                        if len(tmpl.given_kwds) == 0 or all(
-                            (
-                                (
-                                    v(kwds[k])
-                                    if isinstance(v, Callable)
-                                    else kwds[k] == v
-                                )
-                                for k, v in tmpl.given_kwds.items()
-                            )
-                        ):
-                            sub_text = self.__apply_template(tmpl, kwds, sub_text)
+                    if isinstance(replace, str):
+                        sub = replace.format(sub)
                     else:
-                        sub_text = replace(sub_text, **kwds)
+                        sub = replace(sub)
 
                     matched = True
                     if ctx is not None:
                         matched_ctx = True
 
-            if not matched:
-                sub_text = self.__apply_template(Template(text), kwds)
+        return sub, matched, matched_ctx
 
-        return sub_text, matched, matched_ctx
-
-    def text(self, text: str, **kwds: Any) -> str:
-        """Localize given text."""
-        if self.show_raw:
-            kwd_str = (
-                (", " + ", ".join(f"{k}={v}" for k, v in kwds.items()))
-                if len(kwds) > 0
-                else ""
+    def __apply_template(
+        self,
+        tmpl: Template,
+        combined_args: dict[str | int, Any],
+        locale: Locale | None = None,
+    ) -> str:
+        def _get_ctx(label: str) -> str | None:
+            return (
+                tmpl.context.get(label)
+                if isinstance(tmpl.context, dict)
+                else tmpl.context
             )
-            return f"text('{text}'{kwd_str})"
 
-        text, matched, _ = self.__apply_translations(text, None, kwds)
-        if not matched:
-            text, matched, _ = self.__apply_translations(text, None, kwds, Locale("en"))
-            text = self.__machine_translate(text if matched else text.format(**kwds))
+        intl_args = {}
+        for k, v in combined_args.items():
+            if k in tmpl.param_overrides:
+                o = tmpl.param_overrides[k]
+                if isinstance(o, Format):
+                    intl_args[k] = self.value(v, o)
+                elif isinstance(o, dict):
+                    intl_args[k] = o[k]
+                else:
+                    intl_args[k] = o(v, combined_args)
+            else:
+                intl_args[k] = None
 
-        return text
+        # Replace defaulted with defaults.
+        intl_args = {
+            k: v
+            if v is not None or combined_args[k] is None
+            else self.label(
+                combined_args[k], locale=locale, context=_get_ctx(combined_args[k])
+            )
+            if isinstance(combined_args[k], str)
+            else self.value(combined_args[k], locale=locale)
+            for k, v in intl_args.items()
+        }
 
-    def label(self, label: str, context: str | None = None) -> str:
+        message = (
+            tmpl.scaffold.format if isinstance(tmpl.scaffold, str) else tmpl.scaffold
+        )
+
+        return message(
+            *(v for k, v in intl_args.items() if isinstance(k, int)),
+            **{k: v for k, v in intl_args.items() if isinstance(k, str)},
+        )
+
+    def __get_message_template(
+        self,
+        search: str,
+        combined_args: dict[str | int, Any] | None = None,
+        locale: Locale | None = None,
+    ) -> Template | None:
+        combined_args = combined_args or {}
+
+        overrides = self.overrides if locale is None else self.get_overrides(locale)
+        translations = overrides.messages
+
+        matched = None
+        for transl in translations:
+            replace = None
+
+            if isinstance(transl, dict):
+                replace = transl.get(search)
+            else:
+                if isinstance(transl[0], tuple):
+                    if search in transl[0]:
+                        replace = transl[1]
+                else:
+                    m = transl[0].search(search)
+                    if m is not None:
+                        replace = transl[1]
+
+            if replace is not None:
+                tmpl = Template(replace) if isinstance(replace, str) else replace
+                if len(tmpl.given_params) == 0 or all(
+                    (
+                        (
+                            v(combined_args[k])
+                            if isinstance(v, Callable)
+                            else combined_args[k] == v
+                        )
+                        for k, v in tmpl.given_params.items()
+                    )
+                ):
+                    matched = replace
+
+        return Template(matched) if isinstance(matched, str) else matched
+
+    def label(
+        self, label: str, context: str | None = None, locale: Locale | None = None
+    ) -> str:
         """Localize given text."""
         if self.show_raw:
-            return f"label('{label}')"
+            return (
+                f"label('{label}{f', ctx={context}' if context is not None else ''}')"
+            )
 
-        transl, matched, matched_ctx = self.__apply_translations(label, context, {})
-        if not matched or not matched_ctx:
-            transl_en, _, matched_ctx_en = self.__apply_translations(
-                label, context, {}, Locale("en")
+        transl, matched, matched_ctx = self.__get_label(
+            label, context=context, locale=locale
+        )
+
+        if locale != Locale("en") and (not matched or not matched_ctx):
+            transl_en, _, matched_ctx_en = self.__get_label(
+                label, context=context, locale=Locale("en")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
-                transl = self.__machine_translate(transl_en)
+                transl = self.__machine_translate(transl_en, locale)
 
         return transl
 
-    def value(self, v: Any, options: Format = Format()) -> str:
+    @overload
+    def message(self, msg: str | Template, *args: Any, **kwargs: Any) -> str:
+        ...
+
+    @overload
+    def message(self, msg: DynamicMessage[P], *args: P.args, **kwargs: P.kwargs) -> str:
+        ...
+
+    def message(
+        self, msg: str | DynamicMessage[P] | Template, *args: Any, **kwargs: Any
+    ) -> str:
+        """Localize given text."""
+        tpl = msg if isinstance(msg, Template) else Template(msg)
+        name = tpl.scaffold if isinstance(tpl.scaffold, str) else tpl.scaffold.__name__
+
+        if self.show_raw:
+            kwd_str = (
+                (", " + ", ".join(f"{k}={v}" for k, v in kwargs.items()))
+                if len(kwargs) > 0
+                else ""
+            )
+            return f"msg('{name}'{kwd_str})"
+
+        combined_args = {**dict(enumerate(args)), **kwargs}
+
+        matched_tpl = self.__get_message_template(name, combined_args)
+
+        if self.locale != Locale("en") and not matched_tpl:
+            matched_tpl = self.__get_message_template(
+                name, combined_args, locale=Locale("en")
+            )
+
+            return self.__machine_translate(
+                self.__apply_template(
+                    tpl or matched_tpl, combined_args, locale=Locale("en")
+                )
+            )
+
+        return self.__apply_template(tpl or matched_tpl, combined_args)
+
+    def value(
+        self, v: Any, options: Format = Format(), locale: Locale | None = None
+    ) -> str:
         """Locale-format arbitrary value as string."""
         if self.show_raw:
             return f"value({v})"
 
-        options = self.overrides.format.merge(options)
+        locale = locale or self.locale
+        options = self.get_overrides(locale).format.merge(options)
 
         match (v):
             case float() | Decimal() | int():
@@ -427,7 +529,7 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}%",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
                     case "scientific":
@@ -435,7 +537,7 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}E00",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
                     case "plain" | _:
@@ -443,47 +545,50 @@ class Localization:
                             v,
                             format=f"#,##0.{''.join(['0']*fixed_digits)}"
                             f"{''.join(['#']*(max_digits - fixed_digits))}",
-                            locale=self.locale,
+                            locale=locale,
                             group_separator=group_sep,
                         )
             case datetime() | pd.Timestamp():
                 return format_datetime(
-                    v, options.datetime_format or "short", locale=self.locale
+                    v, options.datetime_format or "short", locale=locale
                 )
             case date():
-                return format_date(
-                    v, options.datetime_format or "short", locale=self.locale
-                )
+                return format_date(v, options.datetime_format or "short", locale=locale)
             case time():
-                return format_time(
-                    v, options.datetime_format or "short", locale=self.locale
-                )
+                return format_time(v, options.datetime_format or "short", locale=locale)
             case timedelta() | pd.Timedelta():
                 return format_timedelta(
-                    v, format=(options.datetime_format or "short"), locale=self.locale
+                    v, format=(options.datetime_format or "short"), locale=locale
                 )
             case pd.Interval():
-                return format_interval(v.left, v.right, locale=self.locale)
+                return format_interval(v.left, v.right, locale=locale)
             case Country():
                 if (
                     options.country_format == GeoScheme.country_name
                     or options.country_format is None
                 ):
-                    return self.locale.territories.get(
+                    return locale.territories.get(
                         str(v.to(GeoScheme.cc_iso2))
-                    ) or self.text(str(v.to(GeoScheme.country_name)))
+                    ) or self.label(
+                        str(v.to(GeoScheme.country_name)), context="country_name"
+                    )
                 else:
                     return str(v.to(options.country_format))
             case _:
                 return str(v)
 
-    def formatter(self, options: Format = Format()) -> Callable[[Any], str]:
+    def formatter(
+        self, options: Format = Format(), locale: Locale | None = None
+    ) -> Callable[[Any], str]:
         """Return a formatting function bound to this locale."""
-        return partial(self.value, options=options)
+        return partial(self.value, options=options, locale=locale)
 
-    def format_spec(self, typ: type, options: Format = Format()) -> str:
+    def format_spec(
+        self, typ: type, options: Format = Format(), locale: Locale | None = None
+    ) -> str:
         """Return locale-aware format-string for given type."""
-        options = self.overrides.format.merge(options)
+        locale = locale or self.locale
+        options = self.get_overrides(locale).format.merge(options)
 
         if issubclass(typ, int):
             match (options.decimal_notation):
@@ -503,18 +608,16 @@ class Localization:
                     return f".{options.decimal_min_digits or 3}f"
         elif issubclass(typ, datetime | pd.Timestamp):
             opt = options.datetime_format or "medium"
-            date_format = _ldml_to_posix[self.locale.date_formats[opt]]
-            time_format = _ldml_to_posix[self.locale.time_formats[opt]]
-            return str.format(
-                self.locale.datetime_formats[opt], date_format, time_format
-            )
+            date_format = _ldml_to_posix[locale.date_formats[opt]]
+            time_format = _ldml_to_posix[locale.time_formats[opt]]
+            return str.format(locale.datetime_formats[opt], date_format, time_format)
         elif issubclass(typ, date):
             return _ldml_to_posix[
-                self.locale.date_formats[options.datetime_format or "medium"]
+                locale.date_formats[options.datetime_format or "medium"]
             ]
         elif issubclass(typ, time):
             return _ldml_to_posix[
-                self.locale.time_formats[options.datetime_format or "medium"]
+                locale.time_formats[options.datetime_format or "medium"]
             ]
         else:
             return ""
