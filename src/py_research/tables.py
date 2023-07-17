@@ -433,6 +433,6 @@ def html_to_pdf(doc: str, file: Path):
     pdfkit.from_string(doc, file)
 
 
-def html_to_png(doc: str, file: Path):
+def html_to_image(doc: str, file: Path):
     """Render and save HTML ``doc`` as PNG image."""
     imgkit.from_string(doc, file, options={"zoom": "3.125", "width": "3125"})
