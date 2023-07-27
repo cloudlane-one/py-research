@@ -409,23 +409,24 @@ class ResultTable:
 
         return styled
 
-    def to_html_table(self, full_doc: bool = True) -> str:
-        """HTML representation of the pretty table."""
-        return (
-            f"""
+
+def to_html(styled: Styler, full_doc: bool = True) -> str:
+    """HTML representation of the pretty table."""
+    return (
+        f"""
         <!doctype html>
         <html>
             <head>
-                <title>{self.title}</title>
+                <title>{getattr(styled, "caption") or ""}</title>
             </head>
             <body>
-                {self.to_styled_df().to_html(escape=False)}
+                {styled.to_html(escape=False)}
             </body>
         </html>
         """
-            if full_doc
-            else self.to_styled_df().to_html(escape=False)
-        )
+        if full_doc
+        else styled.to_html(escape=False)
+    )
 
 
 def html_to_pdf(doc: str, file: Path):
