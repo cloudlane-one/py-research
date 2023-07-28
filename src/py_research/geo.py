@@ -308,7 +308,7 @@ def gen_flag_url(cc: pd.Series, width: int) -> pd.Series:
 
 def gen_flag_img_tag(cc: pd.Series, width: int) -> pd.Series:
     """Generate a HTML image tag with a small flag for a given country code."""
-    return (
+    flags = (
         "<img "
         + (' src="' + gen_flag_url(cc, width) + '"')
         + (
@@ -321,3 +321,5 @@ def gen_flag_img_tag(cc: pd.Series, width: int) -> pd.Series:
         + ' style="border: 1px solid #00000080"'
         + "/>"
     )
+
+    return flags.where(~cc.isin(["not found", "", "?"]) & cc.notna(), "")
