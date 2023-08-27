@@ -13,7 +13,7 @@ ImageFormat: TypeAlias = Literal["svg", "pdf", "png", "jpg", "webp"]
 
 
 @overload
-def plot_to_html(
+def to_html(
     fig: PlotlyFigure,
     path: Path | str,
     width: int = 800,
@@ -26,7 +26,7 @@ def plot_to_html(
 
 
 @overload
-def plot_to_html(
+def to_html(
     fig: PlotlyFigure,
     path: None,
     width: int = 800,
@@ -38,7 +38,7 @@ def plot_to_html(
     ...
 
 
-def plot_to_html(
+def to_html(
     fig: PlotlyFigure,
     path: Path | str | None = None,
     width: int = 800,
@@ -66,7 +66,7 @@ def plot_to_html(
 
 
 @overload
-def plot_to_image(
+def to_image(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
@@ -78,7 +78,7 @@ def plot_to_image(
 
 
 @overload
-def plot_to_image(
+def to_image(
     fig: PlotlyFigure,
     out: None = None,
     width: int = 800,
@@ -89,7 +89,7 @@ def plot_to_image(
     ...
 
 
-def plot_to_image(
+def to_image(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO | None = None,
     width: int = 800,
@@ -103,7 +103,7 @@ def plot_to_image(
 
 
 @overload
-def plot_to_gif(
+def to_gif(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
@@ -115,7 +115,7 @@ def plot_to_gif(
 
 
 @overload
-def plot_to_gif(
+def to_gif(
     fig: PlotlyFigure,
     out: None,
     width: int = 800,
@@ -126,7 +126,7 @@ def plot_to_gif(
     ...
 
 
-def plot_to_gif(
+def to_gif(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO | None = None,
     width: int = 800,
