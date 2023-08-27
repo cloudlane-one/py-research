@@ -13,7 +13,7 @@ from plotly.graph_objects import Frame
 def plot_to_gif(
     fig: PlotlyFigure,
     path: Path | str,
-    ms_per_frame: int = 500,
+    ms_per_frame: int | None = None,
     width: int = 800,
     height: int = 600,
     scale: float = 3,
@@ -44,6 +44,9 @@ def plot_to_gif(
         save_all=True,
         append_images=frames[1:],
         optimize=True,
-        duration=ms_per_frame,
+        duration=(
+            ms_per_frame
+            or fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"]
+        ),
         loop=0,
     )
