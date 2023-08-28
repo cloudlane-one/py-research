@@ -2,7 +2,7 @@
 
 from io import BytesIO
 from pathlib import Path
-from typing import BinaryIO, Literal, TypeAlias, cast, overload
+from typing import BinaryIO, Literal, TextIO, TypeAlias, cast
 
 from PIL.Image import Image
 from PIL.Image import open as open_image
@@ -12,44 +12,18 @@ from plotly.graph_objects import Frame
 ImageFormat: TypeAlias = Literal["svg", "pdf", "png", "jpg", "webp"]
 
 
-@overload
-def to_html(
+def write_html(
     fig: PlotlyFigure,
-    path: Path | str,
+    out: Path | str | TextIO,
     width: int = 800,
     height: int = 600,
     scale: float = 3,
     name: str = "plot",
     download_format: ImageFormat = "svg",
-) -> None:
-    ...
-
-
-@overload
-def to_html(
-    fig: PlotlyFigure,
-    path: None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    name: str = "plot",
-    download_format: ImageFormat = "svg",
-) -> str:
-    ...
-
-
-def to_html(
-    fig: PlotlyFigure,
-    path: Path | str | None = None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    name: str = "plot",
-    download_format: ImageFormat = "svg",
-) -> str | None:
+):
     """Save plotly figure to interactive html."""
-    return fig.to_html(
-        path,
+    fig.write_html(
+        out,
         include_plotlyjs="cdn",
         full_html=False,
         config={
@@ -65,75 +39,26 @@ def to_html(
     )
 
 
-@overload
-def to_image(
+def write_image(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
     height: int = 600,
     scale: float = 3,
     format: ImageFormat = "svg",
-) -> None:
-    ...
-
-
-@overload
-def to_image(
-    fig: PlotlyFigure,
-    out: None = None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    format: ImageFormat = "svg",
-) -> bytes:
-    ...
-
-
-def to_image(
-    fig: PlotlyFigure,
-    out: Path | str | BinaryIO | None = None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    format: ImageFormat = "svg",
-) -> bytes | None:
+):
     """Save plotly figure to static image."""
-    res = fig.to_image(out, format=format, width=width, height=height, scale=scale)
-    return res if out is None else None
+    fig.write_image(out, format=format, width=width, height=height, scale=scale)
 
 
-@overload
-def to_gif(
+def write_gif(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
     height: int = 600,
     scale: float = 3,
     ms_per_frame: int | None = None,
-) -> None:
-    ...
-
-
-@overload
-def to_gif(
-    fig: PlotlyFigure,
-    out: None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    ms_per_frame: int | None = None,
-) -> bytes:
-    ...
-
-
-def to_gif(
-    fig: PlotlyFigure,
-    out: Path | str | BinaryIO | None = None,
-    width: int = 800,
-    height: int = 600,
-    scale: float = 3,
-    ms_per_frame: int | None = None,
-) -> bytes | None:
+):
     """Save plotly figure with slider to animated GIF."""
     fig = PlotlyFigure(fig)
     fig["layout"].pop("updatemenus")  # type: ignore
@@ -154,11 +79,9 @@ def to_gif(
             )
         )
 
-    res = out or BytesIO()
-
     # Create the gif file.
     frames[0].save(
-        res,
+        out,
         save_all=True,
         append_images=frames[1:],
         optimize=True,
@@ -168,5 +91,3 @@ def to_gif(
         ),
         loop=0,
     )
-
-    return res.getvalue() if isinstance(res, BytesIO) else None
