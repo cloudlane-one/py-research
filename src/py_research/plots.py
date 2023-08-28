@@ -61,7 +61,13 @@ def export_gif(
 ):
     """Save plotly figure with slider to animated GIF."""
     fig = PlotlyFigure(fig)
-    fig["layout"].pop("updatemenus")  # type: ignore
+    ms_per_frame = (
+        ms_per_frame
+        or fig.layout.updatemenus[0]  # type: ignore
+        .buttons[0]
+        .args[1]["frame"]["duration"]
+    )
+    fig.layout.pop("updatemenus")  # type: ignore
 
     frames: list[Image] = []
 
@@ -70,7 +76,7 @@ def export_gif(
         frame = cast(Frame, frame)
 
         fig.update(data=frame.data)
-        fig.layout.sliders[0].update(active=slider_pos)
+        fig.layout.sliders[0].update(active=slider_pos)  # type: ignore
         frames.append(
             open_image(
                 BytesIO(
@@ -85,9 +91,6 @@ def export_gif(
         save_all=True,
         append_images=frames[1:],
         optimize=True,
-        duration=(
-            ms_per_frame
-            or fig.layout.updatemenus[0].buttons[0].args[1]["frame"]["duration"]
-        ),
+        duration=ms_per_frame,
         loop=0,
     )
