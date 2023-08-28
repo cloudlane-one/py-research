@@ -30,7 +30,7 @@ def export_html(
             "responsive": True,
             "toImageButtonOptions": {
                 "format": download_format,
-                "filename": f"{name}.{download_format}",
+                "filename": name,
                 "height": height,
                 "width": width,
                 "scale": scale,
