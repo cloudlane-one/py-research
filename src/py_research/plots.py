@@ -12,7 +12,7 @@ from plotly.graph_objects import Frame
 ImageFormat: TypeAlias = Literal["svg", "pdf", "png", "jpg", "webp"]
 
 
-def write_html(
+def export_html(
     fig: PlotlyFigure,
     out: Path | str | TextIO,
     width: int = 800,
@@ -39,7 +39,7 @@ def write_html(
     )
 
 
-def write_image(
+def export_image(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
@@ -51,7 +51,7 @@ def write_image(
     fig.write_image(out, format=format, width=width, height=height, scale=scale)
 
 
-def write_gif(
+def export_gif(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
