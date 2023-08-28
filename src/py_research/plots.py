@@ -16,7 +16,7 @@ def export_html(
     fig: PlotlyFigure,
     out: Path | str | TextIO,
     width: int = 800,
-    height: int = 600,
+    height: int = 450,
     scale: float = 3,
     name: str = "plot",
     download_format: ImageFormat = "svg",
@@ -43,7 +43,7 @@ def export_image(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
-    height: int = 600,
+    height: int = 450,
     scale: float = 3,
     format: ImageFormat = "svg",
 ):
@@ -55,7 +55,7 @@ def export_gif(
     fig: PlotlyFigure,
     out: Path | str | BinaryIO,
     width: int = 800,
-    height: int = 600,
+    height: int = 450,
     scale: float = 3,
     ms_per_frame: int | None = None,
 ):
