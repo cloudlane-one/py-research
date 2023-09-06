@@ -109,8 +109,9 @@ DictDB = dict[str, dict[Hashable, dict[str, Any]]]
 
 inf = inflect_engine()
 
+TableSelect: TypeAlias = str | tuple[str, pd.DataFrame]
+MergePlan: TypeAlias = TableSelect | list[TableSelect | list[TableSelect]]
 NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
-NodeAttributes: TypeAlias = dict[str, str]
 
 
 def _resolve_links(
@@ -275,6 +276,20 @@ class DB(dict[str, pd.DataFrame]):
         _nested_to_relational(data, mapping, db)
         return DB.from_dicts(db)
 
+    def import_nested(self, data: dict, mapping: TableMap) -> "DB":
+        """Map hierarchical data to columns and tables in database & insert new data.
+
+        Args:
+            data: Hierarchical data to be mapped to a relational database
+            mapping:
+                Definition of how to map hierarchical attributes to
+                database tables and columns
+            database: Relational database to map data to
+        """
+        dict_db = self.to_dicts()
+        _nested_to_relational(data, mapping, dict_db)
+        return DB.from_dicts(dict_db)
+
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
         return {name: df.to_dict(orient="index") for name, df in self.items()}
@@ -297,129 +312,109 @@ class DB(dict[str, pd.DataFrame]):
 
         writer.close()
 
-    def import_nested(self, data: dict, mapping: TableMap) -> "DB":
-        """Map hierarchical data to columns and tables in database & insert new data.
-
-        Args:
-            data: Hierarchical data to be mapped to a relational database
-            mapping:
-                Definition of how to map hierarchical attributes to
-                database tables and columns
-            database: Relational database to map data to
-        """
-        dict_db = self.to_dicts()
-        _nested_to_relational(data, mapping, dict_db)
-        return DB.from_dicts(dict_db)
-
     def merge(
         self,
-        base: str,
-        links: str | set[str | tuple[str]] | tuple[str] | None = None,
-        _auto_prefix: bool = True,
-        **subs: pd.DataFrame,
+        base: TableSelect,
+        plan: MergePlan,
+        auto_prefix: bool = True,
     ) -> pd.DataFrame:
         """Merge selected database tables according to ``plan``.
 
         Auto-resolves links via join tables or direct foreign keys
-        and allows for subsitituting filtered/extended versions of tables as kwargs.
+        and allows for subsitituting filtered/extended versions of tables
+        via supplying a dict as merge plan or explicitly via ``subs``.
         """
-        # Use given kwargs (except for join tables) as flat plan,
-        # if no explicit plan given.
-        if links is None:
-            assert len(subs) >= 2
-            base = list(subs.keys())[0]
-            links = set(s for s in subs.keys() if s.find("_") == -1 and s != base)
 
-        links = links if isinstance(links, set) else {links}
+        def double_merge(
+            left: tuple[str, pd.DataFrame], right: tuple[str, pd.DataFrame]
+        ) -> tuple[str, pd.DataFrame]:
+            """reduce-compatible double-merge of two tables via a third join table."""
+            left_name, left_df = left
+            right_name, right_df = right
 
-        base_df = subs.get(base)
-        if base_df is None:
-            base_df = self[base]
-        base_index = f"{base}.{base_df.index.name or 'id'}"
+            left_fk = f"{left_name}.{left_df.index.name or 'id'}"
 
-        def double_merge(left: pd.DataFrame, t: tuple[str, str]) -> pd.DataFrame:
-            """reduce-compatible double-merge two tables via a third join table."""
-            left_fk = f"{t[0]}.{left.index.name or 'id'}"
+            middle_name = f"{left_name}_{right_name}"
+            middle_df = self.get(middle_name)
 
-            middle_name = f"{t[0]}_{t[1]}"
-            middle = subs.get(middle_name)
-            if middle is None:
-                middle = self.get(middle_name)
+            if right_df is not None:
+                right_fk = f"{right_name}.{right_df.index.name or 'id'}"
 
-            right = subs.get(t[1])
-            if right is None:
-                right = self.get(t[1])
-
-            if right is not None:
-                right_fk = f"{t[1]}.{right.index.name or 'id'}"
-
-                if left_fk in right.columns:
+                if left_fk in right_df.columns:
                     return (
-                        left.rename(columns=lambda c: f"{t[0]}.{c}")
-                        if _auto_prefix
-                        else left
-                    ).merge(
-                        right,
-                        left_index=True,
-                        right_on=left_fk,
-                        how="left",
+                        left_name,
+                        (
+                            left_df.rename(columns=lambda c: f"{left_name}.{c}")
+                            if auto_prefix
+                            else left_df
+                        ).merge(
+                            right_df,
+                            left_index=True,
+                            right_on=left_fk,
+                            how="left",
+                        ),
                     )
-                elif right_fk in left.columns:
+                elif right_fk in left_df.columns:
                     return (
-                        left.rename(columns=lambda c: f"{t[0]}.{c}")
-                        if _auto_prefix
-                        else left
-                    ).merge(
-                        right,
-                        left_on=right_fk,
-                        right_index=True,
-                        how="left",
+                        left_name,
+                        (
+                            left_df.rename(columns=lambda c: f"{left_name}.{c}")
+                            if auto_prefix
+                            else left_df
+                        ).merge(
+                            right_df,
+                            left_on=right_fk,
+                            right_index=True,
+                            how="left",
+                        ),
                     )
 
-            assert middle is not None
+            assert middle_df is not None
 
             left_merge = (
-                left.rename(columns=lambda c: f"{t[0]}.{c}") if _auto_prefix else left
+                left_df.rename(columns=lambda c: f"{left_name}.{c}")
+                if auto_prefix
+                else left_df
             ).merge(
-                middle,
+                middle_df,
                 left_index=True,
                 right_on=left_fk,
                 how="left",
             )
 
             return (
-                left_merge.merge(
-                    right.rename(columns=lambda c: f"{t[1]}.{c}")
-                    if _auto_prefix
-                    else right,
-                    left_on=f"{t[1]}.{right.index.name or 'id'}",
-                    right_index=True,
-                    how="left",
-                )
-                if right is not None
-                else left_merge
+                left_name,
+                (
+                    left_merge.merge(
+                        right_df.rename(columns=lambda c: f"{right_name}.{c}")
+                        if auto_prefix
+                        else right_df,
+                        left_on=f"{right_name}.{right_df.index.name or 'id'}",
+                        right_index=True,
+                        how="left",
+                    )
+                    if right_df is not None
+                    else left_merge
+                ),
             )
+
+        plan = plan if isinstance(plan, list) else [plan]
+
+        base_name, base_df = (base, self[base]) if isinstance(base, str) else base
 
         merged: list[pd.DataFrame] = []
-        for path in links:
-            if isinstance(path, str):
-                path = (path,)
+        for path in plan:
             # Figure out pair-wise joins and save them to a list.
-            join_pairs = [
-                (base, path[0]),
-                *((path[i], path[i + 1]) for i in range(0, len(path) - 1)),
-            ]
+
+            path = path if isinstance(path, list) else [path]
+            path = [(p, self.get(p)) if isinstance(p, str) else p for p in path]
+            path = [(base_name, base_df), *path]
 
             # Perform reduction to aggregate all tables into one.
-            merged.append(
-                reduce(
-                    double_merge,
-                    join_pairs,
-                    base_df,
-                )
-            )
+            merged.append(reduce(double_merge, path)[1])
 
         overlap_cols = [f"{base}.{col}" for col in base_df.columns]
+        base_index = f"{base_name}.{base_df.index.name or 'id'}"
 
         return (
             reduce(
@@ -431,7 +426,7 @@ class DB(dict[str, pd.DataFrame]):
             else merged[0]
         )
 
-    def to_graph(self, nodes: dict[str, NodeAttributes]) -> NodesAndEdges:
+    def to_graph(self, nodes: list[TableSelect]) -> NodesAndEdges:
         """Export links between select database objects in a graph format.
 
         E.g. for usage with `Gephi`_
@@ -439,21 +434,12 @@ class DB(dict[str, pd.DataFrame]):
         .. _Gephi: https://gephi.org/
         """
         # Concat all node tables into one.
-        node_dfs = []
-        for tab, attrs in nodes.items():
-            df = self[tab].reset_index().rename(columns={"index": "db_index"})
-
-            resolved_attrs: dict[str, Any] = {
-                a: df[c] for a, c in attrs.items() if c is not None
-            }
-
-            if "type" not in resolved_attrs:
-                resolved_attrs["type"] = inf.singular_noun(tab)
-
-            df = df.assign(**resolved_attrs)[["db_index", *resolved_attrs.keys()]]
-
-            node_dfs.append(df.assign(table=tab))
-
+        node_dfs = [
+            (self[n] if isinstance(n, str) else n[1])
+            .reset_index()
+            .rename(columns={"index": "db_index"})
+            for n in nodes
+        ]
         node_df = (
             pd.concat(node_dfs, ignore_index=True)
             .reset_index()
@@ -461,13 +447,14 @@ class DB(dict[str, pd.DataFrame]):
         )
 
         # Find all link tables between the given node tables.
+        node_names = [n if isinstance(n, str) else n[0] for n in nodes]
         edge_tables = {
             e: (t1, t2)
-            for t1, t2 in product(nodes.keys(), repeat=2)
+            for t1, t2 in product(node_names, repeat=2)
             if (e := f"{t1}_{t2}") in self
         }
 
-        # Concat all edges into one.
+        # Concat all edges into one table.
         edge_df = pd.concat(
             [
                 self[link_tab]
@@ -489,3 +476,10 @@ class DB(dict[str, pd.DataFrame]):
         )
 
         return node_df, edge_df
+
+    def describe(self) -> dict[str, str]:
+        """Describe this database."""
+        return {
+            name: f"{len(df)} rows x {len(df.columns)} cols"
+            for name, df in self.items()
+        }
