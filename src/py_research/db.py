@@ -357,12 +357,8 @@ class DFDB(dict[str, pd.DataFrame]):
                     # - Right table references left directly via foreign key.
                     return (
                         right_name,
-                        (
-                            left_df.rename(columns=lambda c: f"{left_name}.{c}")
-                            if auto_prefix
-                            else left_df
-                        ).merge(
-                            right_df,
+                        left_df.merge(
+                            right_df.rename(columns=lambda c: f"{right_name}.{c}"),
                             left_index=True,
                             right_on=left_fk,
                             how="left",
@@ -374,12 +370,8 @@ class DFDB(dict[str, pd.DataFrame]):
                     # - Left table references right directly via foreign key.
                     return (
                         right_name,
-                        (
-                            left_df.rename(columns=lambda c: f"{left_name}.{c}")
-                            if auto_prefix
-                            else left_df
-                        ).merge(
-                            right_df,
+                        left_df.merge(
+                            right_df.rename(columns=lambda c: f"{right_name}.{c}"),
                             left_on=right_fk,
                             right_index=True,
                             how="left",
@@ -390,11 +382,7 @@ class DFDB(dict[str, pd.DataFrame]):
             # via middle (join) table. Hence this table has to exist in the db.
             assert middle_df is not None
 
-            left_merge = (
-                left_df.rename(columns=lambda c: f"{left_name}.{c}")
-                if auto_prefix
-                else left_df
-            ).merge(
+            left_merge = left_df.merge(
                 middle_df,
                 left_index=True,
                 right_on=left_fk,
@@ -444,6 +432,7 @@ class DFDB(dict[str, pd.DataFrame]):
         base_name, base_df = (
             (base, subs.get(base) or self[base]) if isinstance(base, str) else base
         )
+        base_df = base_df.rename(columns=lambda c: f"{base_name}.{c}")
 
         merged: list[pd.DataFrame] = []
         for path in plan:
