@@ -235,13 +235,13 @@ def _nested_to_relational(
     return row
 
 
-class DB(dict[str, pd.DataFrame]):
+class DFDB(dict[str, pd.DataFrame]):
     """Relational database represented as dictionary of dataframes."""
 
     @staticmethod
-    def from_dicts(db: DictDB) -> "DB":
+    def from_dicts(db: DictDB) -> "DFDB":
         """Transform dictionary representation of the database into dataframes."""
-        return DB(
+        return DFDB(
             **{
                 name: pd.DataFrame.from_dict(data, orient="index")
                 for name, data in db.items()
@@ -249,11 +249,11 @@ class DB(dict[str, pd.DataFrame]):
         )
 
     @staticmethod
-    def from_excel(file_path: Path | None = None) -> "DB":
+    def from_excel(file_path: Path | None = None) -> "DFDB":
         """Export database into single excel file."""
         file_path = Path.cwd() / "database.xlsx" if file_path is None else file_path
 
-        return DB(
+        return DFDB(
             **{
                 str(k): df
                 for k, df in pd.read_excel(
@@ -263,7 +263,7 @@ class DB(dict[str, pd.DataFrame]):
         )
 
     @staticmethod
-    def from_nested(data: dict, mapping: TableMap) -> "DB":
+    def from_nested(data: dict, mapping: TableMap) -> "DFDB":
         """Map hierarchical data to columns and tables in in a new database.
 
         Args:
@@ -274,9 +274,9 @@ class DB(dict[str, pd.DataFrame]):
         """
         db = {}
         _nested_to_relational(data, mapping, db)
-        return DB.from_dicts(db)
+        return DFDB.from_dicts(db)
 
-    def import_nested(self, data: dict, mapping: TableMap) -> "DB":
+    def import_nested(self, data: dict, mapping: TableMap) -> "DFDB":
         """Map hierarchical data to columns and tables in database & insert new data.
 
         Args:
@@ -288,15 +288,15 @@ class DB(dict[str, pd.DataFrame]):
         """
         dict_db = self.to_dicts()
         _nested_to_relational(data, mapping, dict_db)
-        return DB.from_dicts(dict_db)
+        return DFDB.from_dicts(dict_db)
 
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
         return {name: df.to_dict(orient="index") for name, df in self.items()}
 
-    def copy(self, deep: bool = True) -> "DB":
+    def copy(self, deep: bool = True) -> "DFDB":
         """Create a copy of this database, optionally deep."""
-        return DB(**{name: (df.copy() if deep else df) for name, df in self.items()})
+        return DFDB(**{name: (df.copy() if deep else df) for name, df in self.items()})
 
     def to_excel(self, file_path: Path | None = None) -> None:
         """Export database into single excel file."""
@@ -321,8 +321,7 @@ class DB(dict[str, pd.DataFrame]):
         """Merge selected database tables according to ``plan``.
 
         Auto-resolves links via join tables or direct foreign keys
-        and allows for subsitituting filtered/extended versions of tables
-        via supplying a dict as merge plan or explicitly via ``subs``.
+        and allows for subsitituting filtered/extended versions of tables.
         """
 
         def double_merge(
@@ -341,6 +340,9 @@ class DB(dict[str, pd.DataFrame]):
                 right_fk = f"{right_name}.{right_df.index.name or 'id'}"
 
                 if left_fk in right_df.columns:
+                    # Case 1:
+                    # - Right table exists in db.
+                    # - Right table references left directly via foreign key.
                     return (
                         left_name,
                         (
@@ -355,6 +357,9 @@ class DB(dict[str, pd.DataFrame]):
                         ),
                     )
                 elif right_fk in left_df.columns:
+                    # Case 2:
+                    # - Right table exists in db.
+                    # - Left table references right directly via foreign key.
                     return (
                         left_name,
                         (
@@ -369,6 +374,8 @@ class DB(dict[str, pd.DataFrame]):
                         ),
                     )
 
+            # If case 1 and 2 do not apply, links have to be resolved indirectly
+            # via middle (join) table. Hence this table has to exist in the db.
             assert middle_df is not None
 
             left_merge = (
@@ -382,9 +389,12 @@ class DB(dict[str, pd.DataFrame]):
                 how="left",
             )
 
-            return (
-                left_name,
-                (
+            if right_df is not None:
+                # Case 3:
+                # - Right table exists in db.
+                # - Right is linked with left table indirectly via middle (join) table.
+                return (
+                    left_name,
                     left_merge.merge(
                         right_df.rename(columns=lambda c: f"{right_name}.{c}")
                         if auto_prefix
@@ -392,11 +402,13 @@ class DB(dict[str, pd.DataFrame]):
                         left_on=f"{right_name}.{right_df.index.name or 'id'}",
                         right_index=True,
                         how="left",
-                    )
-                    if right_df is not None
-                    else left_merge
-                ),
-            )
+                    ),
+                )
+            else:
+                # Case 4:
+                # - Right table does not exist in db.
+                # - Virtual right is linked with left table indirectly via middle.
+                return (left_name, left_merge)
 
         plan = plan if isinstance(plan, list) else [plan]
 
