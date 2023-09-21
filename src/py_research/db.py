@@ -316,6 +316,7 @@ class DFDB(dict[str, pd.DataFrame]):
         self,
         base: TableSelect,
         plan: MergePlan,
+        subs: dict[str, pd.DataFrame] | None = None,
         auto_prefix: bool = True,
     ) -> pd.DataFrame:
         """Merge selected database tables according to ``plan``.
@@ -411,15 +412,21 @@ class DFDB(dict[str, pd.DataFrame]):
                 return (left_name, left_merge)
 
         plan = plan if isinstance(plan, list) else [plan]
+        subs = subs or {}
 
-        base_name, base_df = (base, self[base]) if isinstance(base, str) else base
+        base_name, base_df = (
+            (base, subs.get(base) or self[base]) if isinstance(base, str) else base
+        )
 
         merged: list[pd.DataFrame] = []
         for path in plan:
             # Figure out pair-wise joins and save them to a list.
 
             path = path if isinstance(path, list) else [path]
-            path = [(p, self.get(p)) if isinstance(p, str) else p for p in path]
+            path = [
+                (p, subs.get(p) or self.get(p)) if isinstance(p, str) else p
+                for p in path
+            ]
             path = [(base_name, base_df), *path]
 
             # Perform reduction to aggregate all tables into one.
