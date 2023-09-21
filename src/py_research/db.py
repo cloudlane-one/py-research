@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import partial, reduce
 from itertools import chain, groupby, product
 from pathlib import Path
-from typing import Any, TypeAlias, cast
+from typing import Any, Iterable, TypeAlias, cast
 
 import pandas as pd
 from inflect import engine as inflect_engine
@@ -110,7 +110,7 @@ DictDB = dict[str, dict[Hashable, dict[str, Any]]]
 inf = inflect_engine()
 
 TableSelect: TypeAlias = str | tuple[str, pd.DataFrame]
-MergePlan: TypeAlias = TableSelect | list[TableSelect | list[TableSelect]]
+MergePlan: TypeAlias = TableSelect | Iterable[TableSelect | Iterable[TableSelect]]
 NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
 
 
@@ -426,7 +426,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     ),
                 )
 
-        plan = plan if isinstance(plan, list) else [plan]
+        plan = [plan] if isinstance(plan, str) else plan
         subs = subs or {}
 
         base_name, base_df = (
