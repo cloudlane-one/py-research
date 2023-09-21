@@ -356,7 +356,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     # - Right table exists in db.
                     # - Right table references left directly via foreign key.
                     return (
-                        left_name,
+                        right_name,
                         (
                             left_df.rename(columns=lambda c: f"{left_name}.{c}")
                             if auto_prefix
@@ -373,7 +373,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     # - Right table exists in db.
                     # - Left table references right directly via foreign key.
                     return (
-                        left_name,
+                        right_name,
                         (
                             left_df.rename(columns=lambda c: f"{left_name}.{c}")
                             if auto_prefix
@@ -407,7 +407,7 @@ class DFDB(dict[str, pd.DataFrame]):
                 # - Right is linked with left table indirectly via middle (join) table.
                 right_fk = f"{right_name}.{right_df.index.name or 'id'}"
                 return (
-                    left_name,
+                    right_name,
                     left_merge.rename(
                         columns={
                             c: f"{middle_name}.{c}"
@@ -428,7 +428,7 @@ class DFDB(dict[str, pd.DataFrame]):
                 # - Right table does not exist in db.
                 # - Virtual right is linked with left table indirectly via middle.
                 return (
-                    left_name,
+                    right_name,
                     left_merge.rename(
                         columns={
                             c: f"{middle_name}.{c}"
