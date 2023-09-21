@@ -130,12 +130,16 @@ def _resolve_links(
 
         for sub_map in sub_maps:
             link_table = f"{mapping.table}_{sub_map.table}"
-            # Set up link via link table.
+            link_table_alt = f"{sub_map.table}_{mapping.table}"
+
             if not isinstance(sub_data, list):
                 sub_data = [sub_data]
 
             if link_table not in database:
-                database[link_table] = {}
+                if link_table_alt in database:
+                    link_table = link_table_alt
+                else:
+                    database[link_table] = {}
 
             for sub_data_item in sub_data:
                 if isinstance(sub_data_item, dict):
@@ -335,7 +339,14 @@ class DFDB(dict[str, pd.DataFrame]):
             left_fk = f"{left_name}.{left_df.index.name or 'id'}"
 
             middle_name = f"{left_name}_{right_name}"
-            middle_df = self.get(middle_name)
+            middle_name_alt = f"{right_name}_{left_name}"
+
+            middle_df = None
+            if middle_name in self:
+                middle_df = self[middle_name]
+            elif middle_name_alt in self:
+                middle_df = self[middle_name_alt]
+                middle_name = middle_name_alt
 
             if right_df is not None:
                 right_fk = f"{right_name}.{right_df.index.name or 'id'}"
@@ -394,13 +405,20 @@ class DFDB(dict[str, pd.DataFrame]):
                 # Case 3:
                 # - Right table exists in db.
                 # - Right is linked with left table indirectly via middle (join) table.
+                right_fk = f"{right_name}.{right_df.index.name or 'id'}"
                 return (
                     left_name,
-                    left_merge.merge(
+                    left_merge.rename(
+                        columns={
+                            c: f"{middle_name}.{c}"
+                            for c in middle_df.columns
+                            if c not in (left_fk, right_fk)
+                        }
+                    ).merge(
                         right_df.rename(columns=lambda c: f"{right_name}.{c}")
                         if auto_prefix
                         else right_df,
-                        left_on=f"{right_name}.{right_df.index.name or 'id'}",
+                        left_on=right_fk,
                         right_index=True,
                         how="left",
                     ),
@@ -409,7 +427,16 @@ class DFDB(dict[str, pd.DataFrame]):
                 # Case 4:
                 # - Right table does not exist in db.
                 # - Virtual right is linked with left table indirectly via middle.
-                return (left_name, left_merge)
+                return (
+                    left_name,
+                    left_merge.rename(
+                        columns={
+                            c: f"{middle_name}.{c}"
+                            for c in middle_df.columns
+                            if c != left_fk and not c.startswith(f"{right_name}.")
+                        }
+                    ),
+                )
 
         plan = plan if isinstance(plan, list) else [plan]
         subs = subs or {}
@@ -496,9 +523,22 @@ class DFDB(dict[str, pd.DataFrame]):
 
         return node_df, edge_df
 
-    def describe(self) -> dict[str, str]:
+    def describe(self) -> dict[str, dict[str, str]]:
         """Describe this database."""
         return {
-            name: f"{len(df)} rows x {len(df.columns)} cols"
-            for name, df in self.items()
+            "entity tables": {
+                name: f"{len(df)} objects x {len(df.columns)} attributes"
+                for name, df in self.items()
+                if "_" not in name
+            },
+            "relation tables": {
+                name: f"{len(df)} links"
+                + (
+                    f" x {n_attrs} attributes"
+                    if (n_attrs := len(df.columns) - 2) > 0
+                    else ""
+                )
+                for name, df in self.items()
+                if "_" in name
+            },
         }
