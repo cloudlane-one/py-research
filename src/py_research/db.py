@@ -473,6 +473,7 @@ class DFDB(dict[str, pd.DataFrame]):
             (self[n] if isinstance(n, str) else n[1])
             .reset_index()
             .rename(columns={"index": "db_index"})
+            .assign(table=n)
             for n in nodes
         ]
         node_df = (
