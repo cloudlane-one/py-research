@@ -253,7 +253,7 @@ class DFDB(dict[str, pd.DataFrame]):
         )
 
     @staticmethod
-    def from_excel(file_path: Path | None = None) -> "DFDB":
+    def from_excel(file_path: Path | str | None = None) -> "DFDB":
         """Export database into single excel file."""
         file_path = Path.cwd() / "database.xlsx" if file_path is None else file_path
 
@@ -302,7 +302,7 @@ class DFDB(dict[str, pd.DataFrame]):
         """Create a copy of this database, optionally deep."""
         return DFDB(**{name: (df.copy() if deep else df) for name, df in self.items()})
 
-    def to_excel(self, file_path: Path | None = None) -> None:
+    def to_excel(self, file_path: Path | str | None = None) -> None:
         """Export database into single excel file."""
         file_path = Path.cwd() / "database.xlsx" if file_path is None else file_path
 
