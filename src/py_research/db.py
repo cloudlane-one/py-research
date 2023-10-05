@@ -246,12 +246,14 @@ class ImportConflictError(ValueError):
     """Irreconsilable conflicts during import of new data into an existing database."""
 
     def __init__(  # noqa: D107
-        self, conflicts: dict[tuple[Hashable, str], tuple[Any, Any]]
+        self, conflicts: dict[tuple[str, Hashable, str], tuple[Any, Any]]
     ) -> None:
+        self.conflicts = conflicts
         super().__init__(
             f"Conflicting values: {conflicts}"
             if len(conflicts) < 5
-            else f"{len(conflicts)} in columns {set(k[1] for k in conflicts.keys())}"
+            else f"{len(conflicts)} in table-columns "
+            + str(set((k[1], k[2]) for k in conflicts.keys()))
         )
 
 
@@ -382,7 +384,7 @@ class DFDB(dict[str, pd.DataFrame]):
                                     errors = {
                                         **errors,
                                         **{
-                                            (c, i): (lv, rv)
+                                            (t, i, c): (lv, rv)
                                             for (i, lv), (i, rv) in zip(
                                                 left.loc[conflicts[c]][c].items(),
                                                 right.loc[conflicts[c]][c].items(),
