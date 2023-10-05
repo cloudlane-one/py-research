@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import partial, reduce
 from itertools import chain, groupby, product
 from pathlib import Path
-from typing import Any, Iterable, Literal, TypeAlias, cast
+from typing import Any, Callable, Iterable, Literal, TypeAlias, cast
 
 import pandas as pd
 from inflect import engine as inflect_engine
@@ -27,7 +27,9 @@ class TableMap:
     """Defines how to map a data item to the database."""
 
     table: str
-    map: RelationalMap | set[str] | str
+    map: RelationalMap | set[str] | str | Callable[
+        [dict | str], RelationalMap | set[str] | str
+    ]
     name: str | None = None
     link_map: AttrMap | None = None
 
@@ -40,6 +42,9 @@ class TableMap:
 
     ext_maps: "list[TableMap] | None" = None
     """Map attributes on the same level to different tables"""
+
+    ext_attr: str | dict[str, Any] | None = None
+    """Override attr to use when linking this table with a parent table."""
 
 
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
@@ -119,7 +124,7 @@ def _resolve_links(
     mapping: TableMap,
     database: DictDB,
     row: pd.Series,
-    links: list[tuple[str | None, SubMap]],
+    links: list[tuple[str | dict[str, Any] | None, SubMap]],
 ):
     # Handle nested data, which is to be extracted into separate tables and linked.
     for attr, (sub_data, sub_maps) in links:
@@ -154,7 +159,11 @@ def _resolve_links(
 
                     link_row[f"{mapping.table}.id"] = row.name
                     link_row[f"{sub_map.table}.id"] = rel_row.name
-                    link_row["attribute"] = attr
+
+                    if isinstance(attr, str | None):
+                        link_row["attribute"] = attr
+                    else:
+                        link_row = pd.Series({**link_row.to_dict(), **attr})
 
                     link_row.name = _gen_row_id(link_row)
 
@@ -170,25 +179,28 @@ def _nested_to_relational(
     if mapping.table not in database:
         database[mapping.table] = {}
 
+    resolved_map = (
+        mapping.map(data) if isinstance(mapping.map, Callable) else mapping.map
+    )
+
     # Extract row of data attributes and links to other objects.
     row = None
-    links: list[tuple[str | None, SubMap]] = []
+    links: list[tuple[str | dict[str, Any] | None, SubMap]] = []
     # If mapping is only a string, extract the target attr directly.
     if isinstance(data, str):
-        assert isinstance(mapping.map, str)
-        row = pd.Series({mapping.map: data}, dtype=object)
+        assert isinstance(resolved_map, str)
+        row = pd.Series({resolved_map: data}, dtype=object)
     else:
-        if isinstance(mapping.map, set):
+        if isinstance(resolved_map, set):
             row = pd.Series(
-                {k: v for k, v in data.items() if k in mapping.map}, dtype=object
+                {k: v for k, v in data.items() if k in resolved_map}, dtype=object
             )
-        elif isinstance(mapping.map, dict):
-            row, link_dict = _resolve_relmap(data, mapping.map)
+        elif isinstance(resolved_map, dict):
+            row, link_dict = _resolve_relmap(data, resolved_map)
             links = [*links, *link_dict.items()]
-            # After all data attributes were extracted, generate the row id.
         else:
             raise TypeError(
-                f"Unsupported mapping type {type(mapping.map)}"
+                f"Unsupported mapping type {type(resolved_map)}"
                 f" for data of type {type(data)}"
             )
 
@@ -196,7 +208,7 @@ def _nested_to_relational(
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
-        links = [*links, *((None, (data, m)) for m in mapping.ext_maps)]
+        links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
 
     _resolve_links(mapping, database, row, links)
 
@@ -205,8 +217,8 @@ def _nested_to_relational(
         # Make sure any existing data in database is consistent with new data.
         match_by = mapping.match_by_attr
         if mapping.match_by_attr is True:
-            assert isinstance(mapping.map, str)
-            match_by = mapping.map
+            assert isinstance(resolved_map, str)
+            match_by = resolved_map
         match_by = cast(str, match_by)
         # Match to existing row or create new one.
         existing_rows: list[pd.Series] = list(
