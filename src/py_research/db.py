@@ -434,7 +434,7 @@ class DFDB(dict[str, pd.DataFrame]):
                 (t, m[1], m[2])
                 for t, df in self.items()
                 for c in df.columns
-                if (m := re.match(r"(\w+)\.(\w+)\.*\w*", c))
+                if (m := re.match(r"(\w+)\.(\w+)\.?\w*", c))
             ],
             columns=["src_table", "target_table", "target_col"],
         )
@@ -444,11 +444,13 @@ class DFDB(dict[str, pd.DataFrame]):
         rel_vals = []
         rel_keys = []
         for t, df in self.items():
+            df = df.rename_axis("id", axis="index") if not df.index.name else df
+
             rels = pd.DataFrame.from_records(
                 [
                     (m[1], m[2], m[0])
                     for c in df.columns
-                    if (m := re.match(r"(\w+)\.(\w+)", c))
+                    if (m := re.match(r"(\w+)\.(\w+)\.?\w*", c))
                 ],
                 columns=["target_table", "target_col", "fk_col"],
             )
@@ -458,8 +460,18 @@ class DFDB(dict[str, pd.DataFrame]):
                     {
                         c: (
                             df[[c]]
-                            .merge(self[str(tt)], left_on=c, right_on=tc)[str(c)]
-                            .groupby(str(df.index.name))
+                            .reset_index()
+                            .merge(
+                                self[str(tt)].pipe(
+                                    lambda df: df.rename_axis("id", axis="index")
+                                    if not df.index.name
+                                    else df
+                                ),
+                                left_on=c,
+                                right_on=tc,
+                            )
+                            .set_index(df.index.name)[str(c)]
+                            .groupby(df.index.name)
                             .agg("first")
                         )
                         for c, tc in r[["fk_col", "target_col"]].itertuples(index=False)
@@ -473,28 +485,86 @@ class DFDB(dict[str, pd.DataFrame]):
     def trim(self) -> "DFDB":
         """Return new database without orphan data (data w/ no refs to or from)."""
         # Get the status of each single reference.
-        result = {}
         valid_refs = self.valid_refs()
 
+        result = {}
         for t, df in self.items():
             f = pd.Series(False, index=df.index)
 
-            # Include all rows with any valid outgoing reference.
-            outgoing = valid_refs.loc[(t, slice(None))]
-            assert isinstance(outgoing, pd.DataFrame)
-            for _, refs in outgoing.groupby(["src_table", "target_table"]):
-                f |= refs.notna().any(axis="columns")
+            try:
+                # Include all rows with any valid outgoing reference.
+                outgoing = valid_refs.loc[(t, slice(None), slice(None)), :]
+                assert isinstance(outgoing, pd.DataFrame)
+                for _, refs in outgoing.groupby("target_table"):
+                    f |= (
+                        refs.droplevel(["src_table", "target_table"])
+                        .notna()
+                        .any(axis="columns")
+                    )
+            except KeyError:
+                pass
 
-            # Include all rows with any valid incoming reference.
-            incoming = valid_refs.loc[(slice(None), t)]
-            assert isinstance(incoming, pd.DataFrame)
-            for _, refs in outgoing.groupby(["src_table", "target_table"]):
-                for _, col in refs.items():
-                    f |= pd.Series(True, index=col.unique())
+            try:
+                # Include all rows with any valid incoming reference.
+                incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
+                assert isinstance(incoming, pd.DataFrame)
+                for _, refs in incoming.groupby("src_table"):
+                    for _, col in refs.items():
+                        f |= pd.Series(True, index=col.unique())
+            except KeyError:
+                pass
 
             result[t] = df.loc[f]
 
         return DFDB(result)
+
+    def centered_trim(self, centers: list[str]) -> "DFDB":
+        """Return new database minus data without (indirect) refs to any given table."""
+        # Get the status of each single reference.
+        valid_refs = self.valid_refs()
+
+        current_stage = set(centers)
+        ref_counts = {
+            t: pd.Series(1 if t in centers else 0, index=df.index)
+            for t, df in self.items()
+        }
+
+        while len(current_stage) > 0:
+            next_stage: set[str] = set()
+            for t in current_stage:
+                valid_indexes = ref_counts[t].loc[ref_counts[t] == 1].index
+                try:
+                    # Include all rows with any valid outgoing reference.
+                    outgoing = valid_refs.loc[(t, slice(None), valid_indexes), :]
+                    assert isinstance(outgoing, pd.DataFrame)
+                    for tt, refs in outgoing.groupby("target_table"):
+                        for _, col in refs.items():
+                            additions = pd.Series(1, index=col.unique())
+                            ref_counts[str(tt)] += additions
+                            if sum(additions) > 0:
+                                next_stage |= set(str(tt))
+                except KeyError:
+                    pass
+
+                try:
+                    # Include all rows with any valid incoming reference.
+                    incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
+                    assert isinstance(incoming, pd.DataFrame)
+                    for st, refs in incoming.groupby("src_table"):
+                        additions = (
+                            refs.droplevel(["src_table", "target_table"])
+                            .isin(valid_indexes)
+                            .any(axis="columns")
+                        )
+                        ref_counts[str(st)] += additions
+                        if sum(additions) > 0:
+                            next_stage |= set(str(st))
+                except KeyError:
+                    pass
+
+            current_stage = next_stage
+
+        return DFDB({t: self[t].loc[rc > 0] for t, rc in ref_counts.items()})
 
     def filter(self, filters: dict[str, pd.Series]) -> "DFDB":
         """Return new db only containing data related to rows matched by ``filters``.
@@ -505,7 +575,7 @@ class DFDB(dict[str, pd.DataFrame]):
         new_db = DFDB(
             {t: (df[filters[t]] if t in filters else df) for t, df in self.items()}
         )
-        return new_db.trim()
+        return new_db.centered_trim(list(filters.keys()))
 
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
