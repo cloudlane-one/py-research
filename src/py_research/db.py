@@ -296,7 +296,21 @@ class DFDB(dict[str, pd.DataFrame]):
         _nested_to_relational(data, mapping, db)
         return DFDB.from_dicts(db)
 
-    def import_db(
+    def import_nested(self, data: dict, mapping: TableMap) -> "DFDB":
+        """Map hierarchical data to columns and tables in database & insert new data.
+
+        Args:
+            data: Hierarchical data to be mapped to a relational database
+            mapping:
+                Definition of how to map hierarchical attributes to
+                database tables and columns
+            database: Relational database to map data to
+        """
+        dict_db = self.to_dicts()
+        _nested_to_relational(data, mapping, dict_db)
+        return DFDB.from_dicts(dict_db)
+
+    def combine(
         self,
         other: "DFDB",
         conflict_policy: ImportConflictPolicy
@@ -389,19 +403,8 @@ class DFDB(dict[str, pd.DataFrame]):
 
         return DFDB(merged)
 
-    def import_nested(self, data: dict, mapping: TableMap) -> "DFDB":
-        """Map hierarchical data to columns and tables in database & insert new data.
-
-        Args:
-            data: Hierarchical data to be mapped to a relational database
-            mapping:
-                Definition of how to map hierarchical attributes to
-                database tables and columns
-            database: Relational database to map data to
-        """
-        dict_db = self.to_dicts()
-        _nested_to_relational(data, mapping, dict_db)
-        return DFDB.from_dicts(dict_db)
+    def __or__(self, other: "DFDB") -> "DFDB":  # noqa: D105
+        return self.combine(other)
 
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
