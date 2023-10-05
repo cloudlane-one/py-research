@@ -157,8 +157,14 @@ def _resolve_links(
                         else (pd.Series(dtype=object), None)
                     )
 
-                    link_row[f"{mapping.table}.id"] = row.name
-                    link_row[f"{sub_map.table}.id"] = rel_row.name
+                    link_row[
+                        f"{mapping.table}.id"
+                        + ("" if mapping.table != sub_map.table else ".0")
+                    ] = row.name
+                    link_row[
+                        f"{sub_map.table}.id"
+                        + ("" if mapping.table != sub_map.table else ".1")
+                    ] = rel_row.name
 
                     if isinstance(attr, str | None):
                         link_row["attribute"] = attr
@@ -428,7 +434,7 @@ class DFDB(dict[str, pd.DataFrame]):
                 (t, m[1], m[2])
                 for t, df in self.items()
                 for c in df.columns
-                if (m := re.match(r"(\w+)\.(\w+)", c))
+                if (m := re.match(r"(\w+)\.(\w+)\.*\w*", c))
             ],
             columns=["src_table", "target_table", "target_col"],
         )
@@ -543,7 +549,9 @@ class DFDB(dict[str, pd.DataFrame]):
             left_name, left_df = left
             right_name, right_df = right
 
-            left_fk = f"{left_name}.{left_df.index.name or 'id'}"
+            left_fk = f"{left_name}.{left_df.index.name or 'id'}" + (
+                "" if left_name != right_name else ".0"
+            )
 
             middle_name = f"{left_name}_{right_name}"
             middle_name_alt = f"{right_name}_{left_name}"
@@ -556,7 +564,9 @@ class DFDB(dict[str, pd.DataFrame]):
                 middle_name = middle_name_alt
 
             if right_df is not None:
-                right_fk = f"{right_name}.{right_df.index.name or 'id'}"
+                right_fk = f"{right_name}.{right_df.index.name or 'id'}" + (
+                    "" if left_name != right_name else ".1"
+                )
 
                 if left_fk in right_df.columns:
                     # Case 1:
@@ -569,6 +579,7 @@ class DFDB(dict[str, pd.DataFrame]):
                             left_index=True,
                             right_on=left_fk,
                             how="left",
+                            suffixes=(".0", ".1"),
                         ),
                     )
                 elif right_fk in left_df.columns:
@@ -582,6 +593,7 @@ class DFDB(dict[str, pd.DataFrame]):
                             left_on=right_fk,
                             right_index=True,
                             how="left",
+                            suffixes=(".0", ".1"),
                         ),
                     )
 
@@ -616,6 +628,7 @@ class DFDB(dict[str, pd.DataFrame]):
                         left_on=right_fk,
                         right_index=True,
                         how="left",
+                        suffixes=(".0", ".1"),
                     ),
                 )
             else:
