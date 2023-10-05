@@ -6,7 +6,7 @@ from datetime import datetime
 from functools import partial, reduce
 from itertools import chain, groupby, product
 from pathlib import Path
-from typing import Any, Iterable, TypeAlias, cast
+from typing import Any, Iterable, Literal, TypeAlias, cast
 
 import pandas as pd
 from inflect import engine as inflect_engine
@@ -239,6 +239,22 @@ def _nested_to_relational(
     return row
 
 
+ImportConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
+
+
+class ImportConflictError(ValueError):
+    """Irreconsilable conflicts during import of new data into an existing database."""
+
+    def __init__(  # noqa: D107
+        self, conflicts: dict[tuple[Hashable, str], tuple[Any, Any]]
+    ) -> None:
+        super().__init__(
+            f"Conflicting values: {conflicts}"
+            if len(conflicts) < 5
+            else f"{len(conflicts)} in columns {set(k[1] for k in conflicts.keys())}"
+        )
+
+
 class DFDB(dict[str, pd.DataFrame]):
     """Relational database represented as dictionary of dataframes."""
 
@@ -279,6 +295,99 @@ class DFDB(dict[str, pd.DataFrame]):
         db = {}
         _nested_to_relational(data, mapping, db)
         return DFDB.from_dicts(db)
+
+    def import_db(
+        self,
+        other: "DFDB",
+        conflict_policy: ImportConflictPolicy
+        | dict[str, ImportConflictPolicy | dict[str, ImportConflictPolicy]] = "raise",
+    ) -> "DFDB":
+        """Import other database into this one, returning a new database object.
+
+        Args:
+            other: Other database to import
+            conflict_policy:
+                Policy to use for resolving conflicts. Can be a global setting,
+                per-table via supplying a dict with table names as keys, or per-column
+                via supplying a dict of dicts.
+
+        Returns:
+            New database representing a merge of information in ``self`` and ``other``.
+        """
+        # Get the union of all table (names) in both databases.
+        tables = set(self.keys()) | set(other.keys())
+
+        # Set up variable to contain the merged database.
+        merged: dict[str, pd.DataFrame] = {}
+
+        for t in tables:
+            if t not in self:
+                merged[t] = other[t]
+            elif t not in other:
+                merged[t] = self[t]
+            # Perform more complicated matching if table exists in both databases.
+            else:
+                # Align index and columns of both tables.
+                left, right = self[t].align(other[t])
+
+                # First merge data, ignoring conflicts per default.
+                result = left.combine_first(right)
+
+                # Find conflicts, i.e. same-index & same-column values
+                # that are different in both tables and neither of them is NaN.
+                conflicts = (left == right) | left.isna() | right.isna()
+
+                if any(conflicts):
+                    # Deal with conflicts according to `conflict_policy`.
+
+                    # Determine default policy.
+                    default_policy: ImportConflictPolicy = (
+                        ("raise" if isinstance(cp := conflict_policy[t], dict) else cp)
+                        if isinstance(conflict_policy, dict)
+                        else conflict_policy
+                    )
+                    # Expand default policy to all columns.
+                    policies: dict[str, ImportConflictPolicy] = {
+                        c: default_policy for c in conflicts.columns
+                    }
+                    # Assign column-level custom policies.
+                    if isinstance(conflict_policy, dict) and isinstance(
+                        cp := conflict_policy[t], dict
+                    ):
+                        policies = {**policies, **cp}
+
+                    errors = {}
+
+                    # Iterate over columns and associated policies:
+                    for c, p in policies.items():
+                        # Only do conflict resolution if there are any for this col.
+                        if any(conflicts[c]):
+                            match (p):
+                                case "raise":
+                                    # Record all conflicts.
+                                    errors = {
+                                        **errors,
+                                        **{
+                                            (c, i): (lv, rv)
+                                            for (i, lv), (i, rv) in zip(
+                                                left.loc[conflicts[c]][c].items(),
+                                                right.loc[conflicts[c]][c].items(),
+                                            )
+                                        },
+                                    }
+
+                                case "override" if len(errors) == 0:
+                                    # Override conflicts with data from left.
+                                    result[c][conflicts[c]] = right[conflicts[c]]
+                                    result[c] = result[c]
+
+                                case "ignore" if len(errors) == 0:
+                                    # Nothing to do here.
+                                    pass
+
+                merged[t] = result
+
+        return DFDB(merged)
 
     def import_nested(self, data: dict, mapping: TableMap) -> "DFDB":
         """Map hierarchical data to columns and tables in database & insert new data.
