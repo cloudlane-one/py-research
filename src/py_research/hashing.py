@@ -1,5 +1,6 @@
 """Utilities for producing hashes of common objects."""
 
+import hashlib
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -12,6 +13,14 @@ import pandas as pd
 from pandas.util import hash_pandas_object
 
 
+def _stable_hash(
+    data: Number | str | bytes | date | time | datetime | timedelta,
+) -> int:
+    m = hashlib.md5(usedforsecurity=False)
+    m.update(bytes(str(data), "utf-8"))
+    return int.from_bytes(m.digest())
+
+
 def _hash_sequence(s: Sequence) -> int:
     return reduce(lambda x, y: gen_int_hash(str(x) + str(gen_int_hash(y))), s, 0)
 
@@ -20,7 +29,7 @@ def gen_int_hash(x: Any) -> int:
     """Generate a hash-id from a flat dict."""
     match (x):
         case (Number() | str() | bytes() | date() | time() | datetime() | timedelta()):
-            return hash(x)
+            return _stable_hash(x)
         case pd.DataFrame() | pd.Series() | pd.Index():
             return sum(hash_pandas_object(x))
         case list() | tuple():
