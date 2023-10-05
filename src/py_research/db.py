@@ -1,5 +1,6 @@
 """Functions and classes for importing new data."""
 
+import re
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -407,6 +408,86 @@ class DFDB(dict[str, pd.DataFrame]):
 
     def __or__(self, other: "DFDB") -> "DFDB":  # noqa: D105
         return self.combine(other)
+
+    def relations(self) -> pd.DataFrame:
+        """Return dataframe containing all edges of the DB's relation DAG."""
+        return pd.DataFrame.from_records(
+            [
+                (t, m[1], m[2])
+                for t, df in self.items()
+                for c in df.columns
+                if (m := re.match(r"(\w+)\.(\w+)", c))
+            ],
+            columns=["src_table", "target_table", "target_col"],
+        )
+
+    def valid_refs(self) -> pd.DataFrame:
+        """Return all valid references contained in this database."""
+        rel_vals = []
+        rel_keys = []
+        for t, df in self.items():
+            rels = pd.DataFrame.from_records(
+                [
+                    (m[1], m[2], m[0])
+                    for c in df.columns
+                    if (m := re.match(r"(\w+)\.(\w+)", c))
+                ],
+                columns=["target_table", "target_col", "fk_col"],
+            )
+
+            for tt, r in rels.groupby("target_table"):
+                f_df = pd.DataFrame(
+                    {
+                        c: (
+                            df[[c]]
+                            .merge(self[str(tt)], left_on=c, right_on=tc)[str(c)]
+                            .groupby(str(df.index.name))
+                            .agg("first")
+                        )
+                        for c, tc in r[["fk_col", "target_col"]].itertuples(index=False)
+                    }
+                )
+                rel_vals.append(f_df)
+                rel_keys.append((t, tt))
+
+        return pd.concat(rel_vals, keys=rel_keys, names=["src_table", "target_table"])
+
+    def trim(self) -> "DFDB":
+        """Return new database without orphan data (data w/ no refs to or from)."""
+        # Get the status of each single reference.
+        result = {}
+        valid_refs = self.valid_refs()
+
+        for t, df in self.items():
+            f = pd.Series(False, index=df.index)
+
+            # Include all rows with any valid outgoing reference.
+            outgoing = valid_refs.loc[(t, slice(None))]
+            assert isinstance(outgoing, pd.DataFrame)
+            for _, refs in outgoing.groupby(["src_table", "target_table"]):
+                f |= refs.notna().any(axis="columns")
+
+            # Include all rows with any valid incoming reference.
+            incoming = valid_refs.loc[(slice(None), t)]
+            assert isinstance(incoming, pd.DataFrame)
+            for _, refs in outgoing.groupby(["src_table", "target_table"]):
+                for _, col in refs.items():
+                    f |= pd.Series(True, index=col.unique())
+
+            result[t] = df.loc[f]
+
+        return DFDB(result)
+
+    def filter(self, filters: dict[str, pd.Series]) -> "DFDB":
+        """Return new db only containing data related to rows matched by ``filters``.
+
+        Args:
+            filters: Mapping of table names to boolean filter series
+        """
+        new_db = DFDB(
+            {t: (df[filters[t]] if t in filters else df) for t, df in self.items()}
+        )
+        return new_db.trim()
 
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
