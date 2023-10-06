@@ -551,7 +551,10 @@ class DFDB(dict[str, pd.DataFrame]):
                 if t in visited and t in circuit_breakers:
                     continue
 
-                visit_counts[t] += pd.Series(1, index=list(idx))
+                current, additions = visit_counts[t].align(
+                    pd.Series(1, index=list(idx)), fill_value=0
+                )
+                visit_counts[t] = current + additions
 
                 idx_sel = list(
                     idx & set(visit_counts[t].loc[visit_counts[t] == 1].index)
@@ -568,7 +571,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     assert isinstance(outgoing, pd.DataFrame)
                     for tt, refs in outgoing.groupby("target_table"):
                         for _, col in refs.items():
-                            next_stage[str(tt)] |= set(col.unique())
+                            next_stage[str(tt)] |= set(col.dropna().unique())
                 except KeyError:
                     pass
 
