@@ -532,31 +532,43 @@ class DFDB(dict[str, pd.DataFrame]):
 
         return DFDB(result)
 
-    def centered_trim(self, centers: list[str]) -> "DFDB":
+    def centered_trim(
+        self, centers: list[str], circuit_breakers: list[str] | None = None
+    ) -> "DFDB":
         """Return new database minus data without (indirect) refs to any given table."""
+        circuit_breakers = circuit_breakers or []
+
         # Get the status of each single reference.
         valid_refs = self.valid_refs()
 
-        current_stage = set(centers)
-        ref_counts = {
-            t: pd.Series(1 if t in centers else 0, index=df.index)
-            for t, df in self.items()
-        }
+        current_stage = {c: set(self[c].index) for c in centers}
+        visit_counts = {t: pd.Series(0, index=df.index) for t, df in self.items()}
+        visited: set[str] = set()
 
-        while len(current_stage) > 0:
-            next_stage: set[str] = set()
-            for t in current_stage:
-                valid_indexes = ref_counts[t].loc[ref_counts[t] == 1].index
+        while any(len(s) > 0 for s in current_stage.values()):
+            next_stage = {t: set() for t in self.keys()}
+            for t, idx in current_stage.items():
+                if t in visited and t in circuit_breakers:
+                    continue
+
+                visit_counts[t] += pd.Series(1, index=list(idx))
+
+                idx_sel = list(
+                    idx & set(visit_counts[t].loc[visit_counts[t] == 1].index)
+                )
+
+                if len(idx_sel) == 0:
+                    continue
+
+                visited |= set([t])
+
                 try:
                     # Include all rows with any valid outgoing reference.
-                    outgoing = valid_refs.loc[(t, slice(None), valid_indexes), :]
+                    outgoing = valid_refs.loc[(t, slice(None), idx_sel), :]
                     assert isinstance(outgoing, pd.DataFrame)
                     for tt, refs in outgoing.groupby("target_table"):
                         for _, col in refs.items():
-                            additions = pd.Series(1, index=col.unique())
-                            ref_counts[str(tt)] += additions
-                            if sum(additions) > 0:
-                                next_stage |= set(str(tt))
+                            next_stage[str(tt)] |= set(col.unique())
                 except KeyError:
                     pass
 
@@ -565,31 +577,44 @@ class DFDB(dict[str, pd.DataFrame]):
                     incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
                     assert isinstance(incoming, pd.DataFrame)
                     for st, refs in incoming.groupby("src_table"):
-                        additions = (
+                        next_stage[str(st)] |= set(
                             refs.droplevel(["src_table", "target_table"])
-                            .isin(valid_indexes)
+                            .isin(idx_sel)
                             .any(axis="columns")
+                            .replace(False, pd.NA)
+                            .dropna()
+                            .index
                         )
-                        ref_counts[str(st)] += additions
-                        if sum(additions) > 0:
-                            next_stage |= set(str(st))
                 except KeyError:
                     pass
 
             current_stage = next_stage
 
-        return DFDB({t: self[t].loc[rc > 0] for t, rc in ref_counts.items()})
+        return DFDB({t: self[t].loc[rc > 0] for t, rc in visit_counts.items()})
 
-    def filter(self, filters: dict[str, pd.Series]) -> "DFDB":
+    def filter(
+        self, filters: dict[str, pd.Series], extra_cb: list[str] | None = None
+    ) -> "DFDB":
         """Return new db only containing data related to rows matched by ``filters``.
 
         Args:
             filters: Mapping of table names to boolean filter series
+            extra_cb:
+                Additional circuit breakers (on top of the filtered tables)
+                to use when trimming the database according to the filters
         """
+        # Filter out unmatched rows of filter tables.
         new_db = DFDB(
             {t: (df[filters[t]] if t in filters else df) for t, df in self.items()}
         )
-        return new_db.centered_trim(list(filters.keys()))
+
+        # Always use the filter tables as circuit_breakes.
+        # Otherwise filtered-out rows may be re-included.
+        cb = list(set(filters.keys()) | set(extra_cb or []))
+
+        # Trim all other tables such that only rows with (indirect) references to
+        # remaining rows in filter tables are left.
+        return new_db.centered_trim(list(filters.keys()), circuit_breakers=cb)
 
     def to_dicts(self) -> DictDB:
         """Transform database into dictionary representation."""
