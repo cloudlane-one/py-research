@@ -219,10 +219,10 @@ def _nested_to_relational(
         else row[mapping.id_attr]
     )
 
-    if not isinstance(row.name, str):
+    if not isinstance(row.name, str | int):
         raise ValueError(
-            f"Value of `'{mapping.id_attr}'``TableMap.id_attr` "
-            f"must be a string for all objects, but received {row.name}"
+            f"Value of `'{mapping.id_attr}'` (`TableMap.id_attr`) "
+            f"must be a string or int for all objects, but received {row.name}"
         )
 
     if mapping.ext_maps is not None:
