@@ -38,13 +38,16 @@ class TableMap:
     for auto-generating row ids via sha256 hashing.
     """
     match_by_attr: bool | str = False
-    """Match this mapped data to target table"""
+    """Match this mapped data to target table (by given attr)."""
 
     ext_maps: "list[TableMap] | None" = None
     """Map attributes on the same level to different tables"""
 
     ext_attr: str | dict[str, Any] | None = None
     """Override attr to use when linking this table with a parent table."""
+
+    id_attr: str | None = None
+    """Use given attr as id directly, no hashing."""
 
 
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
@@ -210,7 +213,17 @@ def _nested_to_relational(
                 f" for data of type {type(data)}"
             )
 
-    row.name = _gen_row_id(row, mapping.hash_id_subset)
+    row.name = (
+        _gen_row_id(row, mapping.hash_id_subset)
+        if not mapping.id_attr
+        else row[mapping.id_attr]
+    )
+
+    if not isinstance(row.name, str):
+        raise ValueError(
+            f"Value of `'{mapping.id_attr}'``TableMap.id_attr` "
+            f"must be a string for all objects, but received {row.name}"
+        )
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
@@ -219,19 +232,20 @@ def _nested_to_relational(
     _resolve_links(mapping, database, row, links)
 
     existing_row: pd.Series | None = None
-    if mapping.match_by_attr is True:
+    if mapping.match_by_attr:
         # Make sure any existing data in database is consistent with new data.
-        match_by = mapping.match_by_attr
+        match_by = cast(str, mapping.match_by_attr)
         if mapping.match_by_attr is True:
             assert isinstance(resolved_map, str)
             match_by = resolved_map
-        match_by = cast(str, match_by)
+
+        match_to = row[match_by]
+
         # Match to existing row or create new one.
         existing_rows: list[pd.Series] = list(
-            filter(
-                lambda r: r[match_by] == r[match_by], database[mapping.table].values()
-            )
+            filter(lambda r: r[match_by] == match_to, database[mapping.table].values())
         )
+
         if len(existing_rows) > 0:
             existing_row = existing_rows[0]
             # Take over the id of the existing row.
