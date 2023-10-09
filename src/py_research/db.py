@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import partial, reduce
 from itertools import chain, groupby, product
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, TypeAlias, cast
+from typing import Any, Callable, Iterable, Literal, Sequence, TypeAlias, cast
 
 import pandas as pd
 from inflect import engine as inflect_engine
@@ -793,7 +793,7 @@ class DFDB(dict[str, pd.DataFrame]):
             else merged[0]
         )
 
-    def to_graph(self, nodes: list[TableSelect]) -> NodesAndEdges:
+    def to_graph(self, nodes: Sequence[TableSelect]) -> NodesAndEdges:
         """Export links between select database objects in a graph format.
 
         E.g. for usage with `Gephi`_
