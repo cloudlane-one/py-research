@@ -65,7 +65,7 @@ V_contra = TypeVar("V_contra", contravariant=True)
 
 
 class ColRef(
-    orm.InstrumentedAttribute[V], Generic[V, S_contra]
+    orm.InstrumentedAttribute[V], Generic[V, S_cov]
 ):  # pylint: disable=W0223:abstract-method
     """Reference a column by scheme type, name and value type."""
 
@@ -108,7 +108,7 @@ col = _wrap_mapped_col(orm.mapped_column)
 Relation = sqla.ForeignKey
 
 
-class Data(Protocol[S_cov]):
+class Data(Protocol[S_contra]):
     """SQL table-shaped data."""
 
     @property
@@ -120,7 +120,7 @@ class Data(Protocol[S_cov]):
         ...
 
     def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
+        self, ref: str | ColRef[V, S_contra]
     ) -> sqla.ColumnElement[V]:
         ...
 
@@ -131,7 +131,7 @@ class Data(Protocol[S_cov]):
 
 
 @dataclass
-class Table(Data[S_cov]):
+class Table(Data[S_contra]):
     """Reference to a manifested SQL table."""
 
     sqla_table: sqla.Table
@@ -140,7 +140,9 @@ class Table(Data[S_cov]):
     def columns(self) -> dict[str, sqla.Column]:  # noqa: D102
         return dict(self.__clause_element__().columns)
 
-    def __getitem__(self, ref: str | ColRef[V, S_cov]) -> sqla.Column[V]:  # noqa: D105
+    def __getitem__(  # noqa: D105
+        self, ref: str | ColRef[V, S_contra]
+    ) -> sqla.Column[V]:
         return self.columns[ref if isinstance(ref, str) else ref.key]
 
     def __clause_element__(self) -> sqla.Table:  # noqa: D105
@@ -186,11 +188,11 @@ def _cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
 
 
 @dataclass
-class Query(Data[S_cov]):
+class Query(Data[S_contra]):
     """SQL data defined by a query."""
 
     sel: sqla.Select
-    schema: type[S_cov] | None = None
+    schema: type[S_contra] | None = None
     name: str | None = None
 
     @property
@@ -201,7 +203,7 @@ class Query(Data[S_cov]):
         return self.sel.subquery()
 
     def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
+        self, ref: str | ColRef[V, S_contra]
     ) -> sqla.ColumnElement[V]:
         return self.columns[ref if isinstance(ref, str) else ref.key]
 
@@ -211,11 +213,11 @@ BoundSelFunc: TypeAlias = Callable[[], sqla.Select | sqla.Table]
 
 
 @dataclass
-class DeferredQuery(Data[S_cov]):
+class DeferredQuery(Data[S_contra]):
     """SQL data defined by a query-returning PYthon function."""
 
     func: BoundSelFunc
-    schema: type[S_cov] | None = None
+    schema: type[S_contra] | None = None
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
@@ -226,7 +228,7 @@ class DeferredQuery(Data[S_cov]):
         return res.subquery() if isinstance(res, sqla.Select) else res
 
     def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
+        self, ref: str | ColRef[V, S_contra]
     ) -> sqla.ColumnElement[V]:
         return self.columns[ref if isinstance(ref, str) else ref.key]
 
@@ -242,6 +244,8 @@ class DeferredQuery(Data[S_cov]):
 
 
 DS = TypeVar("DS", bound="DBSchema")
+DS_cov = TypeVar("DS_cov", bound="DBSchema", covariant=True)
+DS_contra = TypeVar("DS_contra", bound="DBSchema", contravariant=True)
 
 
 @dataclass
@@ -291,11 +295,11 @@ class Schema(Generic[S_cov]):
 
 
 @dataclass
-class SchemaRef(Generic[S_cov, DS]):
+class SchemaRef(Generic[S_cov, DS_cov]):
     """Reference to a SQL schema including its parent DB schema."""
 
     schema: Schema[S_cov]
-    db_schema: type[DS]
+    db_schema: type[DS_cov]
 
 
 class DBSchema(Generic[S_cov]):
@@ -338,7 +342,7 @@ S2 = TypeVar("S2", bound=SchemaBase)
 
 
 @dataclass
-class DB(Generic[S_cov, DS]):
+class DB(Generic[S_cov, DS_contra]):
     """Active connection to a SQL server with schema."""
 
     url: str | sqla.URL
@@ -407,7 +411,7 @@ class DB(Generic[S_cov, DS]):
                         assert any(all(m) for m in matches)
 
     @overload
-    def __getitem__(self, key: SchemaRef[S2, DS]) -> Schema[S2]:
+    def __getitem__(self, key: SchemaRef[S2, DS_contra]) -> Schema[S2]:
         ...
 
     @overload
@@ -415,7 +419,7 @@ class DB(Generic[S_cov, DS]):
         ...
 
     def __getitem__(  # noqa: D105
-        self, key: SchemaRef[S2, DS] | None
+        self, key: SchemaRef[S2, DS_contra] | None
     ) -> Schema[S2] | Schema[S_cov]:
         return self.schema.default() if key is None else key.schema  # type: ignore
 
