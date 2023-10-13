@@ -505,7 +505,7 @@ class DB(Generic[S_cov, DS]):
 
     def to_table(
         self,
-        src: pd.DataFrame | Query[S] | DeferredQuery[S],
+        src: pd.DataFrame | Query[S_cov] | DeferredQuery[S_cov],
         schema: type[S_cov] | None = None,
         name: str | None = None,
     ) -> Table[S_cov]:

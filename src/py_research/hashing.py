@@ -25,22 +25,22 @@ def _hash_sequence(s: Sequence) -> int:
     return reduce(lambda x, y: gen_int_hash(str(x) + str(gen_int_hash(y))), s, 0)
 
 
-def gen_int_hash(x: Any) -> int:
-    """Generate a hash-id from a flat dict."""
-    match (x):
+def gen_int_hash(obj: Any) -> int:
+    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
+    match obj:
         case (Number() | str() | bytes() | date() | time() | datetime() | timedelta()):
-            return _stable_hash(x)
+            return _stable_hash(obj)
         case pd.DataFrame() | pd.Series() | pd.Index():
-            return sum(hash_pandas_object(x))
+            return sum(hash_pandas_object(obj))
         case list() | tuple():
-            return _hash_sequence(x)
+            return _hash_sequence(obj)
         case dict():
-            return sum(_hash_sequence(item) for item in x.items())
+            return sum(_hash_sequence(item) for item in obj.items())
         case None:
             return 0
         case _:
-            if hasattr(x, "__getstate__"):
-                state = x.__getstate__()
+            if hasattr(obj, "__getstate__"):
+                state = obj.__getstate__()
                 state = state if isinstance(state, tuple) else (state,)
                 state_dicts = [s for s in state if isinstance(s, dict)]
 
@@ -49,20 +49,20 @@ def gen_int_hash(x: Any) -> int:
                         sum(_hash_sequence(item) for item in s.items())
                         for s in state_dicts
                     )
-            if hasattr(x, "__getnewargs_ex__"):
-                args, kwargs = x.__getnewargs_ex__()
+            if hasattr(obj, "__getnewargs_ex__"):
+                args, kwargs = obj.__getnewargs_ex__()
                 return sum(gen_int_hash(item) for item in args) + sum(
                     gen_int_hash(item) for item in kwargs.items()
                 )
-            if hasattr(x, "__getnewargs__"):
-                args = x.__getnewargs__()
+            if hasattr(obj, "__getnewargs__"):
+                args = obj.__getnewargs__()
                 return sum(gen_int_hash(item) for item in args)
 
     raise ValueError()
 
 
 def gen_str_hash(x: Any, length: int = 10, raw_str: bool = False) -> str:
-    """Generate a hash-id from a flat dict."""
+    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
     s = None
     match (x):
         case int() | float() | complex() | Decimal():
