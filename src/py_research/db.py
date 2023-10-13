@@ -231,7 +231,7 @@ def _nested_to_relational(
 
     _resolve_links(mapping, database, row, links)
 
-    existing_row: pd.Series | None = None
+    existing_row: dict[str, Any] | None = None
     if mapping.match_by_attr:
         # Make sure any existing data in database is consistent with new data.
         match_by = cast(str, mapping.match_by_attr)
@@ -242,28 +242,30 @@ def _nested_to_relational(
         match_to = row[match_by]
 
         # Match to existing row or create new one.
-        existing_rows: list[pd.Series] = list(
-            filter(lambda r: r[match_by] == match_to, database[mapping.table].values())
+        existing_rows: list[tuple[str, dict[str, Any]]] = list(
+            filter(
+                lambda i: i[1][match_by] == match_to, database[mapping.table].items()
+            )
         )
 
         if len(existing_rows) > 0:
-            existing_row = existing_rows[0]
+            existing_row_id, existing_row = existing_rows[0]
             # Take over the id of the existing row.
-            row.name = existing_row.name
+            row.name = existing_row_id
     else:
-        existing_row = pd.Series(database[mapping.table].get(row.name), dtype=object)
+        existing_row = database[mapping.table].get(row.name)
 
     if existing_row is not None:
-        existing_attrs = set(k for k in existing_row.keys() if pd.notna(k))
-        new_attrs = set(k for k in row.keys() if pd.notna(k))
+        existing_attrs = set(
+            str(k) for k, v in existing_row.items() if k and pd.notna(v)
+        )
+        new_attrs = set(str(k) for k, v in row.items() if k and pd.notna(v))
+
+        # Assert that overlapping attributes are equal.
         intersect = existing_attrs & new_attrs
+        assert len(intersect) == 0 or all(existing_row[k] == row[k] for k in intersect)
 
-        for k in intersect:
-            assert existing_row[k] == row[k]
-
-        merged_row = pd.concat([existing_row, row])
-        merged_row.name = row.name
-        row = merged_row
+        row = pd.Series({**existing_row, **row.loc[list(new_attrs)]}, name=row.name)
 
     # Add row to database table or update it.
     database[mapping.table][row.name] = row.to_dict()
