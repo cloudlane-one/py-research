@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "py-research"
-version = "0.2.1"
+version = "0.3.0"
 description = "Smooth the corners of Python-based datascience work."
 authors = ["Lorenzo Wormer <l.wormer@pm.me>"]
 readme = "README.md"

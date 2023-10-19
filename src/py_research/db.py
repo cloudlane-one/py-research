@@ -14,6 +14,24 @@ from inflect import engine as inflect_engine
 
 from py_research.hashing import gen_str_hash
 
+ImportConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
+
+
+class ImportConflictError(ValueError):
+    """Irreconsilable conflicts during import of new data into an existing database."""
+
+    def __init__(  # noqa: D107
+        self, conflicts: dict[tuple[str, Hashable, str], tuple[Any, Any]]
+    ) -> None:
+        self.conflicts = conflicts
+        super().__init__(
+            f"Conflicting values: {conflicts}"
+            if len(conflicts) < 5
+            else f"{len(conflicts)} in table-columns "
+            + str(set((k[0], k[2]) for k in conflicts.keys()))
+        )
+
+
 Scalar = str | int | float | datetime
 
 AttrMap = Mapping[str, str | bool | dict]
@@ -48,6 +66,9 @@ class TableMap:
 
     id_attr: str | None = None
     """Use given attr as id directly, no hashing."""
+
+    conflict_policy: ImportConflictPolicy = "raise"
+    """Which policy to use if import conflicts occur for this table."""
 
 
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
@@ -179,7 +200,7 @@ def _resolve_links(
                     database[link_table][link_row.name] = link_row.to_dict()
 
 
-def _nested_to_relational(
+def _nested_to_relational(  # noqa: C901
     data: dict | str,
     mapping: TableMap,
     database: DictDB,
@@ -263,33 +284,29 @@ def _nested_to_relational(
 
         # Assert that overlapping attributes are equal.
         intersect = existing_attrs & new_attrs
-        assert len(intersect) == 0 or all(existing_row[k] == row[k] for k in intersect)
 
-        row = pd.Series({**existing_row, **row.loc[list(new_attrs)]}, name=row.name)
+        if (
+            mapping.conflict_policy == "raise"
+            and len(intersect) != 0
+            and any(existing_row[k] != row[k] for k in intersect)
+        ):
+            raise ImportConflictError(
+                {
+                    (mapping.table, row.name, c): (existing_row[c], row[c])
+                    for c in intersect
+                    if existing_row[c] != row[c]
+                }
+            )
+        if mapping.conflict_policy == "ignore":
+            row = pd.Series({**row.loc[list(new_attrs)], **existing_row}, name=row.name)
+        else:
+            row = pd.Series({**existing_row, **row.loc[list(new_attrs)]}, name=row.name)
 
     # Add row to database table or update it.
     database[mapping.table][row.name] = row.to_dict()
 
     # Return row (used for recursion).
     return row
-
-
-ImportConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
-
-
-class ImportConflictError(ValueError):
-    """Irreconsilable conflicts during import of new data into an existing database."""
-
-    def __init__(  # noqa: D107
-        self, conflicts: dict[tuple[str, Hashable, str], tuple[Any, Any]]
-    ) -> None:
-        self.conflicts = conflicts
-        super().__init__(
-            f"Conflicting values: {conflicts}"
-            if len(conflicts) < 5
-            else f"{len(conflicts)} in table-columns "
-            + str(set((k[1], k[2]) for k in conflicts.keys()))
-        )
 
 
 class DFDB(dict[str, pd.DataFrame]):
