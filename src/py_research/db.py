@@ -7,7 +7,7 @@ from datetime import datetime
 from functools import partial, reduce
 from itertools import chain, groupby, product
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Sequence, TypeAlias, cast
+from typing import Any, Callable, Iterable, Literal, Sequence, TypeAlias, cast, overload
 
 import pandas as pd
 from inflect import engine as inflect_engine
@@ -16,13 +16,13 @@ from py_research.hashing import gen_str_hash
 
 ImportConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
 
+ImportConflicts: TypeAlias = dict[tuple[str, str, str], tuple[Any, Any]]
+
 
 class ImportConflictError(ValueError):
     """Irreconsilable conflicts during import of new data into an existing database."""
 
-    def __init__(  # noqa: D107
-        self, conflicts: dict[tuple[str, Hashable, str], tuple[Any, Any]]
-    ) -> None:
+    def __init__(self, conflicts: ImportConflicts) -> None:  # noqa: D107
         self.conflicts = conflicts
         super().__init__(
             f"Conflicting values: {conflicts}"
@@ -149,7 +149,10 @@ def _resolve_links(
     database: DictDB,
     row: pd.Series,
     links: list[tuple[str | dict[str, Any] | None, SubMap]],
-):
+    collect_conflicts: bool = False,
+    _all_conflicts: ImportConflicts | None = None,
+) -> ImportConflicts:
+    _all_conflicts = _all_conflicts or {}
     # Handle nested data, which is to be extracted into separate tables and linked.
     for attr, (sub_data, sub_maps) in links:
         # Get info about the link table to use from mapping
@@ -173,7 +176,13 @@ def _resolve_links(
 
             for sub_data_item in sub_data:
                 if isinstance(sub_data_item, dict):
-                    rel_row = _nested_to_relational(sub_data_item, sub_map, database)
+                    rel_row, _all_conflicts = _nested_to_relational(
+                        sub_data_item,
+                        sub_map,
+                        database,
+                        collect_conflicts,
+                        _all_conflicts,
+                    )
 
                     link_row, _ = (
                         _resolve_relmap(sub_data_item, sub_map.link_map)
@@ -199,12 +208,17 @@ def _resolve_links(
 
                     database[link_table][link_row.name] = link_row.to_dict()
 
+    return _all_conflicts
+
 
 def _nested_to_relational(  # noqa: C901
     data: dict | str,
     mapping: TableMap,
     database: DictDB,
-) -> pd.Series:
+    collect_conflicts: bool = False,
+    _all_conflicts: ImportConflicts | None = None,
+) -> tuple[pd.Series, ImportConflicts]:
+    _all_conflicts = _all_conflicts or {}
     # Initialize new table as defined by mapping, if it doesn't exist yet.
     if mapping.table not in database:
         database[mapping.table] = {}
@@ -250,7 +264,9 @@ def _nested_to_relational(  # noqa: C901
         assert isinstance(data, dict)
         links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
 
-    _resolve_links(mapping, database, row, links)
+    _all_conflicts = _resolve_links(
+        mapping, database, row, links, collect_conflicts, _all_conflicts
+    )
 
     existing_row: dict[str, Any] | None = None
     if mapping.match_by_attr:
@@ -285,18 +301,18 @@ def _nested_to_relational(  # noqa: C901
         # Assert that overlapping attributes are equal.
         intersect = existing_attrs & new_attrs
 
-        if (
-            mapping.conflict_policy == "raise"
-            and len(intersect) != 0
-            and any(existing_row[k] != row[k] for k in intersect)
-        ):
-            raise ImportConflictError(
-                {
-                    (mapping.table, row.name, c): (existing_row[c], row[c])
-                    for c in intersect
-                    if existing_row[c] != row[c]
-                }
-            )
+        if mapping.conflict_policy == "raise":
+            conflicts = {
+                (mapping.table, row.name, c): (existing_row[c], row[c])
+                for c in intersect
+                if existing_row[c] != row[c]
+            }
+
+            if len(conflicts) > 0:
+                if not collect_conflicts:
+                    raise ImportConflictError(conflicts)
+
+                _all_conflicts = {**_all_conflicts, **conflicts}
         if mapping.conflict_policy == "ignore":
             row = pd.Series({**row.loc[list(new_attrs)], **existing_row}, name=row.name)
         else:
@@ -306,7 +322,7 @@ def _nested_to_relational(  # noqa: C901
     database[mapping.table][row.name] = row.to_dict()
 
     # Return row (used for recursion).
-    return row
+    return row, _all_conflicts
 
 
 class DFDB(dict[str, pd.DataFrame]):
@@ -336,8 +352,24 @@ class DFDB(dict[str, pd.DataFrame]):
             }
         )
 
+    @overload
     @staticmethod
-    def from_nested(data: dict, mapping: TableMap) -> "DFDB":
+    def from_nested(
+        data: dict, mapping: TableMap, collect_conflicts: Literal[True] = ...
+    ) -> "tuple[DFDB, ImportConflicts]":
+        ...
+
+    @overload
+    @staticmethod
+    def from_nested(
+        data: dict, mapping: TableMap, collect_conflicts: bool = ...
+    ) -> "DFDB":
+        ...
+
+    @staticmethod
+    def from_nested(
+        data: dict, mapping: TableMap, collect_conflicts: bool = False
+    ) -> "DFDB | tuple[DFDB, ImportConflicts]":
         """Map hierarchical data to columns and tables in in a new database.
 
         Args:
@@ -345,12 +377,31 @@ class DFDB(dict[str, pd.DataFrame]):
             mapping:
                 Definition of how to map hierarchical attributes to
                 database tables and columns
+            collect_conflicts:
+                Collect all conflicts and return them, rather than stopping right away.
         """
         db = {}
-        _nested_to_relational(data, mapping, db)
-        return DFDB.from_dicts(db)
+        _, conflicts = _nested_to_relational(data, mapping, db, collect_conflicts)
+        return (
+            DFDB.from_dicts(db) if not collect_conflicts else DFDB.from_dicts(db),
+            conflicts,
+        )
 
-    def import_nested(self, data: dict, mapping: TableMap) -> "DFDB":
+    @overload
+    def import_nested(
+        self, data: dict, mapping: TableMap, collect_conflicts: Literal[True] = ...
+    ) -> "tuple[DFDB, ImportConflicts]":
+        ...
+
+    @overload
+    def import_nested(
+        self, data: dict, mapping: TableMap, collect_conflicts: bool = ...
+    ) -> "DFDB":
+        ...
+
+    def import_nested(
+        self, data: dict, mapping: TableMap, collect_conflicts: bool = False
+    ) -> "DFDB | tuple[DFDB, ImportConflicts]":
         """Map hierarchical data to columns and tables in database & insert new data.
 
         Args:
@@ -359,10 +410,17 @@ class DFDB(dict[str, pd.DataFrame]):
                 Definition of how to map hierarchical attributes to
                 database tables and columns
             database: Relational database to map data to
+            collect_conflicts:
+                Collect all conflicts and return them, rather than stopping right away.
         """
         dict_db = self.to_dicts()
-        _nested_to_relational(data, mapping, dict_db)
-        return DFDB.from_dicts(dict_db)
+        _, conflicts = _nested_to_relational(data, mapping, dict_db, collect_conflicts)
+        return (
+            DFDB.from_dicts(dict_db)
+            if not collect_conflicts
+            else DFDB.from_dicts(dict_db),
+            conflicts,
+        )
 
     def combine(
         self,
