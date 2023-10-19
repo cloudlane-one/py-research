@@ -383,8 +383,9 @@ class DFDB(dict[str, pd.DataFrame]):
         db = {}
         _, conflicts = _nested_to_relational(data, mapping, db, collect_conflicts)
         return (
-            DFDB.from_dicts(db) if not collect_conflicts else DFDB.from_dicts(db),
-            conflicts,
+            DFDB.from_dicts(db)
+            if not collect_conflicts
+            else (DFDB.from_dicts(db), conflicts)
         )
 
     @overload
@@ -418,8 +419,7 @@ class DFDB(dict[str, pd.DataFrame]):
         return (
             DFDB.from_dicts(dict_db)
             if not collect_conflicts
-            else DFDB.from_dicts(dict_db),
-            conflicts,
+            else (DFDB.from_dicts(dict_db), conflicts)
         )
 
     def combine(
