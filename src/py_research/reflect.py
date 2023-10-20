@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Iterable
 
 
 def _get_calling_frame(offset=0):
@@ -19,7 +19,7 @@ def get_calling_module_name():
 
 
 def get_full_args_dict(
-    func: Callable, args: list, kwargs: dict[str, Any] | None = None
+    func: Callable, args: Iterable, kwargs: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Return dict of all args + kwargs with names."""
     argspec = inspect.getfullargspec(func)
