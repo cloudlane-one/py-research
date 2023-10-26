@@ -223,7 +223,7 @@ BoundSelFunc: TypeAlias = Callable[[], sqla.Select | sqla.Table]
 
 @dataclass
 class DeferredQuery(Data[S_cov]):
-    """SQL data defined by a query-returning Python function."""
+    """SQL data defined by a query or table-returning Python function."""
 
     func: BoundSelFunc
     schema: type[S_cov] | None = None
@@ -243,7 +243,7 @@ class DeferredQuery(Data[S_cov]):
 
     @property
     def name(self) -> str | None:  # noqa: D102
-        return (
+        return self.__clause_element__().name or (
             self.func.func.__name__
             if isinstance(self.func, partial)
             else self.func.__name__
@@ -255,18 +255,45 @@ class DeferredQuery(Data[S_cov]):
 DS = TypeVar("DS", bound="DBSchema")
 
 
+def _map_foreignkey_schema(
+    schema_dict: "dict[str | None, Schema | None]",
+    table: sqla.Table,
+    to_schema: str | None,
+    constraint: sqla.ForeignKeyConstraint,
+    referred_schema: str | None,
+) -> str | None:
+    assert to_schema in schema_dict
+
+    for schema_name, schema in schema_dict.items():
+        if schema is not None and schema.schema_def is not None:
+            for schema_class in schema.schema_def.__subclasses__():
+                if schema_class.__table__ == constraint.referred_table:
+                    return schema_name
+
+    return referred_schema
+
+
 @dataclass
-class Schema(Generic[S_cov]):
+class Schema(Generic[S_cov, DS]):
     """SQL schema defining multiple related tables."""
 
     schema_def: type[S_cov] | None = None
+    db_schema: type[DS] | None = None
     default: bool = False
 
     def __copy_to_namespace(self):
         self.metadata = sqla.MetaData(schema=self.name)
         if self.schema_def is not None:
             for table in self.schema_def.metadata.tables.values():
-                table.to_metadata(self.metadata, schema=None)  # type: ignore
+                table.to_metadata(
+                    self.metadata,
+                    schema=None,  # type: ignore
+                    referred_schema_fn=partial(
+                        _map_foreignkey_schema, schema_dict=self.db_schema.schema_dict()
+                    )
+                    if self.db_schema is not None
+                    else None,
+                )
 
     def __post_init__(self):  # noqa: D105
         self.name = None
@@ -278,8 +305,9 @@ class Schema(Generic[S_cov]):
 
     def __get__(  # noqa: D105
         self, instance: Any, owner: type[DS]
-    ) -> "SchemaRef[S_cov, DS]":
-        return SchemaRef(self, owner)
+    ) -> "Schema[S_cov, DS]":
+        self.db_schema = owner
+        return self
 
     @property
     def tables(self) -> dict[str, Table]:
@@ -301,18 +329,10 @@ class Schema(Generic[S_cov]):
         )
 
 
-@dataclass
-class SchemaRef(Generic[S_cov, DS]):
-    """Reference to a SQL schema including its parent DB schema."""
-
-    schema: Schema[S_cov]
-    db_schema: type[DS]
-
-
 class DBSchema(Generic[S_cov]):
     """Schema for an entire SQL database."""
 
-    __default__: Schema[S_cov] = Schema()
+    __default__: Schema[S_cov, Self] = Schema()
 
     @classmethod
     def schema_dict(cls) -> dict[str | None, Schema | None]:
@@ -327,7 +347,7 @@ class DBSchema(Generic[S_cov]):
         }
 
     @classmethod
-    def default(cls) -> Schema[S_cov]:
+    def default(cls) -> Schema[S_cov, Self]:
         """Return default schema."""
         return cls.__default__.schema  # type: ignore
 
@@ -418,16 +438,16 @@ class DB(Generic[S_cov, DS]):
                         assert any(all(m) for m in matches)
 
     @overload
-    def __getitem__(self, key: SchemaRef[S2, DS]) -> Schema[S2]:
+    def __getitem__(self, key: Schema[S2, DS]) -> Schema[S2, DS]:
         ...
 
     @overload
-    def __getitem__(self, key: None) -> Schema[S_cov]:
+    def __getitem__(self, key: None) -> Schema[S_cov, DS]:
         ...
 
     def __getitem__(  # noqa: D105
-        self, key: SchemaRef[S2, DS] | None
-    ) -> Schema[S2] | Schema[S_cov]:
+        self, key: Schema[S2, DS] | None
+    ) -> Schema[S2, DS] | Schema[S_cov, DS]:
         return self.schema.default() if key is None else key.schema  # type: ignore
 
     def activate(self) -> None:
@@ -441,6 +461,26 @@ class DB(Generic[S_cov, DS]):
     def __exit__(self, *_):  # noqa: D105
         if self.__token is not None:
             active_con.reset(self.__token)
+
+    def default_table(self, schema: type[S]) -> Table[S]:
+        """Return default table for given table schema."""
+        valid_keys = list(
+            filter(lambda s: issubclass(schema, s), self.schema.defaults().keys())
+        )
+        if len(valid_keys) == 0:
+            raise KeyError(schema)
+
+        meta = self.schema.defaults()[valid_keys[0]].metadata
+        return Table(
+            meta.tables[
+                ".".join(
+                    [
+                        *([meta.schema] if meta.schema else []),
+                        schema.__tablename__,
+                    ]
+                )
+            ]
+        )
 
     def _table_from_df(
         self,
@@ -493,7 +533,12 @@ class DB(Generic[S_cov, DS]):
 
             sqla_table = (
                 q.schema.__table__.to_metadata(
-                    self.default_meta, schema=None, name=table_name  # type: ignore
+                    self.default_meta,
+                    schema=None,  # type: ignore
+                    referred_schema_fn=partial(
+                        _map_foreignkey_schema, schema_dict=self.schema.schema_dict()
+                    ),
+                    name=table_name,
                 )
                 if q.schema is not None and isinstance(q.schema.__table__, sqla.Table)
                 else sqla.Table(
@@ -614,23 +659,8 @@ def query(
 def default_table(schema: type[S]) -> DeferredQuery[S]:
     """Return default table for given table schema."""
 
-    def inner() -> sqla.Table:
+    def get_current_default_table() -> sqla.Table:
         ctx = _get_sql_ctx()
+        return ctx.default_table(schema).sqla_table
 
-        valid_keys = list(
-            filter(lambda s: issubclass(schema, s), ctx.schema.defaults().keys())
-        )
-        if len(valid_keys) == 0:
-            raise KeyError(schema)
-
-        meta = ctx.schema.defaults()[valid_keys[0]].metadata
-        return meta.tables[
-            ".".join(
-                [
-                    *([meta.schema] if meta.schema else []),
-                    schema.__tablename__,
-                ]
-            )
-        ]
-
-    return DeferredQuery(inner, schema)
+    return DeferredQuery(get_current_default_table, schema)
