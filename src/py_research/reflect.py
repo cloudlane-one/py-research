@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Iterable
+from typing import Any, Iterable, TypeVar
 
 
 def _get_calling_frame(offset=0):
@@ -28,3 +28,13 @@ def get_full_args_dict(
     ]
 
     return {**dict(zip(argnames, args)), **(kwargs or {})}
+
+
+T = TypeVar("T")
+
+
+def get_all_subclasses(cls: type[T]) -> set[type[T]]:
+    """Return all subclasses of given class."""
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+    )

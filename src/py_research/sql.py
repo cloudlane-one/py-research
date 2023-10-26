@@ -30,6 +30,8 @@ from pandas.api.types import (
 from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
+from py_research.reflect import get_all_subclasses
+
 
 def _hash_df(df: pd.DataFrame | pd.Series) -> str:
     return hex(abs(sum(hash_pandas_object(df))))[2:12]
@@ -266,10 +268,10 @@ def _map_foreignkey_schema(
 
     for schema_name, schema in schema_dict.items():
         if schema is not None and schema.schema_def is not None:
-            for schema_class in schema.schema_def.__subclasses__():
+            for schema_class in get_all_subclasses(schema.schema_def):
                 if (
                     hasattr(schema_class, "__table__")
-                    and schema_class.__table__ == constraint.referred_table
+                    and schema_class.__table__ is constraint.referred_table
                 ):
                     return schema_name
 
