@@ -267,7 +267,10 @@ def _map_foreignkey_schema(
     for schema_name, schema in schema_dict.items():
         if schema is not None and schema.schema_def is not None:
             for schema_class in schema.schema_def.__subclasses__():
-                if schema_class.__table__ == constraint.referred_table:
+                if (
+                    hasattr(schema_class, "__table__")
+                    and schema_class.__table__ == constraint.referred_table
+                ):
                     return schema_name
 
     return referred_schema
