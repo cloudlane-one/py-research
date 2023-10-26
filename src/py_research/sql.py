@@ -256,11 +256,11 @@ DS = TypeVar("DS", bound="DBSchema")
 
 
 def _map_foreignkey_schema(
-    schema_dict: "dict[str | None, Schema | None]",
     table: sqla.Table,
     to_schema: str | None,
     constraint: sqla.ForeignKeyConstraint,
     referred_schema: str | None,
+    schema_dict: "dict[str | None, Schema | None]",
 ) -> str | None:
     assert to_schema in schema_dict
 
