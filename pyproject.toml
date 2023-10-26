@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "py-research"
-version = "0.3.0"
+version = "0.5.1"
 description = "Smooth the corners of Python-based datascience work."
 authors = ["Lorenzo Wormer <l.wormer@pm.me>"]
 readme = "README.md"
@@ -15,7 +15,7 @@ country-converter = "^0.7.4"
 pydantic = "^1.9.0"
 streamlit = "^1.7.0"
 tqdm = "^4.62.3"
-kaleido = "0.1.0post1"
+kaleido = "^0.2.1"
 oracledb = "^1.2.2"
 sqlalchemy = "^2.0.7"
 strenum = "^0.4.10"

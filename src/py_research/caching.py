@@ -34,7 +34,7 @@ class FileCache:
     """Local, file-directory based cache for storing function results."""
 
     path: Path
-    max_cache_days: int = int(10e4)
+    max_cache_days: int = 30
 
     def __post_init__(self):  # noqa: D105
         now = datetime.datetime.now()
@@ -91,7 +91,10 @@ class FileCache:
                             k: v for k, v in id_args.items() if k in id_arg_subset
                         }
 
-                id_value = gen_str_hash(id_args, raw_str=use_raw_arg)
+                id_value = gen_str_hash(
+                    id_args if len(id_args) > 1 else list(id_args.values())[0],
+                    raw_str=use_raw_arg,
+                )
 
                 filename_pattern = f"[0-9]*-[0-9]*-[0-9]*.{id_value}.*"
 
