@@ -382,6 +382,22 @@ class DBSchema(Generic[S_cov]):
 S2 = TypeVar("S2", bound=SchemaBase)
 
 
+def _remove_external_fk(table: sqla.Table):
+    """Dirty vodoo to remove external FKs from existing table."""
+    for c in table.columns.values():
+        c.foreign_keys = set(
+            fk
+            for fk in c.foreign_keys
+            if fk.constraint and fk.constraint.referred_table.schema == table.schema
+        )
+
+    table.foreign_keys = set(  # type: ignore
+        fk
+        for fk in table.foreign_keys
+        if fk.constraint and fk.constraint.referred_table.schema == table.schema
+    )
+
+
 @dataclass
 class DB(Generic[S_cov, DS]):
     """Active connection to a SQL server with schema."""
@@ -527,7 +543,9 @@ class DB(Generic[S_cov, DS]):
             )
         )
 
-    def _table_from_query(self, q: Query[S] | DeferredQuery[S]) -> Table[S_cov]:
+    def _table_from_query(
+        self, q: Query[S] | DeferredQuery[S], with_external_fk: bool = False
+    ) -> Table[S_cov]:
         table_name = f"{self.tag}_query_{q.name}"
 
         if table_name in self.schema.metadata().tables:
@@ -562,7 +580,10 @@ class DB(Generic[S_cov, DS]):
                     ),
                 )
             )
+            if not with_external_fk:
+                _remove_external_fk(sqla_table)
             sqla_table.create(self.engine)
+
             table = Table(sqla_table)
 
             with self.engine.begin() as con:
@@ -579,13 +600,14 @@ class DB(Generic[S_cov, DS]):
         src: pd.DataFrame | Query[S_cov] | DeferredQuery[S_cov],
         schema: type[S_cov] | None = None,
         name: str | None = None,
+        with_external_fk: bool = False,
     ) -> Table[S_cov]:
         """Transfer dataframe or sql query results to manifested table."""
         match src:
             case pd.DataFrame():
                 return self._table_from_df(src, schema, name)
             case Query() | DeferredQuery():
-                return self._table_from_query(src)
+                return self._table_from_query(src, with_external_fk)
 
     def to_df(self, q: Data) -> pd.DataFrame:
         """Transfer manifested table or query results to local dataframe."""
