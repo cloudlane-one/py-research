@@ -397,6 +397,13 @@ def _remove_external_fk(table: sqla.Table):
         if fk.constraint and fk.constraint.referred_table.schema == table.schema
     )
 
+    table.constraints = set(
+        c
+        for c in table.constraints
+        if not isinstance(c, sqla.ForeignKeyConstraint)
+        or c.referred_table.schema == table.schema
+    )
+
 
 @dataclass
 class DB(Generic[S_cov, DS]):
