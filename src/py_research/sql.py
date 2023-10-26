@@ -338,7 +338,7 @@ class DBSchema(Generic[S_cov]):
     def schema_dict(cls) -> dict[str | None, Schema | None]:
         """Return dict with all sub-schemas."""
         return {
-            None: cls.__default__.schema,  # type: ignore
+            None: cls.__default__,
             **{
                 (name if name != "__default__" else None): s
                 for name, s in cls.__dict__.items()
@@ -349,7 +349,7 @@ class DBSchema(Generic[S_cov]):
     @classmethod
     def default(cls) -> Schema[S_cov, Self]:
         """Return default schema."""
-        return cls.__default__.schema  # type: ignore
+        return cls.__default__
 
     @classmethod
     def defaults(cls) -> dict[type[SchemaBase], Schema]:
@@ -448,7 +448,7 @@ class DB(Generic[S_cov, DS]):
     def __getitem__(  # noqa: D105
         self, key: Schema[S2, DS] | None
     ) -> Schema[S2, DS] | Schema[S_cov, DS]:
-        return self.schema.default() if key is None else key.schema  # type: ignore
+        return self.schema.default() if key is None else key  # type: ignore
 
     def activate(self) -> None:
         """Set this instance as the current SQL context."""
