@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass, InitVar
+from dataclasses import InitVar, dataclass
 from datetime import datetime
 from functools import partial, wraps
 from typing import (
@@ -169,6 +169,9 @@ def _map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
 
 
 def _cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
+    if len(df.index.names) > 1:
+        raise NotImplementedError("Multi-index not supported yet.")
+
     return {
         **{
             level: sqla.Column(
@@ -190,14 +193,15 @@ class Query(Data[S_cov]):
     """SQL data defined by a query."""
 
     sel: sqla.Select
-    name: InitVar[str]
+    query_name: InitVar[str]
     schema: type[S_cov] | None = None
-    
-    def __post_init__(self, name: str):
-        self.__name = name
-        
+
+    def __post_init__(self, query_name: str):  # noqa: D105
+        self.__name = query_name
+
     @property
     def name(self) -> str:
+        """Name of this query."""
         return self.__name
 
     @property
@@ -471,10 +475,7 @@ class DB(Generic[S_cov, DS]):
             )
         )
 
-    def _table_from_query(
-        self,
-        q: Query[S] | DeferredQuery[S]
-    ) -> Table[S_cov]:
+    def _table_from_query(self, q: Query[S] | DeferredQuery[S]) -> Table[S_cov]:
         table_name = f"{self.tag}_query_{q.name}"
 
         if table_name in self.default_meta.tables:
@@ -489,8 +490,13 @@ class DB(Generic[S_cov, DS]):
             )
         else:
             sel_res = q.__clause_element__()
-            
-            sqla_table = q.schema.__table__.to_metadata(self.default_meta, schema=None, name=table_name) if q.schema is not None and isinstance(q.schema.__table__, sqla.Table) else sqla.Table(
+
+            sqla_table = (
+                q.schema.__table__.to_metadata(
+                    self.default_meta, schema=None, name=table_name  # type: ignore
+                )
+                if q.schema is not None and isinstance(q.schema.__table__, sqla.Table)
+                else sqla.Table(
                     table_name,
                     self.default_meta,
                     *(
@@ -498,10 +504,9 @@ class DB(Generic[S_cov, DS]):
                         for name, col in sel_res.columns.items()
                     ),
                 )
-            sqla_table.create(self.engine)
-            table = Table(
-                sqla_table
             )
+            sqla_table.create(self.engine)
+            table = Table(sqla_table)
 
             with self.engine.begin() as con:
                 con.execute(
@@ -592,7 +597,11 @@ def query(
         ) -> Query[S] | DeferredQuery[S]:
             res = func(*args, **kwargs)
             return (
-                Query(res if isinstance(res, sqla.Select) else sqla.select(res), func.__name__, schema)
+                Query(
+                    res if isinstance(res, sqla.Select) else sqla.select(res),
+                    func.__name__,
+                    schema,
+                )
                 if not defer
                 else DeferredQuery(partial(func, *args, **kwargs), schema)
             )
