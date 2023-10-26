@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, InitVar
 from datetime import datetime
 from functools import partial, wraps
 from typing import (
@@ -190,8 +190,15 @@ class Query(Data[S_cov]):
     """SQL data defined by a query."""
 
     sel: sqla.Select
+    name: InitVar[str]
     schema: type[S_cov] | None = None
-    name: str | None = None
+    
+    def __post_init__(self, name: str):
+        self.__name = name
+        
+    @property
+    def name(self) -> str:
+        return self.__name
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
@@ -212,7 +219,7 @@ BoundSelFunc: TypeAlias = Callable[[], sqla.Select | sqla.Table]
 
 @dataclass
 class DeferredQuery(Data[S_cov]):
-    """SQL data defined by a query-returning PYthon function."""
+    """SQL data defined by a query-returning Python function."""
 
     func: BoundSelFunc
     schema: type[S_cov] | None = None
@@ -437,7 +444,7 @@ class DB(Generic[S_cov, DS]):
         schema: type[S_cov] | None = None,
         name: str | None = None,
     ) -> Table[S_cov]:
-        table_name = f"{name or 'df'}_{self.tag}_{_hash_df(df)}"
+        table_name = f"{self.tag}_df_{name + '_' if name else ''}{_hash_df(df)}"
 
         if table_name not in self.default_meta.tables and not sqla.inspect(
             self.engine
@@ -466,10 +473,9 @@ class DB(Generic[S_cov, DS]):
 
     def _table_from_query(
         self,
-        q: Query[S] | DeferredQuery[S],
-        name: str | None = None,
+        q: Query[S] | DeferredQuery[S]
     ) -> Table[S_cov]:
-        table_name = f"{name or q.name or 'cached'}_{self.tag}"
+        table_name = f"{self.tag}_query_{q.name}"
 
         if table_name in self.default_meta.tables:
             return Table(self.default_meta.tables[table_name])
@@ -483,8 +489,8 @@ class DB(Generic[S_cov, DS]):
             )
         else:
             sel_res = q.__clause_element__()
-            table = Table(
-                sqla.Table(
+            
+            sqla_table = q.schema.__table__.to_metadata(self.default_meta, schema=None, name=table_name) if q.schema is not None and isinstance(q.schema.__table__, sqla.Table) else sqla.Table(
                     table_name,
                     self.default_meta,
                     *(
@@ -492,6 +498,9 @@ class DB(Generic[S_cov, DS]):
                         for name, col in sel_res.columns.items()
                     ),
                 )
+            sqla_table.create(self.engine)
+            table = Table(
+                sqla_table
             )
 
             with self.engine.begin() as con:
@@ -514,7 +523,7 @@ class DB(Generic[S_cov, DS]):
             case pd.DataFrame():
                 return self._table_from_df(src, schema, name)
             case Query() | DeferredQuery():
-                return self._table_from_query(src, name)
+                return self._table_from_query(src)
 
     def to_df(self, q: Data) -> pd.DataFrame:
         """Transfer manifested table or query results to local dataframe."""
@@ -583,7 +592,7 @@ def query(
         ) -> Query[S] | DeferredQuery[S]:
             res = func(*args, **kwargs)
             return (
-                Query(res if isinstance(res, sqla.Select) else sqla.select(res), schema)
+                Query(res if isinstance(res, sqla.Select) else sqla.select(res), func.__name__, schema)
                 if not defer
                 else DeferredQuery(partial(func, *args, **kwargs), schema)
             )
