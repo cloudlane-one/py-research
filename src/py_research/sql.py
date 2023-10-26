@@ -285,28 +285,10 @@ class Schema(Generic[S_cov, DS]):
     schema_def: type[S_cov] | None = None
     db_schema: type[DS] | None = None
     default: bool = False
-
-    def __copy_to_namespace(self):
-        self.metadata = sqla.MetaData(schema=self.name)
-        if self.schema_def is not None:
-            for table in self.schema_def.metadata.tables.values():
-                table.to_metadata(
-                    self.metadata,
-                    schema=None,  # type: ignore
-                    referred_schema_fn=partial(
-                        _map_foreignkey_schema, schema_dict=self.db_schema.schema_dict()
-                    )
-                    if self.db_schema is not None
-                    else None,
-                )
-
-    def __post_init__(self):  # noqa: D105
-        self.name = None
-        self.__copy_to_namespace()
+    name: str | None = None
 
     def __set_name__(self, _: type, name: str):  # noqa: D105
         self.name = name if name != "__default__" else None
-        self.__copy_to_namespace()
 
     def __get__(  # noqa: D105
         self, instance: Any, owner: type[DS]
@@ -317,13 +299,19 @@ class Schema(Generic[S_cov, DS]):
     @property
     def tables(self) -> dict[str, Table]:
         """Tables defined by this schema."""
-        return {name: Table(table) for name, table in self.metadata.tables.items()}
+        assert self.db_schema is not None
+        return {
+            name: Table(table)
+            for name, table in self.db_schema.metadata().tables.items()
+            if table.schema == self.name
+        }
 
     def __getitem__(self, table: type[S] | str) -> Table[S]:  # noqa: D105
         # TODO: Find a way to limit table to type[S_cov] without losing type info,
         # maybe via decorating the schema classes.
+        assert self.db_schema is not None
         return Table(
-            self.metadata.tables[
+            self.db_schema.metadata().tables[
                 ".".join(
                     [
                         *([self.name] if self.name else []),
@@ -369,6 +357,27 @@ class DBSchema(Generic[S_cov]):
                 defaults[s.schema_def] = s
         return defaults
 
+    @classmethod
+    def metadata(cls) -> sqla.MetaData:
+        """Return metadata containing all this DB's schemas and tables."""
+        if hasattr(cls, "__metadata__"):
+            return cls.__metadata__
+
+        cls.__metadata__ = sqla.MetaData()
+        schema_dict = cls.schema_dict()
+        for schema in schema_dict.values():
+            if schema is not None and schema.schema_def is not None:
+                for table in schema.schema_def.metadata.tables.values():
+                    table.to_metadata(
+                        cls.__metadata__,
+                        schema=schema.name,
+                        referred_schema_fn=partial(
+                            _map_foreignkey_schema, schema_dict=schema_dict
+                        ),
+                    )
+
+        return cls.__metadata__
+
 
 S2 = TypeVar("S2", bound=SchemaBase)
 
@@ -383,7 +392,6 @@ class DB(Generic[S_cov, DS]):
     validate: bool = True
 
     def __post_init__(self):  # noqa: D105
-        self.default_meta = self.schema.default().metadata
         self.__token = None
 
         self.engine = sqla.create_engine(self.url)
@@ -393,54 +401,49 @@ class DB(Generic[S_cov, DS]):
 
             inspector = sqla.inspect(self.engine)
 
-            for schema_name, schema in self.schema.schema_dict().items():
-                if schema_name is not None:
-                    assert inspector.has_schema(schema_name)
+            for table in self.schema.metadata().tables.values():
+                if table.schema is not None:
+                    assert inspector.has_schema(table.schema)
 
-                meta = schema.metadata if schema is not None else sqla.MetaData()
+                assert inspector.has_table(table.name, table.schema)
 
-                for table in meta.tables.values():
-                    assert inspector.has_table(table.name, schema_name)
+                db_columns = {
+                    c["name"]: c
+                    for c in inspector.get_columns(table.name, table.schema)
+                }
+                for column in table.columns:
+                    assert column.name in db_columns
 
-                    db_columns = {
-                        c["name"]: c
-                        for c in inspector.get_columns(table.name, schema_name)
-                    }
-                    for column in table.columns:
-                        assert column.name in db_columns
+                    db_col = db_columns[column.name]
+                    assert isinstance(db_col["type"], type(column.type))
+                    assert (
+                        db_col["nullable"] == column.nullable or column.nullable is None
+                    )
 
-                        db_col = db_columns[column.name]
-                        assert isinstance(db_col["type"], type(column.type))
-                        assert (
-                            db_col["nullable"] == column.nullable
-                            or column.nullable is None
-                        )
+                db_pk = inspector.get_pk_constraint(table.name, table.schema)
+                if (
+                    len(db_pk["constrained_columns"]) > 0
+                ):  # Allow source tbales without pk
+                    assert set(db_pk["constrained_columns"]) == set(
+                        table.primary_key.columns.keys()
+                    )
 
-                    db_pk = inspector.get_pk_constraint(table.name, schema_name)
-                    if (
-                        len(db_pk["constrained_columns"]) > 0
-                    ):  # Allow source tbales without pk
-                        assert set(db_pk["constrained_columns"]) == set(
-                            table.primary_key.columns.keys()
-                        )
-
-                    db_fks = inspector.get_foreign_keys(table.name, schema_name)
-                    for fk in table.foreign_key_constraints:
-                        matches = [
+                db_fks = inspector.get_foreign_keys(table.name, table.schema)
+                for fk in table.foreign_key_constraints:
+                    matches = [
+                        (
+                            set(db_fk["constrained_columns"]) == set(fk.column_keys),
                             (
-                                set(db_fk["constrained_columns"])
-                                == set(fk.column_keys),
-                                (
-                                    db_fk["referred_table"].lower()
-                                    == fk.referred_table.name.lower()
-                                ),
-                                set(db_fk["referred_columns"])
-                                == set(f.column.name for f in fk.elements),
-                            )
-                            for db_fk in db_fks
-                        ]
+                                db_fk["referred_table"].lower()
+                                == fk.referred_table.name.lower()
+                            ),
+                            set(db_fk["referred_columns"])
+                            == set(f.column.name for f in fk.elements),
+                        )
+                        for db_fk in db_fks
+                    ]
 
-                        assert any(all(m) for m in matches)
+                    assert any(all(m) for m in matches)
 
     @overload
     def __getitem__(self, key: Schema[S2, DS]) -> Schema[S2, DS]:
@@ -469,18 +472,18 @@ class DB(Generic[S_cov, DS]):
 
     def default_table(self, schema: type[S]) -> Table[S]:
         """Return default table for given table schema."""
-        valid_keys = list(
-            filter(lambda s: issubclass(schema, s), self.schema.defaults().keys())
-        )
+        defaults = self.schema.defaults()
+
+        valid_keys = list(filter(lambda s: issubclass(schema, s), defaults.keys()))
         if len(valid_keys) == 0:
             raise KeyError(schema)
 
-        meta = self.schema.defaults()[valid_keys[0]].metadata
+        schema_name = defaults[valid_keys[0]].name
         return Table(
-            meta.tables[
+            self.schema.metadata().tables[
                 ".".join(
                     [
-                        *([meta.schema] if meta.schema else []),
+                        *([schema_name] if schema_name else []),
                         schema.__tablename__,
                     ]
                 )
@@ -495,7 +498,7 @@ class DB(Generic[S_cov, DS]):
     ) -> Table[S_cov]:
         table_name = f"{self.tag}_df_{name + '_' if name else ''}{_hash_df(df)}"
 
-        if table_name not in self.default_meta.tables and not sqla.inspect(
+        if table_name not in self.schema.metadata().tables and not sqla.inspect(
             self.engine
         ).has_table(table_name, schema=None):
             cols = (
@@ -506,30 +509,34 @@ class DB(Generic[S_cov, DS]):
                 if schema is not None
                 else _cols_from_df(df)
             )
-            table = Table(sqla.Table(table_name, self.default_meta, *cols.values()))
+            table = Table(
+                sqla.Table(table_name, self.schema.metadata(), *cols.values())
+            )
             table.sqla_table.create(self.engine)
             df.reset_index()[list(cols.keys())].to_sql(
                 table_name, self.engine, if_exists="append", index=False
             )
 
         return (
-            Table(self.default_meta.tables[table_name])
-            if table_name in self.default_meta.tables
+            Table(self.schema.metadata().tables[table_name])
+            if table_name in self.schema.metadata().tables
             else Table(
-                sqla.Table(table_name, self.default_meta, autoload_with=self.engine)
+                sqla.Table(
+                    table_name, self.schema.metadata(), autoload_with=self.engine
+                )
             )
         )
 
     def _table_from_query(self, q: Query[S] | DeferredQuery[S]) -> Table[S_cov]:
         table_name = f"{self.tag}_query_{q.name}"
 
-        if table_name in self.default_meta.tables:
-            return Table(self.default_meta.tables[table_name])
+        if table_name in self.schema.metadata().tables:
+            return Table(self.schema.metadata().tables[table_name])
         elif sqla.inspect(self.engine).has_table(table_name, schema=None):
             return Table(
                 sqla.Table(
                     table_name,
-                    self.default_meta,
+                    self.schema.metadata(),
                     autoload_with=self.engine,
                 )
             )
@@ -538,7 +545,7 @@ class DB(Generic[S_cov, DS]):
 
             sqla_table = (
                 q.schema.__table__.to_metadata(
-                    self.default_meta,
+                    self.schema.metadata(),
                     schema=None,  # type: ignore
                     referred_schema_fn=partial(
                         _map_foreignkey_schema, schema_dict=self.schema.schema_dict()
@@ -548,7 +555,7 @@ class DB(Generic[S_cov, DS]):
                 if q.schema is not None and isinstance(q.schema.__table__, sqla.Table)
                 else sqla.Table(
                     table_name,
-                    self.default_meta,
+                    self.schema.metadata(),
                     *(
                         sqla.Column(name, col.type, primary_key=col.primary_key)
                         for name, col in sel_res.columns.items()
