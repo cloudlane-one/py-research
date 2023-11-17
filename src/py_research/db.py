@@ -909,7 +909,7 @@ class DFDB(dict[str, pd.DataFrame]):
                         tabs[0]
                         + (
                             self[tabs[0]].index.name
-                            or ("id" if tabs[0] != tabs[1] else "id.0")
+                            or (".id" if tabs[0] != tabs[1] else ".id.0")
                         )
                     ),
                     right_on="db_index",
@@ -921,7 +921,7 @@ class DFDB(dict[str, pd.DataFrame]):
                         tabs[1]
                         + (
                             self[tabs[1]].index.name
-                            or ("id" if tabs[0] != tabs[1] else "id.1")
+                            or (".id" if tabs[0] != tabs[1] else ".id.1")
                         )
                     ),
                     right_on="db_index",
