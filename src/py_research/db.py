@@ -488,7 +488,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     for c, p in policies.items():
                         # Only do conflict resolution if there are any for this col.
                         if any(conflicts[c]):
-                            match (p):
+                            match p:
                                 case "raise":
                                     # Record all conflicts.
                                     errors = {
@@ -857,7 +857,7 @@ class DFDB(dict[str, pd.DataFrame]):
             # Perform reduction to aggregate all tables into one.
             merged.append(reduce(double_merge, path)[1])
 
-        overlap_cols = [f"{base}.{col}" for col in base_df.columns]
+        overlap_cols = base_df.columns
         base_index = f"{base_name}.{base_df.index.name or 'id'}"
 
         return (
@@ -905,13 +905,13 @@ class DFDB(dict[str, pd.DataFrame]):
                 self[link_tab]
                 .merge(
                     node_df.loc[node_df["table"] == tabs[0]],
-                    left_on=f"{tabs[0]}.{self[tabs[0]].index.name or 'id'}",
+                    left_on=f"{tabs[0]}.{self[tabs[0]].index.name or ('id' if tabs[0] != tabs[1] else 'id.0')}",
                     right_on="db_index",
                 )
                 .rename(columns={"id": "source"})
                 .merge(
                     node_df.loc[node_df["table"] == tabs[1]],
-                    left_on=f"{tabs[1]}.{self[tabs[1]].index.name or 'id'}",
+                    left_on=f"{tabs[1]}.{self[tabs[1]].index.name or ('id' if tabs[0] != tabs[1] else 'id.1')}",
                     right_on="db_index",
                 )
                 .rename(columns={"id": "target"})[["source", "target"]]
