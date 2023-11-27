@@ -197,6 +197,8 @@ class Query(Data[S_cov]):
     sel: sqla.Select
     query_name: InitVar[str]
     schema: type[S_cov] | None = None
+    
+    __subquery: sqla.Subquery | None = None
 
     def __post_init__(self, query_name: str):  # noqa: D105
         self.__name = query_name
@@ -211,7 +213,10 @@ class Query(Data[S_cov]):
         return dict(self.__clause_element__().columns)
 
     def __clause_element__(self) -> sqla.Subquery:  # noqa: D105
-        return self.sel.subquery()
+        if self.__subquery is None:
+            self.__subquery = self.sel.subquery()
+            
+        return self.__subquery
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
@@ -229,14 +234,19 @@ class DeferredQuery(Data[S_cov]):
 
     func: BoundSelFunc
     schema: type[S_cov] | None = None
+    
+    __subquery: sqla.Subquery | sqla.Table | None = None
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
         return dict(self.__clause_element__().columns)
 
     def __clause_element__(self) -> sqla.Subquery | sqla.Table:  # noqa: D105
-        res = self.func()
-        return res.subquery() if isinstance(res, sqla.Select) else res
+        if self.__subquery is None:
+            res = self.func()
+            self.__subquery = res.subquery() if isinstance(res, sqla.Select) else res
+            
+        return self.__subquery
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
