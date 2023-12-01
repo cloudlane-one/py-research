@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Callable
-from typing import Any, Iterable
+from typing import Any, Sequence, TypeVar
 
 
 def _get_calling_frame(offset=0):
@@ -19,12 +19,24 @@ def get_calling_module_name():
 
 
 def get_full_args_dict(
-    func: Callable, args: Iterable, kwargs: dict[str, Any] | None = None
+    func: Callable, args: Sequence, kwargs: dict[str, Any] | None = None
 ) -> dict[str, Any]:
     """Return dict of all args + kwargs with names."""
     argspec = inspect.getfullargspec(func)
-    argnames = [
-        a for i, a in enumerate(argspec.args) if i not in list(argspec.defaults or [])
-    ]
 
-    return {**dict(zip(argnames, args)), **(kwargs or {})}
+    arg_defaults = argspec.defaults or []
+    kwdefaults = dict(zip(argspec.args[-len(arg_defaults) :], arg_defaults))
+
+    posargs = dict(zip(argspec.args[: len(args)], args))
+
+    return {**kwdefaults, **posargs, **(kwargs or {})}
+
+
+T = TypeVar("T")
+
+
+def get_all_subclasses(cls: type[T]) -> set[type[T]]:
+    """Return all subclasses of given class."""
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+    )

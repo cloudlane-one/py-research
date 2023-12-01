@@ -488,7 +488,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     for c, p in policies.items():
                         # Only do conflict resolution if there are any for this col.
                         if any(conflicts[c]):
-                            match (p):
+                            match p:
                                 case "raise":
                                     # Record all conflicts.
                                     errors = {
@@ -857,7 +857,7 @@ class DFDB(dict[str, pd.DataFrame]):
             # Perform reduction to aggregate all tables into one.
             merged.append(reduce(double_merge, path)[1])
 
-        overlap_cols = [f"{base}.{col}" for col in base_df.columns]
+        overlap_cols = base_df.columns
         base_index = f"{base_name}.{base_df.index.name or 'id'}"
 
         return (
