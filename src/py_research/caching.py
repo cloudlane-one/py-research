@@ -34,7 +34,7 @@ class FileCache:
     """Local, file-directory based cache for storing function results."""
 
     path: Path
-    max_cache_days: int = 30
+    max_cache_days: int = 7
 
     def __post_init__(self):  # noqa: D105
         now = datetime.datetime.now()
