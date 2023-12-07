@@ -1,5 +1,7 @@
 name: Publish semantic release to PyPI based on Gitmoji commit messages
 on: push
+permissions:
+  contents: write
 jobs:
   semantic-release:
     runs-on: ubuntu-latest
