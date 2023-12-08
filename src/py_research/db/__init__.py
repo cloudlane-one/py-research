@@ -1,433 +1,91 @@
-"""Functions and classes for importing new data."""
+"""Omni-purpose, easy to use relational database."""
 
 import re
-from collections.abc import Hashable, Mapping
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from functools import partial, reduce
-from itertools import chain, groupby, product
+from itertools import product
 from pathlib import Path
-from typing import Any, Callable, Iterable, Literal, Sequence, TypeAlias, cast, overload
+from typing import Self, TypeAlias
 
 import pandas as pd
-from inflect import engine as inflect_engine
+from sqlalchemy import URL
 
-from py_research.hashing import gen_str_hash
-
-ImportConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
-
-ImportConflicts: TypeAlias = dict[tuple[str, str, str], tuple[Any, Any]]
-
-
-class ImportConflictError(ValueError):
-    """Irreconsilable conflicts during import of new data into an existing database."""
-
-    def __init__(self, conflicts: ImportConflicts) -> None:  # noqa: D107
-        self.conflicts = conflicts
-        super().__init__(
-            f"Conflicting values: {conflicts}"
-            if len(conflicts) < 5
-            else f"{len(conflicts)} in table-columns "
-            + str(set((k[0], k[2]) for k in conflicts.keys()))
-        )
-
-
-Scalar = str | int | float | datetime
-
-AttrMap = Mapping[str, str | bool | dict]
-"""Mapping of hierarchical attributes to table rows"""
-
-RelationalMap = Mapping[str, "str | bool | dict | TableMap | list[TableMap]"]
-
-
-@dataclass
-class TableMap:
-    """Defines how to map a data item to the database."""
-
-    table: str
-    map: RelationalMap | set[str] | str | Callable[
-        [dict | str], RelationalMap | set[str] | str
-    ]
-    name: str | None = None
-    link_map: AttrMap | None = None
-
-    hash_id_subset: list[str] | None = None
-    """Supply a list of column names as a subset of all columns to use
-    for auto-generating row ids via sha256 hashing.
-    """
-    match_by_attr: bool | str = False
-    """Match this mapped data to target table (by given attr)."""
-
-    ext_maps: "list[TableMap] | None" = None
-    """Map attributes on the same level to different tables"""
-
-    ext_attr: str | dict[str, Any] | None = None
-    """Override attr to use when linking this table with a parent table."""
-
-    id_attr: str | None = None
-    """Use given attr as id directly, no hashing."""
-
-    conflict_policy: ImportConflictPolicy = "raise"
-    """Which policy to use if import conflicts occur for this table."""
-
-
-SubMap = tuple[dict | list, TableMap | list[TableMap]]
-
-
-def _resolve_relmap(
-    node: dict, mapping: RelationalMap
-) -> tuple[pd.Series, dict[str, SubMap]]:
-    """Extract hierarchical data into set of scalar attributes + linked data objects."""
-    # Split the current mapping level into groups based on type.
-    target_groups: dict[type, dict] = {
-        t: dict(g)  # type: ignore
-        for t, g in groupby(
-            sorted(
-                mapping.items(),
-                key=lambda item: str(type(item[1])),
-            ),
-            key=lambda item: type(item[1]),
-        )
-    }  # type: ignore
-
-    # First list and handle all scalars, hence data attributes on the current level,
-    # which are to be mapped to table columns.
-    scalars = dict(
-        chain(
-            (target_groups.get(str) or {}).items(),
-            (target_groups.get(bool) or {}).items(),
-        )
-    )
-
-    cols = {
-        (col if isinstance(col, str) else attr): data
-        for attr, col in scalars.items()
-        if isinstance(data := node.get(attr), Scalar)
-    }
-
-    links = {
-        attr: (data, cast(TableMap | list[TableMap], sub_map))
-        for attr, sub_map in {
-            **(target_groups.get(TableMap) or {}),
-            **(target_groups.get(list) or {}),
-        }.items()
-        if isinstance(data := node.get(attr), dict | list)
-    }
-
-    # Handle nested data attributes (which come as dict types).
-    for attr, sub_map in (target_groups.get(dict) or {}).items():
-        sub_node = node.get(attr)
-        if isinstance(sub_node, dict):
-            sub_row, sub_links = _resolve_relmap(sub_node, cast(dict, sub_map))
-            cols = {**cols, **sub_row}
-            links = {**links, **sub_links}
-
-    return pd.Series(cols, dtype=object), links
-
-
-def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
-    """Generate and assign row id."""
-    hash_row = (
-        row[list(set(hash_subset) & set(row.index))] if hash_subset is not None else row
-    )
-    row_id = gen_str_hash(hash_row.to_dict())
-
-    return row_id
-
-
-DictDB = dict[str, dict[Hashable, dict[str, Any]]]
-
-inf = inflect_engine()
+from py_research.db.conflicts import DataConflictPolicy
 
 TableSelect: TypeAlias = str | tuple[str, pd.DataFrame]
 MergePlan: TypeAlias = TableSelect | Iterable[TableSelect | Iterable[TableSelect]]
 NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
 
 
-def _resolve_links(
-    mapping: TableMap,
-    database: DictDB,
-    row: pd.Series,
-    links: list[tuple[str | dict[str, Any] | None, SubMap]],
-    collect_conflicts: bool = False,
-    _all_conflicts: ImportConflicts | None = None,
-) -> ImportConflicts:
-    _all_conflicts = _all_conflicts or {}
-    # Handle nested data, which is to be extracted into separate tables and linked.
-    for attr, (sub_data, sub_maps) in links:
-        # Get info about the link table to use from mapping
-        # (or generate a new for the link table).
+@dataclass
+class Table:
+    """Relational database table."""
 
-        if not isinstance(sub_maps, list):
-            sub_maps = [sub_maps]
-
-        for sub_map in sub_maps:
-            link_table = f"{mapping.table}_{sub_map.table}"
-            link_table_alt = f"{sub_map.table}_{mapping.table}"
-
-            if not isinstance(sub_data, list):
-                sub_data = [sub_data]
-
-            if link_table not in database:
-                if link_table_alt in database:
-                    link_table = link_table_alt
-                else:
-                    database[link_table] = {}
-
-            for sub_data_item in sub_data:
-                if isinstance(sub_data_item, dict):
-                    rel_row, _all_conflicts = _nested_to_relational(
-                        sub_data_item,
-                        sub_map,
-                        database,
-                        collect_conflicts,
-                        _all_conflicts,
-                    )
-
-                    link_row, _ = (
-                        _resolve_relmap(sub_data_item, sub_map.link_map)
-                        if sub_map.link_map is not None
-                        else (pd.Series(dtype=object), None)
-                    )
-
-                    link_row[
-                        f"{mapping.table}.id"
-                        + ("" if mapping.table != sub_map.table else ".0")
-                    ] = row.name
-                    link_row[
-                        f"{sub_map.table}.id"
-                        + ("" if mapping.table != sub_map.table else ".1")
-                    ] = rel_row.name
-
-                    if isinstance(attr, str | None):
-                        link_row["attribute"] = attr
-                    else:
-                        link_row = pd.Series({**link_row.to_dict(), **attr})
-
-                    link_row.name = _gen_row_id(link_row)
-
-                    database[link_table][link_row.name] = link_row.to_dict()
-
-    return _all_conflicts
+    df: pd.DataFrame
+    db: "DB"
 
 
-def _nested_to_relational(  # noqa: C901
-    data: dict | str,
-    mapping: TableMap,
-    database: DictDB,
-    collect_conflicts: bool = False,
-    _all_conflicts: ImportConflicts | None = None,
-) -> tuple[pd.Series, ImportConflicts]:
-    _all_conflicts = _all_conflicts or {}
-    # Initialize new table as defined by mapping, if it doesn't exist yet.
-    if mapping.table not in database:
-        database[mapping.table] = {}
+class DBSchema:
+    """Base class for database schemas defined in Python."""
 
-    resolved_map = (
-        mapping.map(data) if isinstance(mapping.map, Callable) else mapping.map
-    )
+    version: str | None = None
 
-    # Extract row of data attributes and links to other objects.
-    row = None
-    links: list[tuple[str | dict[str, Any] | None, SubMap]] = []
-    # If mapping is only a string, extract the target attr directly.
-    if isinstance(data, str):
-        assert isinstance(resolved_map, str)
-        row = pd.Series({resolved_map: data}, dtype=object)
-    else:
-        if isinstance(resolved_map, set):
-            row = pd.Series(
-                {k: v for k, v in data.items() if k in resolved_map}, dtype=object
+
+@dataclass
+class DB:
+    """Relational database consisting of multiple named tables."""
+
+    schema: type[DBSchema] | None = None
+    url: URL | Path | None = None
+    last_update: date | datetime | None = None
+
+    @staticmethod
+    def _df_dict_from_excel(file_path: Path) -> dict[str, pd.DataFrame]:
+        """Import database from an excel file."""
+        return {
+            str(k): df
+            for k, df in pd.read_excel(file_path, sheet_name=None, index_col=0).items()
+        }
+
+    def _import_df_dict(self, df_dict: dict[str, pd.DataFrame]) -> Self:
+        """Import database from an excel file."""
+        self.__df_dict = {**self.__df_dict, **df_dict}
+        return self
+
+    def __post_init__(self):  # noqa: D105
+        if isinstance(self.url, URL):
+            raise NotImplementedError("SQL backends via URL are not implemented yet.")
+
+        self.__df_dict = {}
+        self.__file_path = None
+
+        # TODO: initialize _meta table from schema spec
+
+        if self.url is not None:
+            self.__file_path = (
+                Path.cwd() / "database.xlsx" if self.url.is_dir() is None else self.url
             )
-        elif isinstance(resolved_map, dict):
-            row, link_dict = _resolve_relmap(data, resolved_map)
-            links = [*links, *link_dict.items()]
-        else:
-            raise TypeError(
-                f"Unsupported mapping type {type(resolved_map)}"
-                f" for data of type {type(data)}"
-            )
+            self.__df_dict = DB._df_dict_from_excel(self.__file_path)
+            if (
+                "_meta" not in self.__df_dict.keys()
+                or "_rels" not in self.__df_dict.keys()
+            ):
+                raise ValueError("Malformatted excel file.")
 
-    row.name = (
-        _gen_row_id(row, mapping.hash_id_subset)
-        if not mapping.id_attr
-        else row[mapping.id_attr]
-    )
+            # TODO: Validate schema including version
+            # TODO: Validate last_update
 
-    if not isinstance(row.name, str | int):
-        raise ValueError(
-            f"Value of `'{mapping.id_attr}'` (`TableMap.id_attr`) "
-            f"must be a string or int for all objects, but received {row.name}"
-        )
-
-    if mapping.ext_maps is not None:
-        assert isinstance(data, dict)
-        links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
-
-    _all_conflicts = _resolve_links(
-        mapping, database, row, links, collect_conflicts, _all_conflicts
-    )
-
-    existing_row: dict[str, Any] | None = None
-    if mapping.match_by_attr:
-        # Make sure any existing data in database is consistent with new data.
-        match_by = cast(str, mapping.match_by_attr)
-        if mapping.match_by_attr is True:
-            assert isinstance(resolved_map, str)
-            match_by = resolved_map
-
-        match_to = row[match_by]
-
-        # Match to existing row or create new one.
-        existing_rows: list[tuple[str, dict[str, Any]]] = list(
-            filter(
-                lambda i: i[1][match_by] == match_to, database[mapping.table].items()
-            )
-        )
-
-        if len(existing_rows) > 0:
-            existing_row_id, existing_row = existing_rows[0]
-            # Take over the id of the existing row.
-            row.name = existing_row_id
-    else:
-        existing_row = database[mapping.table].get(row.name)
-
-    if existing_row is not None:
-        existing_attrs = set(
-            str(k) for k, v in existing_row.items() if k and pd.notna(v)
-        )
-        new_attrs = set(str(k) for k, v in row.items() if k and pd.notna(v))
-
-        # Assert that overlapping attributes are equal.
-        intersect = existing_attrs & new_attrs
-
-        if mapping.conflict_policy == "raise":
-            conflicts = {
-                (mapping.table, row.name, c): (existing_row[c], row[c])
-                for c in intersect
-                if existing_row[c] != row[c]
-            }
-
-            if len(conflicts) > 0:
-                if not collect_conflicts:
-                    raise ImportConflictError(conflicts)
-
-                _all_conflicts = {**_all_conflicts, **conflicts}
-        if mapping.conflict_policy == "ignore":
-            row = pd.Series({**row.loc[list(new_attrs)], **existing_row}, name=row.name)
-        else:
-            row = pd.Series({**existing_row, **row.loc[list(new_attrs)]}, name=row.name)
-
-    # Add row to database table or update it.
-    database[mapping.table][row.name] = row.to_dict()
-
-    # Return row (used for recursion).
-    return row, _all_conflicts
-
-
-class DFDB(dict[str, pd.DataFrame]):
-    """Relational database represented as dictionary of dataframes."""
-
-    @staticmethod
-    def from_dicts(db: DictDB) -> "DFDB":
-        """Transform dictionary representation of the database into dataframes."""
-        return DFDB(
-            **{
-                name: pd.DataFrame.from_dict(data, orient="index")
-                for name, data in db.items()
-            }
-        )
-
-    @staticmethod
-    def from_excel(file_path: Path | str | None = None) -> "DFDB":
-        """Export database into single excel file."""
-        file_path = Path.cwd() / "database.xlsx" if file_path is None else file_path
-
-        return DFDB(
-            **{
-                str(k): df
-                for k, df in pd.read_excel(
-                    file_path, sheet_name=None, index_col=0
-                ).items()
-            }
-        )
-
-    @overload
-    @staticmethod
-    def from_nested(
-        data: dict, mapping: TableMap, collect_conflicts: Literal[True] = ...
-    ) -> "tuple[DFDB, ImportConflicts]":
-        ...
-
-    @overload
-    @staticmethod
-    def from_nested(
-        data: dict, mapping: TableMap, collect_conflicts: bool = ...
-    ) -> "DFDB":
-        ...
-
-    @staticmethod
-    def from_nested(
-        data: dict, mapping: TableMap, collect_conflicts: bool = False
-    ) -> "DFDB | tuple[DFDB, ImportConflicts]":
-        """Map hierarchical data to columns and tables in in a new database.
-
-        Args:
-            data: Hierarchical data to be mapped to a relational database
-            mapping:
-                Definition of how to map hierarchical attributes to
-                database tables and columns
-            collect_conflicts:
-                Collect all conflicts and return them, rather than stopping right away.
-        """
-        db = {}
-        _, conflicts = _nested_to_relational(data, mapping, db, collect_conflicts)
-        return (
-            DFDB.from_dicts(db)
-            if not collect_conflicts
-            else (DFDB.from_dicts(db), conflicts)
-        )
-
-    @overload
-    def import_nested(
-        self, data: dict, mapping: TableMap, collect_conflicts: Literal[True] = ...
-    ) -> "tuple[DFDB, ImportConflicts]":
-        ...
-
-    @overload
-    def import_nested(
-        self, data: dict, mapping: TableMap, collect_conflicts: bool = ...
-    ) -> "DFDB":
-        ...
-
-    def import_nested(
-        self, data: dict, mapping: TableMap, collect_conflicts: bool = False
-    ) -> "DFDB | tuple[DFDB, ImportConflicts]":
-        """Map hierarchical data to columns and tables in database & insert new data.
-
-        Args:
-            data: Hierarchical data to be mapped to a relational database
-            mapping:
-                Definition of how to map hierarchical attributes to
-                database tables and columns
-            database: Relational database to map data to
-            collect_conflicts:
-                Collect all conflicts and return them, rather than stopping right away.
-        """
-        dict_db = self.to_dicts()
-        _, conflicts = _nested_to_relational(data, mapping, dict_db, collect_conflicts)
-        return (
-            DFDB.from_dicts(dict_db)
-            if not collect_conflicts
-            else (DFDB.from_dicts(dict_db), conflicts)
-        )
+    def __getitem__(self, name: str) -> Table:  # noqa: D105
+        return Table(df=self.__df_dict[name], db=self)
 
     def combine(
         self,
-        other: "DFDB",
-        conflict_policy: ImportConflictPolicy
-        | dict[str, ImportConflictPolicy | dict[str, ImportConflictPolicy]] = "raise",
-    ) -> "DFDB":
+        other: "DB",
+        conflict_policy: DataConflictPolicy
+        | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]] = "raise",
+    ) -> "DB":
         """Import other database into this one, returning a new database object.
 
         Args:
@@ -441,20 +99,20 @@ class DFDB(dict[str, pd.DataFrame]):
             New database representing a merge of information in ``self`` and ``other``.
         """
         # Get the union of all table (names) in both databases.
-        tables = set(self.keys()) | set(other.keys())
+        tables = set(self.__df_dict.keys()) | set(other.__df_dict.keys())
 
         # Set up variable to contain the merged database.
         merged: dict[str, pd.DataFrame] = {}
 
         for t in tables:
-            if t not in self:
-                merged[t] = other[t]
-            elif t not in other:
-                merged[t] = self[t]
+            if t not in self.__df_dict:
+                merged[t] = other[t].df
+            elif t not in other.__df_dict:
+                merged[t] = self[t].df
             # Perform more complicated matching if table exists in both databases.
             else:
                 # Align index and columns of both tables.
-                left, right = self[t].align(other[t])
+                left, right = self[t].df.align(other[t].df)
 
                 # First merge data, ignoring conflicts per default.
                 result = left.combine_first(right)
@@ -467,13 +125,13 @@ class DFDB(dict[str, pd.DataFrame]):
                     # Deal with conflicts according to `conflict_policy`.
 
                     # Determine default policy.
-                    default_policy: ImportConflictPolicy = (
+                    default_policy: DataConflictPolicy = (
                         ("raise" if isinstance(cp := conflict_policy[t], dict) else cp)
                         if isinstance(conflict_policy, dict)
                         else conflict_policy
                     )
                     # Expand default policy to all columns.
-                    policies: dict[str, ImportConflictPolicy] = {
+                    policies: dict[str, DataConflictPolicy] = {
                         c: default_policy for c in conflicts.columns
                     }
                     # Assign column-level custom policies.
@@ -489,7 +147,15 @@ class DFDB(dict[str, pd.DataFrame]):
                         # Only do conflict resolution if there are any for this col.
                         if any(conflicts[c]):
                             match p:
-                                case "raise":
+                                case "override" if len(errors) == 0:
+                                    # Override conflicts with data from left.
+                                    result[c][conflicts[c]] = right[conflicts[c]]
+                                    result[c] = result[c]
+
+                                case "ignore" if len(errors) == 0:
+                                    # Nothing to do here.
+                                    pass
+                                case _:
                                     # Record all conflicts.
                                     errors = {
                                         **errors,
@@ -502,20 +168,11 @@ class DFDB(dict[str, pd.DataFrame]):
                                         },
                                     }
 
-                                case "override" if len(errors) == 0:
-                                    # Override conflicts with data from left.
-                                    result[c][conflicts[c]] = right[conflicts[c]]
-                                    result[c] = result[c]
-
-                                case "ignore" if len(errors) == 0:
-                                    # Nothing to do here.
-                                    pass
-
                 merged[t] = result
 
-        return DFDB(merged)
+        return DB()._import_df_dict(merged)
 
-    def __or__(self, other: "DFDB") -> "DFDB":  # noqa: D105
+    def __or__(self, other: "DB") -> "DB":  # noqa: D105
         return self.combine(other)
 
     def relations(self) -> pd.DataFrame:
@@ -523,7 +180,7 @@ class DFDB(dict[str, pd.DataFrame]):
         return pd.DataFrame.from_records(
             [
                 (t, m[1], m[2])
-                for t, df in self.items()
+                for t, df in self.__df_dict.items()
                 for c in df.columns
                 if (m := re.match(r"(\w+)\.(\w+)\.?\w*", c))
             ],
@@ -534,7 +191,7 @@ class DFDB(dict[str, pd.DataFrame]):
         """Return all valid references contained in this database."""
         rel_vals = []
         rel_keys = []
-        for t, df in self.items():
+        for t, df in self.__df_dict.items():
             df = df.rename_axis("id", axis="index") if not df.index.name else df
 
             rels = pd.DataFrame.from_records(
@@ -553,7 +210,7 @@ class DFDB(dict[str, pd.DataFrame]):
                             df[[c]]
                             .reset_index()
                             .merge(
-                                self[str(tt)].pipe(
+                                self[str(tt)].df.pipe(
                                     lambda df: df.rename_axis("id", axis="index")
                                     if not df.index.name
                                     else df
@@ -573,13 +230,13 @@ class DFDB(dict[str, pd.DataFrame]):
 
         return pd.concat(rel_vals, keys=rel_keys, names=["src_table", "target_table"])
 
-    def trim(self) -> "DFDB":
+    def trim(self) -> "DB":
         """Return new database without orphan data (data w/ no refs to or from)."""
         # Get the status of each single reference.
         valid_refs = self.valid_refs()
 
         result = {}
-        for t, df in self.items():
+        for t, df in self.__df_dict.items():
             f = pd.Series(False, index=df.index)
 
             try:
@@ -607,23 +264,25 @@ class DFDB(dict[str, pd.DataFrame]):
 
             result[t] = df.loc[f]
 
-        return DFDB(result)
+        return DB()._import_df_dict(result)
 
     def centered_trim(
         self, centers: list[str], circuit_breakers: list[str] | None = None
-    ) -> "DFDB":
+    ) -> "DB":
         """Return new database minus data without (indirect) refs to any given table."""
         circuit_breakers = circuit_breakers or []
 
         # Get the status of each single reference.
         valid_refs = self.valid_refs()
 
-        current_stage = {c: set(self[c].index) for c in centers}
-        visit_counts = {t: pd.Series(0, index=df.index) for t, df in self.items()}
+        current_stage = {c: set(self[c].df.index) for c in centers}
+        visit_counts = {
+            t: pd.Series(0, index=df.index) for t, df in self.__df_dict.items()
+        }
         visited: set[str] = set()
 
         while any(len(s) > 0 for s in current_stage.values()):
-            next_stage = {t: set() for t in self.keys()}
+            next_stage = {t: set() for t in self.__df_dict.keys()}
             for t, idx in current_stage.items():
                 if t in visited and t in circuit_breakers:
                     continue
@@ -670,11 +329,13 @@ class DFDB(dict[str, pd.DataFrame]):
 
             current_stage = next_stage
 
-        return DFDB({t: self[t].loc[rc > 0] for t, rc in visit_counts.items()})
+        return DB()._import_df_dict(
+            {t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()}
+        )
 
     def filter(
         self, filters: dict[str, pd.Series], extra_cb: list[str] | None = None
-    ) -> "DFDB":
+    ) -> "DB":
         """Return new db only containing data related to rows matched by ``filters``.
 
         Args:
@@ -684,8 +345,11 @@ class DFDB(dict[str, pd.DataFrame]):
                 to use when trimming the database according to the filters
         """
         # Filter out unmatched rows of filter tables.
-        new_db = DFDB(
-            {t: (df[filters[t]] if t in filters else df) for t, df in self.items()}
+        new_db = DB()._import_df_dict(
+            {
+                t: (df[filters[t]] if t in filters else df)
+                for t, df in self.__df_dict.items()
+            }
         )
 
         # Always use the filter tables as circuit_breakes.
@@ -696,24 +360,22 @@ class DFDB(dict[str, pd.DataFrame]):
         # remaining rows in filter tables are left.
         return new_db.centered_trim(list(filters.keys()), circuit_breakers=cb)
 
-    def to_dicts(self) -> DictDB:
-        """Transform database into dictionary representation."""
-        return {name: df.to_dict(orient="index") for name, df in self.items()}
-
-    def copy(self, deep: bool = True) -> "DFDB":
+    def copy(self, deep: bool = True) -> "DB":
         """Create a copy of this database, optionally deep."""
-        return DFDB(**{name: (df.copy() if deep else df) for name, df in self.items()})
+        return DB()._import_df_dict(
+            {name: (df.copy() if deep else df) for name, df in self.__df_dict.items()}
+        )
 
-    def to_excel(self, file_path: Path | str | None = None) -> None:
-        """Export database into single excel file."""
-        file_path = Path.cwd() / "database.xlsx" if file_path is None else file_path
+    def save(self, file_path: Path | str | None = None) -> None:
+        """Save this database to its default or a custom path."""
+        file_path = file_path or self.__file_path or Path.cwd() / "database.xlsx"
 
         writer = pd.ExcelWriter(  # pylint: disable=E0110:abstract-class-instantiated
             file_path,
             engine="openpyxl",
         )
 
-        for name, df in self.items():
+        for name, df in self.__df_dict.items():
             df.to_excel(writer, sheet_name=name, index=True)
 
         writer.close()
@@ -746,10 +408,10 @@ class DFDB(dict[str, pd.DataFrame]):
             middle_name_alt = f"{right_name}_{left_name}"
 
             middle_df = None
-            if middle_name in self:
-                middle_df = self[middle_name]
-            elif middle_name_alt in self:
-                middle_df = self[middle_name_alt]
+            if middle_name in self.__df_dict:
+                middle_df = self[middle_name].df
+            elif middle_name_alt in self.__df_dict:
+                middle_df = self[middle_name_alt].df
                 middle_name = middle_name_alt
 
             if right_df is not None:
@@ -839,7 +501,7 @@ class DFDB(dict[str, pd.DataFrame]):
         subs = subs or {}
 
         base_name, base_df = (
-            (base, subs.get(base) or self[base]) if isinstance(base, str) else base
+            (base, subs.get(base) or self[base].df) if isinstance(base, str) else base
         )
         base_df = base_df.rename(columns=lambda c: f"{base_name}.{c}")
 
@@ -849,7 +511,7 @@ class DFDB(dict[str, pd.DataFrame]):
 
             path = path if isinstance(path, list) else [path]
             path = [
-                (p, subs.get(p) or self.get(p)) if isinstance(p, str) else p
+                (p, subs.get(p) or self.__df_dict.get(p)) if isinstance(p, str) else p
                 for p in path
             ]
             path = [(base_name, base_df), *path]
@@ -879,7 +541,7 @@ class DFDB(dict[str, pd.DataFrame]):
         """
         # Concat all node tables into one.
         node_dfs = [
-            (self[n] if isinstance(n, str) else n[1])
+            (self[n].df if isinstance(n, str) else n[1])
             .reset_index()
             .rename(columns={"index": "db_index"})
             .assign(table=n)
@@ -896,19 +558,19 @@ class DFDB(dict[str, pd.DataFrame]):
         edge_tables = {
             e: (t1, t2)
             for t1, t2 in product(node_names, repeat=2)
-            if (e := f"{t1}_{t2}") in self
+            if (e := f"{t1}_{t2}") in self.__df_dict
         }
 
         # Concat all edges into one table.
         edge_df = pd.concat(
             [
                 self[link_tab]
-                .merge(
+                .df.merge(
                     node_df.loc[node_df["table"] == tabs[0]],
                     left_on=(
                         tabs[0]
                         + (
-                            self[tabs[0]].index.name
+                            self[tabs[0]].df.index.name
                             or (".id" if tabs[0] != tabs[1] else ".id.0")
                         )
                     ),
@@ -920,7 +582,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     left_on=(
                         tabs[1]
                         + (
-                            self[tabs[1]].index.name
+                            self[tabs[1]].df.index.name
                             or (".id" if tabs[0] != tabs[1] else ".id.1")
                         )
                     ),
@@ -939,7 +601,7 @@ class DFDB(dict[str, pd.DataFrame]):
         return {
             "entity tables": {
                 name: f"{len(df)} objects x {len(df.columns)} attributes"
-                for name, df in self.items()
+                for name, df in self.__df_dict.items()
                 if "_" not in name
             },
             "relation tables": {
@@ -949,7 +611,7 @@ class DFDB(dict[str, pd.DataFrame]):
                     if (n_attrs := len(df.columns) - 2) > 0
                     else ""
                 )
-                for name, df in self.items()
+                for name, df in self.__df_dict.items()
                 if "_" in name
             },
         }
