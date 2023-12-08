@@ -2,6 +2,7 @@
 
 import datetime
 import json
+import pickle
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
@@ -11,22 +12,24 @@ from typing import Any, ParamSpec, TypeVar, cast
 import numpy as np
 import pandas as pd
 import yaml
-from pydantic import BaseModel  # pylint: disable=E0611:no-name-in-module
+from bs4 import BeautifulSoup, Tag
 
 from py_research.files import ensure_dir_exists
 from py_research.hashing import gen_str_hash
-from py_research.reflect import get_calling_module_name, get_full_args_dict
+from py_research.reflect import (
+    get_calling_module_name,
+    get_full_args_dict,
+    get_return_type,
+)
 from py_research.telemetry import get_logger
 
 log = get_logger()
 
 default_root_path = Path.cwd() / ".cache"
 
-Cacheable = str | dict | list | set | BaseModel | pd.DataFrame | np.ndarray
-
 
 P = ParamSpec("P")
-R = TypeVar("R", bound=Cacheable)
+R = TypeVar("R")
 
 
 @dataclass
@@ -52,7 +55,7 @@ class FileCache:
             f.unlink()
             return False
 
-    def function(
+    def function(  # noqa: C901
         self,
         id_arg_subset: list[int] | list[str] | None = None,
         use_raw_arg: bool = False,
@@ -74,11 +77,11 @@ class FileCache:
                 Whether to use JSON as the format for caching dicts (instead of YAML)
         """
 
-        def inner(func: Callable[P, R]):
+        def inner(func: Callable[P, R]) -> Callable[P, R]:  # noqa: C901
             path = ensure_dir_exists(self.path / func.__name__)
 
             @wraps(func)
-            def inner_inner(*args: P.args, **kwargs: P.kwargs) -> R:
+            def inner_inner(*args: P.args, **kwargs: P.kwargs) -> R:  # noqa: C901
                 id_args = None
 
                 if id_callback is not None:
@@ -113,39 +116,49 @@ class FileCache:
                         -1
                     ]
                     extension = last_cached.name.split(".")[-1]
+                    return_type = get_return_type(func) or type
 
                     cached_result = None
-                    match (extension):
-                        case "txt":
-                            with open(
-                                last_cached,
-                                encoding="utf-8",
-                            ) as f:
-                                cached_result = f.read()
-                        case "yaml" | "yml":
-                            cached_result = yaml.load(
-                                open(last_cached, encoding="utf-8"), Loader=yaml.CLoader
-                            )
-                        case "json":
-                            cached_result = json.load(
-                                open(last_cached, encoding="utf-8")
-                            )
-                        case "xlsx":
-                            cached_result = pd.read_excel(
-                                str(last_cached), header=0, index_col=0
-                            )
-                        case "csv":
-                            cached_result = np.loadtxt(last_cached)
-
-                    if cached_result is None:
-                        raise ValueError(
-                            "Could not find any supported "
-                            f"file extension for '{id_value}'"
+                    if issubclass(return_type, str) and extension == "txt":
+                        with open(
+                            last_cached,
+                            encoding="utf-8",
+                        ) as f:
+                            cached_result = f.read()
+                    elif issubclass(return_type, dict | list) and extension in (
+                        "yaml",
+                        "yml",
+                    ):
+                        cached_result = yaml.load(
+                            open(last_cached, encoding="utf-8"), Loader=yaml.CLoader
                         )
+                    elif issubclass(return_type, dict | list) and extension == "json":
+                        cached_result = json.load(open(last_cached, encoding="utf-8"))
+                    elif (
+                        issubclass(return_type, pd.DataFrame | pd.Series)
+                        and extension == "xlsx"
+                    ):
+                        cached_result = pd.read_excel(
+                            last_cached, header=0, index_col=0
+                        )
+                    elif (
+                        issubclass(return_type, pd.DataFrame | pd.Series)
+                        and extension == "csv"
+                    ):
+                        cached_result = pd.read_csv(last_cached, header=0, index_col=0)
+                    elif issubclass(return_type, np.ndarray) and extension == "npy":
+                        cached_result = np.load(last_cached)
+                    elif (
+                        issubclass(return_type, BeautifulSoup | Tag)
+                        and extension == "html"
+                    ):
+                        cached_result = BeautifulSoup(open(last_cached))
+                    elif extension == "pkl":
+                        cached_result = pickle.load(open(last_cached, mode="rb"))
 
-                    result = cast(R, cached_result)
+                    result = cast(R | None, cached_result)
 
-                else:
+                if result is None:
                     log.debug(
                         f"⬇ Performing operation / fetching resource: '{id_value}'"
                     )
@@ -180,15 +193,24 @@ class FileCache:
                                         encoding="utf-8",
                                     ),
                                     allow_unicode=True,
-                                    Dumper=yaml.CDumper,
                                 )
                         case pd.DataFrame():
                             result.to_excel(
                                 path / f"{self.__now_str}.{id_value}.xlsx", index=True
                             )
                         case np.ndarray():
-                            np.savetxt(
-                                path / f"{self.__now_str}.{id_value}.csv", result
+                            np.save(path / f"{self.__now_str}.{id_value}.npy", result)
+                        case BeautifulSoup() | Tag():
+                            with open(
+                                path / f"{self.__now_str}.{id_value}.html", mode="w"
+                            ) as file:
+                                file.write(str(result))
+                        case _:
+                            pickle.dump(
+                                result,
+                                open(
+                                    path / f"{self.__now_str}.{id_value}.pkl", mode="wb"
+                                ),
                             )
 
                 return result
