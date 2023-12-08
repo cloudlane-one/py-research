@@ -6,7 +6,7 @@ groups = ["default", "dev"]
 cross_platform = true
 static_urls = false
 lock_version = "4.3"
-content_hash = "sha256:f4ac41015005b5e61761f492ec75ded711fa03e86aa32342e31dbd4bb19b6222"
+content_hash = "sha256:2995af1162b9a61e78be20b1be4e1631012d1262dccbec3121f07c1382321eac"
 
 [[package]]
 name = "accessible-pygments"
