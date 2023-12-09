@@ -7,8 +7,8 @@ from typing import cast
 import openai
 import PIL.Image as img  # noqa: N813
 import streamlit as st
+from ai import generate_image
 from dotenv import load_dotenv
-from py_research.ai import generate_image
 
 load_dotenv()  # This loads the contents of the .env file into the environment
 openai.api_key = os.getenv("OPENAI_API_KEY")
