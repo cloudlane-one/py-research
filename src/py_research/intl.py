@@ -188,9 +188,9 @@ if texts_file_path.is_file():
 
 def _get_default_locale() -> Locale:
     try:
-        return Locale.parse(normalize(getlocale()[0] or "en"), sep="_")
+        return Locale.parse(normalize(getlocale()[0] or "en_US"), sep="_")
     except UnknownLocaleError:
-        return Locale("en")
+        return Locale("en", "US")
 
 
 _ldml_to_posix = {
@@ -454,9 +454,9 @@ class Localization:
             label, context=context, locale=locale
         )
 
-        if locale != Locale("en") and (not matched or not matched_ctx):
+        if locale != Locale("en", "US") and (not matched or not matched_ctx):
             transl_en, _, matched_ctx_en = self.__get_label(
-                label, context=context, locale=Locale("en")
+                label, context=context, locale=Locale("en", "US")
             )
             if not matched or (not matched_ctx and matched_ctx_en):
                 transl = self.__machine_translate(transl_en, locale)
@@ -490,14 +490,14 @@ class Localization:
 
         matched_tpl = self.__get_message_template(name, combined_args)
 
-        if self.locale != Locale("en") and not matched_tpl:
+        if self.locale != Locale("en", "US") and not matched_tpl:
             matched_tpl = self.__get_message_template(
-                name, combined_args, locale=Locale("en")
+                name, combined_args, locale=Locale("en", "US")
             )
 
             return self.__machine_translate(
                 self.__apply_template(
-                    tpl or matched_tpl, combined_args, locale=Locale("en")
+                    tpl or matched_tpl, combined_args, locale=Locale("en", "US")
                 )
             )
 
