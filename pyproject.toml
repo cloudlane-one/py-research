@@ -15,8 +15,6 @@ country-converter = "^0.7.4"
 pydantic = "^1.9.0"
 streamlit = "^1.7.0"
 tqdm = "^4.62.3"
-kaleido = "^0.2.1"
-oracledb = "^1.2.2"
 sqlalchemy = "^2.0.7"
 strenum = "^0.4.10"
 stqdm = "^0.0.5"
@@ -65,7 +63,7 @@ convention = "google"
 max-complexity = 12
 
 [tool.deptry]
-ignore_unused = ["kaleido", "oracledb", "openpyxl"]
+ignore_unused = ["openpyxl"]
 known_first_party = ["py_research"]
 
 [tool.pytest.ini_options]
