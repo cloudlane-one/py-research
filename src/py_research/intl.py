@@ -639,7 +639,7 @@ def iter_locales(
     """Iterate over localizations for given locales w/ optional overrides."""
     for loc in locales:
         locz = Localization(
-            local_locale=Locale(loc),
+            local_locale=Locale.parse(loc, sep=("_" if "_" in loc else "-")),
             local_overrides={Locale(k): v for k, v in overrides.items()}
             if overrides is not None
             else None,
