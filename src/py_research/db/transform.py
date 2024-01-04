@@ -36,7 +36,7 @@ class TableMap:
     link_type: Literal["1-n", "n-1", "n-m"] = "n-m"
     """Type of link between this table and the parent table."""
 
-    link_table_name: str | None = None
+    join_table_name: str | None = None
     """Name of the link table to use for this table."""
 
     link_map: AttrMap | None = None
@@ -127,18 +127,23 @@ def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
     return row_id
 
 
-DictDB = dict[str, dict[Hashable, dict[str, Any]]]
+DictDB: TypeAlias = dict[str, dict[Hashable, dict[str, Any]]]
+Rels: TypeAlias = dict[tuple[str, str], tuple[str, str]]
+JoinTables: TypeAlias = set[str]
+RelDB = tuple[DictDB, Rels, JoinTables]
 
 
 def _handle_links(  # noqa: C901
     mapping: TableMap,
-    database: DictDB,
+    db: RelDB,
     row: pd.Series,
     links: list[tuple[str | None, SubMap]],
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
 ) -> DataConflicts:
     _all_conflicts = _all_conflicts or {}
+    database, relations, join_tables = db
+
     # Handle nested data, which is to be extracted into separate tables and linked.
     for attr, (sub_data, sub_maps) in links:
         # Get info about the link table to use from mapping
@@ -147,29 +152,27 @@ def _handle_links(  # noqa: C901
         if not isinstance(sub_maps, list):
             sub_maps = [sub_maps]
 
-        relations = {}
-
         for sub_map in sub_maps:
-            link_table_name = sub_map.link_table_name
-            link_table_exists = True
-            alt_link_table_names = [
-                sub_map.link_table_name,
+            join_table_name = sub_map.join_table_name
+            join_table_exists = True
+            alt_join_table_names = [
+                sub_map.join_table_name,
                 f"{mapping.table}_{sub_map.table}",
                 f"{sub_map.table}_{mapping.table}",
             ]
 
-            if link_table_name is None:
-                link_table_name = alt_link_table_names[0]
-                for name in alt_link_table_names:
+            if join_table_name is None:
+                join_table_name = alt_join_table_names[0]
+                for name in alt_join_table_names:
                     if name in database:
-                        link_table_name = name
-                        link_table_exists = True
+                        join_table_name = name
+                        join_table_exists = True
                         break
             else:
-                link_table_exists = link_table_name in database
+                join_table_exists = join_table_name in database
 
-            if not link_table_exists:
-                database[link_table_name] = {}
+            if not join_table_exists:
+                database[join_table_name] = {}
 
             if not isinstance(sub_data, list):
                 sub_data = [sub_data]
@@ -178,7 +181,7 @@ def _handle_links(  # noqa: C901
                 rel_row, _all_conflicts = _tree_to_db(
                     sub_data_item,
                     sub_map,
-                    database,
+                    db,
                     collect_conflicts,
                     _all_conflicts,
                 )
@@ -193,14 +196,14 @@ def _handle_links(  # noqa: C901
                     )
 
                     left_col = f"{attr}_of" if attr is not None else mapping.table
-                    relations[(link_table_name, left_col)] = (
+                    relations[(join_table_name, left_col)] = (
                         mapping.table,
                         "_id",
                     )
                     link_row[left_col] = row.name
 
                     right_col = attr if attr is not None else sub_map.table
-                    relations[(link_table_name, right_col)] = (
+                    relations[(join_table_name, right_col)] = (
                         sub_map.table,
                         "_id",
                     )
@@ -208,7 +211,8 @@ def _handle_links(  # noqa: C901
 
                     link_row.name = _gen_row_id(link_row)
 
-                    database[link_table_name][link_row.name] = link_row.to_dict()
+                    database[join_table_name][link_row.name] = link_row.to_dict()
+                    join_tables |= {join_table_name}
                 elif sub_map.link_type == "1-n":
                     # Map via direct reference from children to parent.
                     col = f"{attr}_of" if attr is not None else mapping.table
@@ -248,12 +252,13 @@ def _handle_links(  # noqa: C901
 def _tree_to_db(  # noqa: C901
     data: dict | str,
     mapping: TableMap,
-    database: DictDB,
+    db: RelDB,
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
 ) -> tuple[pd.Series, DataConflicts]:
-    database = database or {}
     _all_conflicts = _all_conflicts or {}
+    database, relations, join_tables = db
+
     # Initialize new table as defined by mapping, if it doesn't exist yet.
     if mapping.table not in database:
         database[mapping.table] = {}
@@ -300,7 +305,7 @@ def _tree_to_db(  # noqa: C901
         links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
 
     _all_conflicts = _handle_links(
-        mapping, database, row, links, collect_conflicts, _all_conflicts
+        mapping, db, row, links, collect_conflicts, _all_conflicts
     )
 
     existing_row: dict[str, Any] | None = None
@@ -394,14 +399,20 @@ def tree_to_db(  # noqa: C901
             Collect all conflicts and return them, rather than stopping right away.
     """
     df_dict = {}
-    _, conflicts = _tree_to_db(data, mapping, df_dict, collect_conflicts)
+    rels = {}
+    join_tables = set()
+    _, conflicts = _tree_to_db(
+        data, mapping, (df_dict, rels, join_tables), collect_conflicts
+    )
     db = DB(
         table_dfs={
             name: pd.DataFrame.from_dict(df, orient="index").rename_axis(
                 "id", axis="index"
             )
             for name, df in df_dict.items()
-        }
+        },
+        relations=rels,
+        join_tables=join_tables,
     )
     return (db, conflicts) if collect_conflicts else db
 

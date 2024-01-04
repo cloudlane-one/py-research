@@ -269,7 +269,7 @@ class DB:
 
     version: str | None = None
     relations: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
-    join_tables: list[str] = field(default_factory=list)
+    join_tables: set[str] = field(default_factory=set)
     table_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
 
     # Creation:
@@ -301,9 +301,9 @@ class DB:
             )
             relations = relations.to_dict()
 
-        join_tables = []
+        join_tables = set()
         if "_join_tables" in df_dict:
-            join_tables = df_dict["_join_tables"]["name"].tolist()
+            join_tables = set(df_dict["_join_tables"]["name"].tolist())
 
         return DB(version, relations, join_tables, df_dict)
 
