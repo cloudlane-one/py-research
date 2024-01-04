@@ -1,21 +1,17 @@
 """Functions and classes for transforming between recursive and relational format."""
 
-from collections.abc import Callable, Hashable, Mapping
+from collections.abc import Callable, Hashable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import chain, groupby
-from typing import Any, Literal, cast, overload
+from typing import Any, Literal, TypeAlias, cast, overload
 
 import pandas as pd
-from inflect import engine as inflect_engine
 
-from py_research.db import DB
-from py_research.db.conflicts import (
-    DataConflictError,
-    DataConflictPolicy,
-    DataConflicts,
-)
 from py_research.hashing import gen_str_hash
+
+from .base import DB, SingleTable
+from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
 
 Scalar = str | int | float | datetime
 
@@ -30,23 +26,34 @@ class TableMap:
     """Defines how to map a data item to the database."""
 
     table: str
+    """Name of the table to map to."""
+
     map: RelationalMap | set[str] | str | Callable[
         [dict | str], RelationalMap | set[str] | str
     ]
-    name: str | None = None
+    """Mapping of hierarchical attributes to table columns."""
+
+    link_type: Literal["1-n", "n-1", "n-m"] = "n-m"
+    """Type of link between this table and the parent table."""
+
+    link_table_name: str | None = None
+    """Name of the link table to use for this table."""
+
     link_map: AttrMap | None = None
+    """Mapping of hierarchical attributes to link table rows."""
 
     hash_id_subset: list[str] | None = None
     """Supply a list of column names as a subset of all columns to use
     for auto-generating row ids via sha256 hashing.
     """
+
     match_by_attr: bool | str = False
     """Match this mapped data to target table (by given attr)."""
 
     ext_maps: "list[TableMap] | None" = None
     """Map attributes on the same level to different tables"""
 
-    ext_attr: str | dict[str, Any] | None = None
+    ext_attr: str | None = None
     """Override attr to use when linking this table with a parent table."""
 
     id_attr: str | None = None
@@ -59,7 +66,7 @@ class TableMap:
 SubMap = tuple[dict | list, TableMap | list[TableMap]]
 
 
-def _resolve_relmap(
+def _map_sublayer(
     node: dict, mapping: RelationalMap
 ) -> tuple[pd.Series, dict[str, SubMap]]:
     """Extract hierarchical data into set of scalar attributes + linked data objects."""
@@ -103,7 +110,7 @@ def _resolve_relmap(
     for attr, sub_map in (target_groups.get(dict) or {}).items():
         sub_node = node.get(attr)
         if isinstance(sub_node, dict):
-            sub_row, sub_links = _resolve_relmap(sub_node, cast(dict, sub_map))
+            sub_row, sub_links = _map_sublayer(sub_node, cast(dict, sub_map))
             cols = {**cols, **sub_row}
             links = {**links, **sub_links}
 
@@ -122,14 +129,12 @@ def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
 
 DictDB = dict[str, dict[Hashable, dict[str, Any]]]
 
-inf = inflect_engine()
 
-
-def _resolve_links(
+def _handle_links(  # noqa: C901
     mapping: TableMap,
     database: DictDB,
     row: pd.Series,
-    links: list[tuple[str | dict[str, Any] | None, SubMap]],
+    links: list[tuple[str | None, SubMap]],
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
 ) -> DataConflicts:
@@ -142,57 +147,105 @@ def _resolve_links(
         if not isinstance(sub_maps, list):
             sub_maps = [sub_maps]
 
+        relations = {}
+
         for sub_map in sub_maps:
-            link_table = f"{mapping.table}_{sub_map.table}"
-            link_table_alt = f"{sub_map.table}_{mapping.table}"
+            link_table_name = sub_map.link_table_name
+            link_table_exists = True
+            alt_link_table_names = [
+                sub_map.link_table_name,
+                f"{mapping.table}_{sub_map.table}",
+                f"{sub_map.table}_{mapping.table}",
+            ]
+
+            if link_table_name is None:
+                link_table_name = alt_link_table_names[0]
+                for name in alt_link_table_names:
+                    if name in database:
+                        link_table_name = name
+                        link_table_exists = True
+                        break
+            else:
+                link_table_exists = link_table_name in database
+
+            if not link_table_exists:
+                database[link_table_name] = {}
 
             if not isinstance(sub_data, list):
                 sub_data = [sub_data]
 
-            if link_table not in database:
-                if link_table_alt in database:
-                    link_table = link_table_alt
-                else:
-                    database[link_table] = {}
-
             for sub_data_item in sub_data:
-                if isinstance(sub_data_item, dict):
-                    rel_row, _all_conflicts = _recursive_to_db(
-                        sub_data_item,
-                        sub_map,
-                        database,
-                        collect_conflicts,
-                        _all_conflicts,
-                    )
+                rel_row, _all_conflicts = _tree_to_db(
+                    sub_data_item,
+                    sub_map,
+                    database,
+                    collect_conflicts,
+                    _all_conflicts,
+                )
 
+                if sub_map.link_type == "n-m":
+                    # Map via join table.
                     link_row, _ = (
-                        _resolve_relmap(sub_data_item, sub_map.link_map)
-                        if sub_map.link_map is not None
+                        _map_sublayer(sub_data_item, sub_map.link_map)
+                        if isinstance(sub_data_item, dict)
+                        and sub_map.link_map is not None
                         else (pd.Series(dtype=object), None)
                     )
 
-                    link_row[
-                        f"{mapping.table}.id"
-                        + ("" if mapping.table != sub_map.table else ".0")
-                    ] = row.name
-                    link_row[
-                        f"{sub_map.table}.id"
-                        + ("" if mapping.table != sub_map.table else ".1")
-                    ] = rel_row.name
+                    left_col = f"{attr}_of" if attr is not None else mapping.table
+                    relations[(link_table_name, left_col)] = (
+                        mapping.table,
+                        "_id",
+                    )
+                    link_row[left_col] = row.name
 
-                    if isinstance(attr, str | None):
-                        link_row["attribute"] = attr
-                    else:
-                        link_row = pd.Series({**link_row.to_dict(), **attr})
+                    right_col = attr if attr is not None else sub_map.table
+                    relations[(link_table_name, right_col)] = (
+                        sub_map.table,
+                        "_id",
+                    )
+                    link_row[right_col] = rel_row.name
 
                     link_row.name = _gen_row_id(link_row)
 
-                    database[link_table][link_row.name] = link_row.to_dict()
+                    database[link_table_name][link_row.name] = link_row.to_dict()
+                elif sub_map.link_type == "1-n":
+                    # Map via direct reference from children to parent.
+                    col = f"{attr}_of" if attr is not None else mapping.table
+
+                    if col in rel_row.index:
+                        assert rel_row[col] is None or rel_row[col] == row.name
+
+                    relations[(sub_map.table, col)] = (
+                        mapping.table,
+                        "_id",
+                    )
+
+                    database[sub_map.table][rel_row.name] = {
+                        **rel_row.to_dict(),
+                        col: row.name,
+                    }
+                elif sub_map.link_type == "n-1":
+                    # Map via direct reference from parents to child.
+                    col = attr if attr is not None else sub_map.table
+
+                    if col in row.index:
+                        assert row[col] is None or row[col] == row.name
+
+                    relations[(mapping.table, col)] = (
+                        sub_map.table,
+                        "_id",
+                    )
+
+                    database[mapping.table][row.name] = {
+                        **row.to_dict(),
+                        col: rel_row.name,
+                    }
 
     return _all_conflicts
 
 
-def _recursive_to_db(  # noqa: C901
+def _tree_to_db(  # noqa: C901
     data: dict | str,
     mapping: TableMap,
     database: DictDB,
@@ -211,7 +264,7 @@ def _recursive_to_db(  # noqa: C901
 
     # Extract row of data attributes and links to other objects.
     row = None
-    links: list[tuple[str | dict[str, Any] | None, SubMap]] = []
+    links: list[tuple[str | None, SubMap]] = []
     # If mapping is only a string, extract the target attr directly.
     if isinstance(data, str):
         assert isinstance(resolved_map, str)
@@ -222,7 +275,7 @@ def _recursive_to_db(  # noqa: C901
                 {k: v for k, v in data.items() if k in resolved_map}, dtype=object
             )
         elif isinstance(resolved_map, dict):
-            row, link_dict = _resolve_relmap(data, resolved_map)
+            row, link_dict = _map_sublayer(data, resolved_map)
             links = [*links, *link_dict.items()]
         else:
             raise TypeError(
@@ -246,7 +299,7 @@ def _recursive_to_db(  # noqa: C901
         assert isinstance(data, dict)
         links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
 
-    _all_conflicts = _resolve_links(
+    _all_conflicts = _handle_links(
         mapping, database, row, links, collect_conflicts, _all_conflicts
     )
 
@@ -308,7 +361,7 @@ def _recursive_to_db(  # noqa: C901
 
 
 @overload
-def recursive_to_db(
+def tree_to_db(
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: Literal[True] = ...,
@@ -317,7 +370,7 @@ def recursive_to_db(
 
 
 @overload
-def recursive_to_db(
+def tree_to_db(
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: bool = ...,
@@ -325,7 +378,7 @@ def recursive_to_db(
     ...
 
 
-def recursive_to_db(  # noqa: C901
+def tree_to_db(  # noqa: C901
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: bool = False,
@@ -341,6 +394,62 @@ def recursive_to_db(  # noqa: C901
             Collect all conflicts and return them, rather than stopping right away.
     """
     df_dict = {}
-    _, conflicts = _recursive_to_db(data, mapping, df_dict, collect_conflicts)
-    db = DB()._import_df_dict(df_dict)
+    _, conflicts = _tree_to_db(data, mapping, df_dict, collect_conflicts)
+    db = DB(
+        table_dfs={
+            name: pd.DataFrame.from_dict(df, orient="index").rename_axis(
+                "id", axis="index"
+            )
+            for name, df in df_dict.items()
+        }
+    )
     return (db, conflicts) if collect_conflicts else db
+
+
+NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
+
+
+def db_to_graph(db: DB, nodes: Sequence[SingleTable]) -> NodesAndEdges:
+    """Export links between select database objects in a graph format.
+
+    E.g. for usage with `Gephi`_
+
+    .. _Gephi: https://gephi.org/
+    """
+    # Concat all node tables into one.
+    node_dfs = [db[n.name].df.reset_index().assign(table=n.name) for n in nodes]
+    node_df = (
+        pd.concat(node_dfs, ignore_index=True)
+        .reset_index()
+        .rename(columns={"index": "id"})
+    )
+
+    # Find all link tables between the given node tables.
+    node_names = [n.name for n in nodes]
+    relations = pd.concat(
+        [db._get_rels(sources=[j], targets=node_names) for j in db.join_tables]
+    )
+
+    # Concat all edges into one table.
+    edge_df = pd.concat(
+        [
+            db[str(source_table)]
+            .df.merge(
+                node_df.loc[node_df["table"] == rel.iloc[0]["target_table"]],
+                left_on=rel.iloc[0]["source_col"],
+                right_on=rel.iloc[0]["target_col"],
+            )
+            .rename(columns={"id": "source"})
+            .merge(
+                node_df.loc[node_df["table"] == rel.iloc[1]["target_table"]],
+                left_on=rel.iloc[1]["source_col"],
+                right_on=rel.iloc[1]["target_col"],
+            )
+            .rename(columns={"id": "target"})[["source", "target"]]
+            for source_table, rel in relations.groupby("source_table")
+            if len(rel) == 2  # We do not export hyper-graphs.
+        ],
+        ignore_index=True,
+    )
+
+    return node_df, edge_df
