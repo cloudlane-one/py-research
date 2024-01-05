@@ -1,6 +1,6 @@
-"""Functions and classes for transforming between recursive and relational format."""
+"""Utilities for importing different data representations into relational format."""
 
-from collections.abc import Callable, Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import chain, groupby
@@ -10,66 +10,72 @@ import pandas as pd
 
 from py_research.hashing import gen_str_hash
 
-from .base import DB, SingleTable
+from .base import DB
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
 
 Scalar = str | int | float | datetime
 
-AttrMap = Mapping[str, str | bool | dict]
-"""Mapping of hierarchical attributes to table rows"""
+_AttrMap = Mapping[str, str | bool | "_AttrMap"]
+"""Mapping of hierarchical attributes to table columns"""
 
-RelationalMap = Mapping[str, "str | bool | dict | TableMap | list[TableMap]"]
+_RelationalMap = Mapping[str, "str | bool | _RelationalMap | TableMap | list[TableMap]"]
+"""Mapping of hierarchical attributes to table columns or other tables."""
 
 
 @dataclass
 class TableMap:
-    """Defines how to map a data item to the database."""
+    """Configuration for how to map (nested) dictionary items to relational tables."""
 
     table: str
-    """Name of the table to map to."""
+    """Name of the table to map to attributes in ``map`` to."""
 
-    map: RelationalMap | set[str] | str | Callable[
-        [dict | str], RelationalMap | set[str] | str
+    map: _RelationalMap | set[str] | str | Callable[
+        [dict | str], _RelationalMap | set[str] | str
     ]
-    """Mapping of hierarchical attributes to table columns."""
-
-    link_type: Literal["1-n", "n-1", "n-m"] = "n-m"
-    """Type of link between this table and the parent table."""
-
-    join_table_name: str | None = None
-    """Name of the link table to use for this table."""
-
-    link_map: AttrMap | None = None
-    """Mapping of hierarchical attributes to link table rows."""
-
-    hash_id_subset: list[str] | None = None
-    """Supply a list of column names as a subset of all columns to use
-    for auto-generating row ids via sha256 hashing.
-    """
-
-    match_by_attr: bool | str = False
-    """Match this mapped data to target table (by given attr)."""
+    """Mapping of hierarchical attributes to table columns or other tables."""
 
     ext_maps: "list[TableMap] | None" = None
     """Map attributes on the same level to different tables"""
 
-    ext_attr: str | None = None
-    """Override attr to use when linking this table with a parent table."""
+    ref_attr: str | None = None
+    """Override attribute to use when referencing this table from a parent table."""
+
+    ref_type: Literal["1-n", "n-1", "n-m"] = "n-m"
+    """Type of reference between this table and the parent table.
+    Only ``n-m`` will create a join table.
+    """
+
+    join_table_name: str | None = None
+    """Name of the join table to use for referencing this table to its parent, if any"""
+
+    ref_map: _AttrMap | None = None
+    """Mapping of hierarchical attributes to join table rows."""
 
     id_attr: str | None = None
     """Use given attr as id directly, no hashing."""
+
+    hash_id_subset: list[str] | None = None
+    """List of column names to use as a subset of all columns for
+    auto-generating row ids via sha256 hashing.
+    """
+
+    match_by_attr: bool | str = False
+    """Try to match this mapped data to target table (by given attr)
+    before creating a new row.
+    """
 
     conflict_policy: DataConflictPolicy = "raise"
     """Which policy to use if import conflicts occur for this table."""
 
 
-SubMap = tuple[dict | list, TableMap | list[TableMap]]
+_SubMap = tuple[dict | list, TableMap | list[TableMap]]
+"""Combination of data and mapping for a subtree."""
 
 
 def _map_sublayer(
-    node: dict, mapping: RelationalMap
-) -> tuple[pd.Series, dict[str, SubMap]]:
-    """Extract hierarchical data into set of scalar attributes + linked data objects."""
+    node: dict, mapping: _RelationalMap
+) -> tuple[pd.Series, dict[str, _SubMap]]:
+    """Extract hierarchical data into set of scalar attributes + ref'd data objects."""
     # Split the current mapping level into groups based on type.
     target_groups: dict[type, dict] = {
         t: dict(g)  # type: ignore
@@ -97,7 +103,7 @@ def _map_sublayer(
         if isinstance(data := node.get(attr), Scalar)
     }
 
-    links = {
+    refs = {
         attr: (data, cast(TableMap | list[TableMap], sub_map))
         for attr, sub_map in {
             **(target_groups.get(TableMap) or {}),
@@ -110,11 +116,11 @@ def _map_sublayer(
     for attr, sub_map in (target_groups.get(dict) or {}).items():
         sub_node = node.get(attr)
         if isinstance(sub_node, dict):
-            sub_row, sub_links = _map_sublayer(sub_node, cast(dict, sub_map))
+            sub_row, sub_refs = _map_sublayer(sub_node, cast(dict, sub_map))
             cols = {**cols, **sub_row}
-            links = {**links, **sub_links}
+            refs = {**refs, **sub_refs}
 
-    return pd.Series(cols, dtype=object), links
+    return pd.Series(cols, dtype=object), refs
 
 
 def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
@@ -127,27 +133,35 @@ def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
     return row_id
 
 
-DictDB: TypeAlias = dict[str, dict[Hashable, dict[str, Any]]]
-Rels: TypeAlias = dict[tuple[str, str], tuple[str, str]]
-JoinTables: TypeAlias = set[str]
-RelDB = tuple[DictDB, Rels, JoinTables]
+_DictDB: TypeAlias = dict[str, dict[Hashable, dict[str, Any]]]
+"""All-dictionary representation of a relational database for performant extending."""
+
+_Rels: TypeAlias = dict[tuple[str, str], tuple[str, str]]
+"""Relations between tables, indexed by the referencing table and column."""
+
+_JoinTables: TypeAlias = set[str]
+"""Names of all join tables in the database."""
+
+RelDB = tuple[_DictDB, _Rels, _JoinTables]
+"""Full relational database representation."""
 
 
-def _handle_links(  # noqa: C901
+def _handle_refs(  # noqa: C901
     mapping: TableMap,
     db: RelDB,
     row: pd.Series,
-    links: list[tuple[str | None, SubMap]],
+    refs: list[tuple[str | None, _SubMap]],
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
 ) -> DataConflicts:
+    """Handle references to other tables."""
     _all_conflicts = _all_conflicts or {}
     database, relations, join_tables = db
 
-    # Handle nested data, which is to be extracted into separate tables and linked.
-    for attr, (sub_data, sub_maps) in links:
-        # Get info about the link table to use from mapping
-        # (or generate a new for the link table).
+    # Handle nested data, which is to be extracted into separate tables and referenced.
+    for attr, (sub_data, sub_maps) in refs:
+        # Get info about the ref table to use from mapping
+        # (or generate a new for the ref table).
 
         if not isinstance(sub_maps, list):
             sub_maps = [sub_maps]
@@ -186,12 +200,12 @@ def _handle_links(  # noqa: C901
                     _all_conflicts,
                 )
 
-                if sub_map.link_type == "n-m":
+                if sub_map.ref_type == "n-m":
                     # Map via join table.
-                    link_row, _ = (
-                        _map_sublayer(sub_data_item, sub_map.link_map)
+                    ref_row, _ = (
+                        _map_sublayer(sub_data_item, sub_map.ref_map)
                         if isinstance(sub_data_item, dict)
-                        and sub_map.link_map is not None
+                        and sub_map.ref_map is not None
                         else (pd.Series(dtype=object), None)
                     )
 
@@ -200,20 +214,20 @@ def _handle_links(  # noqa: C901
                         mapping.table,
                         "_id",
                     )
-                    link_row[left_col] = row.name
+                    ref_row[left_col] = row.name
 
                     right_col = attr if attr is not None else sub_map.table
                     relations[(join_table_name, right_col)] = (
                         sub_map.table,
                         "_id",
                     )
-                    link_row[right_col] = rel_row.name
+                    ref_row[right_col] = rel_row.name
 
-                    link_row.name = _gen_row_id(link_row)
+                    ref_row.name = _gen_row_id(ref_row)
 
-                    database[join_table_name][link_row.name] = link_row.to_dict()
+                    database[join_table_name][ref_row.name] = ref_row.to_dict()
                     join_tables |= {join_table_name}
-                elif sub_map.link_type == "1-n":
+                elif sub_map.ref_type == "1-n":
                     # Map via direct reference from children to parent.
                     col = f"{attr}_of" if attr is not None else mapping.table
 
@@ -229,7 +243,7 @@ def _handle_links(  # noqa: C901
                         **rel_row.to_dict(),
                         col: row.name,
                     }
-                elif sub_map.link_type == "n-1":
+                elif sub_map.ref_type == "n-1":
                     # Map via direct reference from parents to child.
                     col = attr if attr is not None else sub_map.table
 
@@ -256,8 +270,9 @@ def _tree_to_db(  # noqa: C901
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
 ) -> tuple[pd.Series, DataConflicts]:
+    """Transform recursive dictionary data into relational format."""
     _all_conflicts = _all_conflicts or {}
-    database, relations, join_tables = db
+    database, _, _ = db
 
     # Initialize new table as defined by mapping, if it doesn't exist yet.
     if mapping.table not in database:
@@ -267,9 +282,9 @@ def _tree_to_db(  # noqa: C901
         mapping.map(data) if isinstance(mapping.map, Callable) else mapping.map
     )
 
-    # Extract row of data attributes and links to other objects.
+    # Extract row of data attributes and refs to other objects.
     row = None
-    links: list[tuple[str | None, SubMap]] = []
+    refs: list[tuple[str | None, _SubMap]] = []
     # If mapping is only a string, extract the target attr directly.
     if isinstance(data, str):
         assert isinstance(resolved_map, str)
@@ -280,8 +295,8 @@ def _tree_to_db(  # noqa: C901
                 {k: v for k, v in data.items() if k in resolved_map}, dtype=object
             )
         elif isinstance(resolved_map, dict):
-            row, link_dict = _map_sublayer(data, resolved_map)
-            links = [*links, *link_dict.items()]
+            row, ref_dict = _map_sublayer(data, resolved_map)
+            refs = [*refs, *ref_dict.items()]
         else:
             raise TypeError(
                 f"Unsupported mapping type {type(resolved_map)}"
@@ -302,10 +317,10 @@ def _tree_to_db(  # noqa: C901
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
-        links = [*links, *((m.ext_attr, (data, m)) for m in mapping.ext_maps)]
+        refs = [*refs, *((m.ref_attr, (data, m)) for m in mapping.ext_maps)]
 
-    _all_conflicts = _handle_links(
-        mapping, db, row, links, collect_conflicts, _all_conflicts
+    _all_conflicts = _handle_refs(
+        mapping, db, row, refs, collect_conflicts, _all_conflicts
     )
 
     existing_row: dict[str, Any] | None = None
@@ -393,10 +408,14 @@ def tree_to_db(  # noqa: C901
     Args:
         data: The data to be transformed
         mapping:
-            Configuration for how to map (nested) dictionary items
-            to relational tables
+            Configuration for how to performm the mapping.
         collect_conflicts:
             Collect all conflicts and return them, rather than stopping right away.
+
+    Returns:
+        The relational database representation of the data.
+        If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
+        is returned.
     """
     df_dict = {}
     rels = {}
@@ -415,52 +434,3 @@ def tree_to_db(  # noqa: C901
         join_tables=join_tables,
     )
     return (db, conflicts) if collect_conflicts else db
-
-
-NodesAndEdges: TypeAlias = tuple[pd.DataFrame, pd.DataFrame]
-
-
-def db_to_graph(db: DB, nodes: Sequence[SingleTable]) -> NodesAndEdges:
-    """Export links between select database objects in a graph format.
-
-    E.g. for usage with `Gephi`_
-
-    .. _Gephi: https://gephi.org/
-    """
-    # Concat all node tables into one.
-    node_dfs = [db[n.name].df.reset_index().assign(table=n.name) for n in nodes]
-    node_df = (
-        pd.concat(node_dfs, ignore_index=True)
-        .reset_index()
-        .rename(columns={"index": "id"})
-    )
-
-    # Find all link tables between the given node tables.
-    node_names = [n.name for n in nodes]
-    relations = pd.concat(
-        [db._get_rels(sources=[j], targets=node_names) for j in db.join_tables]
-    )
-
-    # Concat all edges into one table.
-    edge_df = pd.concat(
-        [
-            db[str(source_table)]
-            .df.merge(
-                node_df.loc[node_df["table"] == rel.iloc[0]["target_table"]],
-                left_on=rel.iloc[0]["source_col"],
-                right_on=rel.iloc[0]["target_col"],
-            )
-            .rename(columns={"id": "source"})
-            .merge(
-                node_df.loc[node_df["table"] == rel.iloc[1]["target_table"]],
-                left_on=rel.iloc[1]["source_col"],
-                right_on=rel.iloc[1]["target_col"],
-            )
-            .rename(columns={"id": "target"})[["source", "target"]]
-            for source_table, rel in relations.groupby("source_table")
-            if len(rel) == 2  # We do not export hyper-graphs.
-        ],
-        ignore_index=True,
-    )
-
-    return node_df, edge_df

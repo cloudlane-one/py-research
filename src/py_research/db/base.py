@@ -1,4 +1,4 @@
-"""Base classes and types for this package."""
+"""Base classes and types for relational database package."""
 
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass, field
@@ -12,21 +12,43 @@ from py_research.db.conflicts import DataConflictError, DataConflictPolicy
 
 @dataclass
 class Table:
-    """Protocol for tables in a relational database."""
+    """Table in a relational database."""
+
+    # Attributes:
 
     db: "DB"
+    """Database this table belongs to."""
+
     df: pd.DataFrame
+    """Dataframe containing the data of this table."""
+
     source_map: str | dict[str, str]
+    """Mapping to source tables of this table.
+
+    For single source tables, this is a string containing the name of the source table.
+
+    For multiple source tables, the dataframe hast multi-level columns. ``source_map``
+    is then a mapping from the first level of these columns to the source tables.
+    """
+
+    # Public methods:
 
     def filter(self, filter_series: pd.Series) -> "Table":
-        """Return a filtered version of this table."""
+        """Filter this table.
+
+        Args:
+            filter_series: Boolean series to filter the table with.
+
+        Returns:
+            New table containing the filtered data.
+        """
         return Table(
             self.db,
             self.df.loc[filter_series],
             self.source_map,
         )
 
-    # Common overloads / overrides:
+    # Dictionary interface:
 
     def __getitem__(self, name: str) -> pd.Series:  # noqa: D105
         return self.df[name]
@@ -45,6 +67,8 @@ class Table:
 
     def get(self, name: str, default: Any = None) -> Any:  # noqa: D102
         return self.df.get(name, default)
+
+    # DataFrame interface:
 
     @property
     def columns(self) -> Sequence[str | tuple[str, str]]:
@@ -77,7 +101,9 @@ class Table:
 
 
 class SingleTable(Table):
-    """Relational database table."""
+    """Relational database table with a single source table."""
+
+    # Custom constructor:
 
     def __init__(
         self,
@@ -85,22 +111,44 @@ class SingleTable(Table):
         db: "DB",
         df: pd.DataFrame,
     ) -> None:
-        """Initialize this table."""
+        """Initialize this table.
+
+        Args:
+            name: Name of the source table.
+            db: Database this table belongs to.
+            df: Dataframe containing the data of this table.
+        """
         self.name = name
         self.db = db
         self.df = df
 
+    # Computed properties:
+
     @property
     def source_map(self) -> str:
-        """Return the name of this table."""
+        """Name of the source table of this table."""
         return self.name
+
+    # Method overrides:
 
     def filter(self, filter_series: pd.Series) -> "SingleTable":
         """Return a filtered version of this table."""
         return super().filter(filter_series)  # type: ignore[no-any-return]
 
+    # Public methods:
+
     def merge(self, other: "SingleTable") -> "Table":
-        """Merge this single table with another single table."""
+        """Merge this table with another, returning a new table.
+
+        Args:
+            other: Other table to merge with.
+
+        Returns:
+            New table containing the merged data.
+            The returned table will have a multi-level column index,
+            where the first level references the source table of each column
+            via the ``source_map`` attribute.
+        """
         if self.db is not other.db:
             raise ValueError("Both tables must be from the same database.")
 
@@ -163,30 +211,46 @@ class SingleTable(Table):
         return Table(self.db, merged, merged_source_map)
 
 
-class BaseTable(Table):
-    """Relational database table."""
+class BaseTable(SingleTable):
+    """Original table in a relational database."""
+
+    # Custom constuctor:
 
     def __init__(self, name: str, db: "DB") -> None:
-        """Initialize this table."""
+        """Initialize this table.
+
+        Args:
+            name: Name of the source table.
+            db: Database this table belongs to.
+        """
         self.name = name
         self.db = db
 
-    @property
-    def source_map(self) -> str:
-        """Return the name of this table."""
-        return self.name
+    # Computed properties:
 
     @property
     def df(self) -> pd.DataFrame:
         """Return the dataframe of this table."""
         return self.db.table_dfs[self.name]
 
+    # Public methods:
+
     def extend(
         self,
         other: "pd.DataFrame",
         conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy] = "raise",
     ) -> "SingleTable":
-        """Union this table data of another, returning a new table."""
+        """Extend this table with data from another, returning a new table.
+
+        Args:
+            other: Other table to extend with.
+            conflict_policy:
+                Policy to use for resolving conflicts. Can be a global setting,
+                per-column via supplying a dict with column names as keys.
+
+        Returns:
+            New table containing the extended data.
+        """
         # Align index and columns of both tables.
         left, right = self.df.align(other)
 
@@ -247,7 +311,7 @@ class BaseTable(Table):
 
 
 def _df_dict_from_excel(file_path: Path) -> dict[str, pd.DataFrame]:
-    """Import database from an excel file."""
+    """Import multiple dataframes from an excel file."""
     return {
         str(k): df
         for k, df in pd.read_excel(file_path, sheet_name=None, index_col=0).items()
@@ -268,15 +332,30 @@ class DB:
     # Attributes:
 
     version: str | None = None
+    """Version of this database."""
+
     relations: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
+    """Relations between tables in this database."""
+
     join_tables: set[str] = field(default_factory=set)
+    """Names of tables that are used as n-to-m join tables in this database."""
+
     table_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
+    """Dataframes containing the data of each table in this database."""
 
     # Creation:
 
     @staticmethod
     def load(file_path: Path, version: str | None = None) -> "DB":
-        """Load database from given path to an excel file."""
+        """Load a database from an excel file.
+
+        Args:
+            file_path: Path to the excel file.
+            version: Minimum version of the database to load.
+
+        Returns:
+            Database object.
+        """
         df_dict = _df_dict_from_excel(file_path)
 
         given_version = None
@@ -307,10 +386,14 @@ class DB:
 
         return DB(version, relations, join_tables, df_dict)
 
-    # Description:
+    # Public methods:
 
     def describe(self) -> dict[str, dict[str, str]]:
-        """Describe this database."""
+        """Return a description of this database.
+
+        Returns:
+            Mapping of table names to table descriptions.
+        """
         join_tables = {
             name: f"{len(self[name])} links"
             + (
@@ -330,10 +413,15 @@ class DB:
             "join tables": join_tables,
         }
 
-    # Manipulation:
-
     def copy(self, deep: bool = True) -> "DB":
-        """Create a copy of this database, optionally deep."""
+        """Create a copy of this database, optionally deep.
+
+        Args:
+            deep: Whether to perform a deep copy (copy all dataframes).
+
+        Returns:
+            Copy of this database.
+        """
         return DB(
             table_dfs={
                 name: (table.df.copy() if deep else table.df)
@@ -347,17 +435,17 @@ class DB:
         conflict_policy: DataConflictPolicy
         | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]] = "raise",
     ) -> "DB":
-        """Import other database into this one, returning a new database object.
+        """Extend this database with data from another, returning a new database.
 
         Args:
-            other: Other database to import
+            other: Other database to extend with.
             conflict_policy:
                 Policy to use for resolving conflicts. Can be a global setting,
                 per-table via supplying a dict with table names as keys, or per-column
                 via supplying a dict of dicts.
 
         Returns:
-            New database representing a merge of information in ``self`` and ``other``.
+            New database containing the extended data.
         """
         # Get the union of all table (names) in both databases.
         tables = set(self.keys()) | set(other.keys())
@@ -398,6 +486,9 @@ class DB:
         Args:
             centers: Tables to use as centers for the trim.
             circuit_breakers: Tables to use as circuit breakers for the trim.
+
+        Returns:
+            New database containing the trimmed data.
         """
         return (
             self._isotropic_trim()
@@ -415,6 +506,15 @@ class DB:
             extra_cb:
                 Additional circuit breakers (on top of the filtered tables)
                 to use when trimming the database according to the filters
+
+        Returns:
+            New database containing the filtered data.
+            The returned database will only contain the filtered tables and
+            all tables that have (indirect) references to them.
+
+        Note:
+            This is equivalent to trimming the database with the filtered tables
+            as centers and the filtered tables and ``extra_cb`` as circuit breakers.
         """
         # Filter out unmatched rows of filter tables.
         new_db = DB(
@@ -433,7 +533,11 @@ class DB:
         return new_db.trim(list(filters.keys()), circuit_breakers=cb)
 
     def save(self, file_path: Path) -> None:
-        """Save this database to its default or a custom path."""
+        """Save this database to an excel file.
+
+        Args:
+            file_path: Path to excel file. Will be overridden if it exists.
+        """
         writer = pd.ExcelWriter(  # pylint: disable=E0110:abstract-class-instantiated
             file_path,
             engine="openpyxl",
@@ -444,7 +548,7 @@ class DB:
 
         writer.close()
 
-    # Common overloads / overrides:
+    # Dictionary interface:
 
     def __getitem__(self, name: str) -> BaseTable:  # noqa: D105
         if name.startswith("_"):
@@ -477,6 +581,8 @@ class DB:
 
     def get(self, name: str) -> BaseTable | None:  # noqa: D102
         return BaseTable(name, self) if not name.startswith("_") else None
+
+    # Custom operators:
 
     def __or__(self, other: "DB") -> "DB":  # noqa: D105
         return self.extend(other)
@@ -645,3 +751,50 @@ class DB:
         return DB(
             table_dfs={t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()}
         )
+
+    def to_graph(
+        self, nodes: Sequence[SingleTable]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        # Concat all node tables into one.
+        node_dfs = [self[n.name].df.reset_index().assign(table=n.name) for n in nodes]
+        node_df = (
+            pd.concat(node_dfs, ignore_index=True)
+            .reset_index()
+            .rename(columns={"index": "id"})
+        )
+
+        # Find all link tables between the given node tables.
+        node_names = [n.name for n in nodes]
+        relations = pd.concat(
+            [self._get_rels(sources=[j], targets=node_names) for j in self.join_tables]
+        )
+
+        # Concat all edges into one table.
+        edge_df = pd.concat(
+            [
+                self[str(source_table)]
+                .df.merge(
+                    node_df.loc[node_df["table"] == rel.iloc[0]["target_table"]],
+                    left_on=rel.iloc[0]["source_col"],
+                    right_on=rel.iloc[0]["target_col"],
+                )
+                .rename(columns={"id": "source"})
+                .merge(
+                    node_df.loc[node_df["table"] == rel.iloc[1]["target_table"]],
+                    left_on=rel.iloc[1]["source_col"],
+                    right_on=rel.iloc[1]["target_col"],
+                )
+                .rename(columns={"id": "target"})[["source", "target"]]
+                for source_table, rel in relations.groupby("source_table")
+                if len(rel) == 2  # We do not export hyper-graphs.
+            ],
+            ignore_index=True,
+        )
+
+        return node_df, edge_df

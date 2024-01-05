@@ -51,38 +51,39 @@ class GeoAlliance(StrEnum):
 
 
 class GeoScheme(StrEnum):
-    """List of schemes, which can be used todefine geo-regions of interest."""
+    """List of schemes, which can be used to define geo-regions of interest."""
 
     country_name = auto()
-    """Short name of a country"""
+    """Short name of a country."""
 
     continent = auto()
-    """Name of a continent"""
+    """Name of a continent."""
 
     cc_iso3 = auto()
-    """ISO3 code of a country"""
+    """ISO3 code of a country."""
 
     cc_iso2 = auto()
-    """ISO2 code of a country"""
+    """ISO2 code of a country."""
 
     alliance = auto()
-    """Name of an international alliance, to which a country belongs
+    """Name of an international alliance, to which a country belongs.
     """
 
     world = auto()
-    """Dummy scheme to match all of the world"""
+    """Dummy scheme to match all of the world."""
+
+    @staticmethod
+    def _scheme_map() -> dict["GeoScheme", str]:
+        return {
+            GeoScheme.country_name: "name_short",
+            GeoScheme.continent: "continent",
+            GeoScheme.cc_iso3: "ISO3",
+            GeoScheme.cc_iso2: "ISO2",
+        }
 
     def to_coco_scheme(self) -> str | None:
         """Return associated coco scheme, if applicable."""
-        return _scheme_map.get(self)
-
-
-_scheme_map = {
-    GeoScheme.country_name: "name_short",
-    GeoScheme.continent: "continent",
-    GeoScheme.cc_iso3: "ISO3",
-    GeoScheme.cc_iso2: "ISO2",
-}
+        return self._scheme_map().get(self)
 
 
 @dataclass(frozen=True)
@@ -90,13 +91,13 @@ class GeoRegion:
     """Define a geo-region according to some scheme (country, continent, etc.)."""
 
     label: str
-    """The geo-location's label according to `scheme`"""
+    """The geo-location's label according to `scheme`."""
 
     scheme: GeoScheme = GeoScheme.country_name
-    """The naming/classification scheme used"""
+    """The naming/classification scheme used."""
 
     display_label: str | None = None
-    """Optional, custom display label for the geo-location"""
+    """Optional, custom display label for the geo-location."""
 
     exclude_already_covered: bool = True
     """When listing multiple geo-regions, exclude locations
@@ -110,7 +111,14 @@ class GeoRegion:
         self,
         scheme: "CountryScheme" = GeoScheme.cc_iso3,
     ) -> list[str]:
-        """Return list of matching countries in given ``scheme``."""
+        """Return list of matching countries in given ``scheme``.
+
+        Args:
+            scheme: The scheme to convert to countries.
+
+        Returns:
+            List of countries in ``scheme``.
+        """
         res = None
 
         match (self.scheme):
@@ -153,6 +161,7 @@ def _region_to_country_map(
 CountryScheme: TypeAlias = Literal[
     GeoScheme.country_name, GeoScheme.cc_iso2, GeoScheme.cc_iso3
 ]
+"""A :py:class:`GeoScheme` which can be used to define a single country.`"""
 
 
 @dataclass(frozen=True)
@@ -160,11 +169,15 @@ class Country:
     """A country represented by ISO2 code, ISO3 code or name."""
 
     label: str
+    """The country's label according to `scheme`."""
+
     scheme: CountryScheme | None = None
+    """The naming/classification scheme used."""
 
     def to(self, scheme: CountryScheme) -> Self:
         """Convert to other scheme."""
-        return (
+        return cast(
+            Self,
             Country(
                 cast(
                     str,
@@ -175,7 +188,7 @@ class Country:
                 scheme,
             )
             if scheme != self.scheme
-            else self
+            else self,
         )
 
     def __str__(self) -> str:  # noqa: D105
@@ -190,7 +203,16 @@ def countries_to_scheme(
     target: CountryScheme = GeoScheme.cc_iso3,
     src: CountryScheme | None = None,
 ) -> pd.Series:
-    """Translate given series of country labels to ``scheme``."""
+    """Translate given series of country labels to ``scheme``.
+
+    Args:
+        countries: Series of country labels.
+        target: Target scheme to translate to.
+        src: Source scheme to translate from.
+
+    Returns:
+        Series of translated country labels.
+    """
     return pd.Series(
         coco.convert(
             countries,
@@ -201,7 +223,7 @@ def countries_to_scheme(
     )
 
 
-def geo_col_to_cc(
+def expand_geo_col_to_cc(
     df: pd.DataFrame,
     geo_col: str,
     scheme: GeoScheme = GeoScheme.country_name,
@@ -210,6 +232,15 @@ def geo_col_to_cc(
     """Expand geo-regions present in ``geo_col`` to country codes.
 
     Expand such that rows of ``df`` with multiple mapped CCs are multiplicated.
+
+    Args:
+        df: The dataframe to expand.
+        geo_col: The column containing geo-regions.
+        scheme: The scheme used to define the geo-regions.
+        cc_scheme: The scheme to expand to.
+
+    Returns:
+        The expanded dataframe.
     """
     cc_map = pd.concat(
         [
@@ -234,8 +265,19 @@ def merge_geo_regions(
     """Right-merge ``geo_regions`` onto ``df`` based on ``geo_col``.
 
     Merge such that rows with multiple mapped regions are multiplicated.
+
+    Args:
+        df: The dataframe to merge into.
+        geo_col: The column containing geo-regions.
+        geo_regions: The geo-regions to merge.
+        input_scheme: The scheme used to define the geo-regions.
+        rest_of_world: Whether to add a "Rest of World" region.
+        pretty_labels: Whether to use pretty labels for regions.
+
+    Returns:
+        The merged dataframe.
     """
-    src_df = geo_col_to_cc(df, geo_col=geo_col, scheme=input_scheme)
+    src_df = expand_geo_col_to_cc(df, geo_col=geo_col, scheme=input_scheme)
 
     cc_coverage = set()
     res_df = pd.DataFrame()
@@ -278,14 +320,20 @@ def merge_geo_regions(
     return res_df
 
 
-def match_geo_region(
-    geo_region: GeoRegion,
+def match_to_geo_region(
     countries: pd.Series,
+    geo_region: GeoRegion,
     country_scheme: CountryScheme | None = None,
 ) -> pd.Series:
-    """Right-merge ``geo_regions`` onto ``df`` based on ``geo_col``.
+    """Check whether countries are in given geo-region.
 
-    Merge such that rows with multiple mapped regions are multiplicated.
+    Args:
+        countries: Series of countries to check.
+        geo_region: The geo-region to check against.
+        country_scheme: The scheme of the countries.
+
+    Returns:
+        Series of booleans indicating whether countries are in geo-region.
     """
     return countries_to_scheme(countries, GeoScheme.cc_iso3, src=country_scheme).isin(
         geo_region.to_country_list(scheme=GeoScheme.cc_iso3)
@@ -293,10 +341,19 @@ def match_geo_region(
 
 
 flag_sizes = pd.Series([20, 40, 80, 160, 320, 640, 1280, 2560])
+"""List of available flag image sizes."""
 
 
 def gen_flag_url(cc: pd.Series, width: int) -> pd.Series:
-    """Get the URL of a small flag image for a given country code."""
+    """Get the URL of a small flag image for a given country code.
+
+    Args:
+        cc: Series of country codes.
+        width: The desired width of the flag.
+
+    Returns:
+        Series of flag image URLs.
+    """
     return (
         "https://flagcdn.com/w"
         + str(flag_sizes.loc[flag_sizes > width].min())
@@ -307,7 +364,15 @@ def gen_flag_url(cc: pd.Series, width: int) -> pd.Series:
 
 
 def gen_flag_img_tag(cc: pd.Series, width: int) -> pd.Series:
-    """Generate a HTML image tag with a small flag for a given country code."""
+    """Generate a HTML image tag with a small flag for a given country code.
+
+    Args:
+        cc: Series of country codes.
+        width: The desired width of the flag.
+
+    Returns:
+        Series of HTML image tags.
+    """
     flags = (
         "<img "
         + (' src="' + gen_flag_url(cc, width) + '"')

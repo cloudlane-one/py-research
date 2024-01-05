@@ -34,10 +34,13 @@ R = TypeVar("R")
 
 @dataclass
 class FileCache:
-    """Local, file-directory based cache for storing function results."""
+    """Local, directory-based cache for storing function results."""
 
     path: Path
+    """Root directory for storing cached results."""
+
     max_cache_days: int = 7
+    """After how many days to invalidate cached objects and recompute."""
 
     def __post_init__(self):  # noqa: D105
         now = datetime.datetime.now()
@@ -66,15 +69,14 @@ class FileCache:
 
         Args:
             id_arg_subset:
-                Number or name of the argument to use as id
-                (if id is defined by a single argument)
+                Number or name of the arguments to base hash id of result on.
             use_raw_arg:
                 If ``True``, use the unhashed, string-formatted value of the id arg
-                as filename.
+                as filename. Only works for single id arg.
             id_callback:
-                Callback function to use for retrieving an id from the arguments
+                Callback function to use for retrieving a unique id from the arguments.
             use_json:
-                Whether to use JSON as the format for caching dicts (instead of YAML)
+                Whether to use JSON as the format for caching dicts (instead of YAML).
         """
 
         def inner(func: Callable[P, R]) -> Callable[P, R]:  # noqa: C901
@@ -228,9 +230,12 @@ def get_cache(
     """Return a named cache instance private to the calling module.
 
     Args:
-        name: Name of the cache (directory) to create
-        root_path: Root directory, where to store cache
-        max_cache_time: After how many days to invalidate cached objects
+        name: Name of the cache (directory) to create.
+        root_path: Root directory, where to store cache.
+        max_cache_time: After how many days to invalidate cached objects and recompute.
+
+    Returns:
+        A cache instance.
     """
     calling_module = get_calling_module_name() or "root"
 

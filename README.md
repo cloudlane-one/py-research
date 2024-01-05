@@ -2,14 +2,20 @@
 
 ## About this project
 
-This package contains multiple, related but not necessarily interdependent, modules meant to aid with automating and smoothing typical datascience workflows in Python.
+This package contains multiple, related but not necessarily interdependent, modules meant to aid with automating and simplifying typical R&D coding workflows in Python.
 
 ## How to install
 
-As long as this package remains unpublished on PyPi, you can use [Poetry](https://python-poetry.org) to install it directly from git via:
+This package is available on PyPI:
 
 ```bash
-poetry add git+https://github.com/cloudlane-one/py-research.git#main
+pip install py-research
+```
+
+Alternatively, you can install it directly from git via:
+
+```bash
+pip install git+https://github.com/cloudlane-one/py-research.git
 ```
 
 ## Contents

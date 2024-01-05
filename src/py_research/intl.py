@@ -1,4 +1,4 @@
-"""Simple & semi-automatic intl + localization of data analysis functions."""
+"""Simple & semi-automatic intl. + localization of data analysis functions."""
 
 import re
 from collections.abc import Callable, Generator, Iterable
@@ -17,6 +17,7 @@ from typing import (
     ParamSpec,
     Protocol,
     TypeAlias,
+    cast,
     overload,
     runtime_checkable,
 )
@@ -52,19 +53,36 @@ class Format:
     """Custom options for localized formatting."""
 
     decimal_notation: Literal["plain", "scientific", "percent"] | None = None
+    """How to format decimals."""
+
     decimal_digits: int | None = None
+    """How many digits to show after the decimal point."""
+
     decimal_min_digits: int | None = None
+    """Minimum number of digits to show after the decimal point."""
+
     decimal_max_digits: int | None = None
+    """Maximum number of digits to show after the decimal point."""
+
     decimal_group_separator: bool | None = None
+    """Whether to use decimal group separators."""
+
     datetime_format: Literal["short", "medium", "long"] | None = None
+    """How to format datetimes."""
+
     country_format: CountryScheme | None = None
+    """How to format countries."""
 
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
-        return parse_obj_as(
-            Format,
-            always_merger.merge(
-                asdict(self), {k: v for k, v in asdict(other).items() if v is not None}
+        return cast(
+            Self,
+            parse_obj_as(
+                Format,
+                always_merger.merge(
+                    asdict(self),
+                    {k: v for k, v in asdict(other).items() if v is not None},
+                ),
             ),
         )
 
@@ -78,6 +96,14 @@ class Format:
         """Copy and change options according to numbers in ``sample``.
 
         Change such that all given numbers have minimum ``min_sig`` significant digits.
+
+        Args:
+            sample: Sample of numbers to use for determining the number of digits.
+            min_sig: Minimum number of significant digits.
+            fixed: Whether to fix the number of digits after the decimal point.
+
+        Returns:
+            New instance with changed options.
         """
         min_int_digits = (
             min(
@@ -91,14 +117,17 @@ class Format:
             else 1
         )
         min_after_comma = min_sig - min_int_digits
-        return Format(
-            **{
-                **asdict(self),
-                **dict(
-                    decimal_min_digits=min_after_comma,
-                    decimal_max_digits=(min_after_comma if fixed else None),
-                ),
-            }
+        return cast(
+            Self,
+            Format(
+                **{
+                    **asdict(self),
+                    **dict(
+                        decimal_min_digits=min_after_comma,
+                        decimal_max_digits=(min_after_comma if fixed else None),
+                    ),
+                }
+            ),
         )
 
 
@@ -124,21 +153,31 @@ class Template:
     """Custom override for formatted message."""
 
     scaffold: str | DynamicMessage
+    """Template string or function to use for formatting."""
+
     given_params: dict[str, Any] = field(default_factory=dict)
+    """Parameters given to the template."""
+
     param_overrides: dict[str, KwdOverride] = field(default_factory=dict)
+    """Overrides for parameters given to the template."""
+
     context: str | dict[str, str | None] | None = None
+    """Context in which the template is used."""
 
 
 LabelOverride: TypeAlias = (
     dict[str, str | Callable[[str], str]]
     | tuple[tuple[str, ...], str | Callable[[str], str]]
 )
+"""Override for a label, either as a dict or a tuple of (search, replace).""" ""
 
 MessageOverride: TypeAlias = (
     dict[str, str | Template] | tuple[re.Pattern | tuple[str, ...], str | Template]
 )
+"""Override for a message, either as a dict or a tuple of (search, replace)."""
 
 RegexReplace: TypeAlias = tuple[re.Pattern | str, str | Callable[[str], str]]
+"""Regex search-replace.""" ""
 
 
 @pydantic_dataclass
@@ -148,26 +187,43 @@ class Overrides:
     labels: list[LabelOverride] | dict[str | None, list[LabelOverride]] = field(
         default_factory=list
     )
+    """(Context-dependent) overrides for labels."""
+
     messages: list[MessageOverride] = field(default_factory=list)
+    """Overrides for messages."""
+
     format: Format = field(default_factory=Format)
+    """Overrides for formatting."""
 
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
-        return Overrides(
-            labels=always_merger.merge(
-                self.labels if isinstance(self.labels, dict) else {None: self.labels},
-                other.labels
-                if isinstance(other.labels, dict)
-                else {None: other.labels},
+        return cast(
+            Self,
+            Overrides(
+                labels=always_merger.merge(
+                    self.labels
+                    if isinstance(self.labels, dict)
+                    else {None: self.labels},
+                    other.labels
+                    if isinstance(other.labels, dict)
+                    else {None: other.labels},
+                ),
+                messages=always_merger.merge(self.messages, other.messages),
+                format=self.format.merge(other.format),
             ),
-            messages=always_merger.merge(self.messages, other.messages),
-            format=self.format.merge(other.format),
         )
 
     def get_labels(
         self, context: str | None = None
     ) -> dict[str | None, list[LabelOverride]]:
-        """Get all translations applicable to given context. List default ctx first."""
+        """Get all labels applicable to given context. List default ctx first.
+
+        Args:
+            context: Context to get translations for.
+
+        Returns:
+            Labels for given context.
+        """
         return (
             {
                 None: self.labels.get(None) or [],
@@ -187,6 +243,7 @@ if texts_file_path.is_file():
 
 
 def _get_default_locale() -> Locale:
+    """Get default locale, falling back to English."""
     try:
         return Locale.parse(normalize(getlocale()[0] or "en"), sep="_")
     except UnknownLocaleError:
@@ -234,11 +291,16 @@ def _cached_translate(lang: str, text: str, translator: GoogleTranslator | None)
 
 @dataclass
 class Localization:
-    """Representation of a locale config, which can be used as a context manager."""
+    """Locale config, which can be used as a context manager to activate the locale."""
 
     local_locale: Locale | None = None
+    """Locale to use for this localization. If None, use parent context's locale."""
+
     local_overrides: Overrides | dict[Locale, Overrides] | None = None
+    """Optional overrides for this localization."""
+
     show_raw: bool = False
+    """Whether to show raw function calls instead of localized text, for debugging."""
 
     def __machine_translate(self, text: str, locale: Locale | None = None) -> str:
         return _cached_translate(
@@ -289,7 +351,7 @@ class Localization:
         self.__translator = GoogleTranslator(source="en", target=self.locale.language)
 
     def activate(self):
-        """Set this the as current theme."""
+        """Set this the as current localization."""
         self.__parent = active_localization.get()
         self.__token = active_localization.set(self)
         setlocale(LC_ALL, str(self.locale))
@@ -316,7 +378,7 @@ class Localization:
             show_raw=self.show_raw,
         )
         memo[id(self)] = c
-        return c
+        return cast(Self, c)
 
     def __get_label(
         self,
@@ -444,7 +506,16 @@ class Localization:
     def label(
         self, label: str, context: str | None = None, locale: Locale | None = None
     ) -> str:
-        """Localize given text."""
+        """Localize given text label.
+
+        Args:
+            label: Label to localize.
+            context: Context in which the label is used.
+            locale: Locale to use for localization.
+
+        Returns:
+            Localized label.
+        """
         if self.show_raw:
             return (
                 f"label('{label}{f', ctx={context}' if context is not None else ''}')"
@@ -474,7 +545,16 @@ class Localization:
     def message(
         self, msg: str | DynamicMessage[P] | Template, *args: Any, **kwargs: Any
     ) -> str:
-        """Localize given text."""
+        """Localize given text message.
+
+        Args:
+            msg: Message to localize.
+            args: Positional arguments to pass to the message.
+            kwargs: Keyword arguments to pass to the message.
+
+        Returns:
+            Localized message.
+        """
         tpl = msg if isinstance(msg, Template) else Template(msg)
         name = tpl.scaffold if isinstance(tpl.scaffold, str) else tpl.scaffold.__name__
 
@@ -506,7 +586,16 @@ class Localization:
     def value(
         self, v: Any, options: Format = Format(), locale: Locale | None = None
     ) -> str:
-        """Locale-format arbitrary value as string."""
+        """Return localized string represention of given value.
+
+        Args:
+            v: Value to localize.
+            options: Options for formatting.
+            locale: Locale to use for localization.
+
+        Returns:
+            Localized value.
+        """
         if self.show_raw:
             return f"value({v})"
 
@@ -580,7 +669,15 @@ class Localization:
     def formatter(
         self, options: Format = Format(), locale: Locale | None = None
     ) -> Callable[[Any], str]:
-        """Return a formatting function bound to this locale."""
+        """Return a formatting function bound to this locale.
+
+        Args:
+            options: Options for formatting.
+            locale: Locale to use for localization.
+
+        Returns:
+            Formatting function.
+        """
         return partial(self.value, options=options, locale=locale)
 
     def format_spec(
@@ -636,7 +733,15 @@ def get_localization() -> Localization:
 def iter_locales(
     locales: list[str], overrides: dict[str, Overrides] | None = None
 ) -> Generator[Localization, None, None]:
-    """Iterate over localizations for given locales w/ optional overrides."""
+    """Iterate over localizations for given locales w/ optional overrides.
+
+    Args:
+        locales: Locales to iterate over.
+        overrides: Optional overrides for the localizations.
+
+    Returns:
+        Generator of localizations.
+    """
     for loc in locales:
         locz = Localization(
             local_locale=Locale(loc),

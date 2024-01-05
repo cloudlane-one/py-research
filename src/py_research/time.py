@@ -73,6 +73,9 @@ def _auto_interval_format(
                 format_func = f"{date_prefix}%M:%S"
             else:
                 format_func = f"{date_prefix}%H:%M:%S"
+        case _:
+            interval_name = "datetime"
+            format_func = "%c"
 
     return format_func, interval_name
 
@@ -83,7 +86,17 @@ def datetime_to_interval_series(
     format: str | None = None,
     interval_col: str | None = None,
 ) -> pd.Series:
-    """Assign intervals matching ``datetime_col`` to new column."""
+    """Assign intervals matching ``datetime_col`` to new column.
+
+    Args:
+        datetime_series: Series of datetime values.
+        time_interval: Interval to use for grouping.
+        format: Format to use for the interval column.
+        interval_col: Name of the interval column.
+
+    Returns:
+        Series of intervals matching ``datetime_col``.
+    """
     datetime_df = (
         datetime_series.to_frame().assign(time_bin=datetime_series).reset_index()
     )

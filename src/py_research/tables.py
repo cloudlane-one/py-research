@@ -1,4 +1,5 @@
 """Utilities for creating pretty result tables."""
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
@@ -55,8 +56,10 @@ class TableStyle:
     """Define a pretty table column format."""
 
     cols: str | list[str] | None = None
+    """Column(s) to apply this style to. If None, apply to all columns."""
 
     rows: pd.Series | None = None
+    """Rows to apply this style to. If None, apply to all rows."""
 
     name: str | None = None
     """Name of this style"""
@@ -65,10 +68,10 @@ class TableStyle:
     """Format string or callback function to use for formatting numerical values"""
 
     alignment: Literal["left", "center", "right"] | None = None
-    """How to align the column's text"""
+    """How to align the columns' text"""
 
     css: dict[str, str] | Callable[[Any], str] | None = None
-    """Custom CSS styles to apply to the column"""
+    """Custom CSS styles to apply to matched cells"""
 
     hide_headers: bool | None = None
     """Whether to hide headers of given ``cols``."""
@@ -88,14 +91,39 @@ class ResultTable:
     """Define and render a pretty result table with custom formatting and highlights."""
 
     df: pd.DataFrame
+    """Dataframe to render as pretty table."""
+
     styles: list[TableStyle] = field(default_factory=list)
+    """Styles to apply to the table."""
+
     labels: dict[str, str] | Callable[[str], str] = field(default_factory=dict)
+    """Labels to use for the table headers.
+
+    If dict, the keys are column names and the values are the labels.
+    If callable, the function is called with the column name and should return the label
+    """
+
     widths: dict[str, float | str] = field(default_factory=dict)
+    """Widths to use for the table columns.
+
+    If a float, the width is relative to the sum of all widths.
+    If a string, the width is set to the CSS string value.
+    """
+
     title: str | None = None
+    """Title of the table."""
+
     hide_index: bool = True
+    """Whether to hide the index column."""
+
     max_row_cutoff: int = 100
+    """Maximum number of rows to render."""
+
     font_size: float = 1.0
+    """Default font size to use for the table."""
+
     default_style: TableStyle = field(default_factory=TableStyle)
+    """Default style to apply to the table."""
 
     @property
     def __hidden_headers(self) -> set[str]:
@@ -113,9 +141,15 @@ class ResultTable:
             else set()
         )
 
-    @property
     def html_description(self, full_doc: bool = True) -> str:
-        """HTML description for table filters and highlights."""
+        """Return HTML description for table filters and highlights.
+
+        Args:
+            full_doc: Whether to wrap the description in a full HTML document.
+
+        Returns:
+            HTML code for the description.
+        """
         highlights = [
             (
                 h,
@@ -375,7 +409,7 @@ class ResultTable:
         )
 
     def to_styled_df(self) -> Styler:
-        """Styled pandas dataframe."""
+        """Render table to styled pandas dataframe."""
         data = self.df.copy()
 
         incl_filters = [
@@ -411,7 +445,15 @@ class ResultTable:
 
 
 def to_html(styled: Styler, full_doc: bool = True) -> str:
-    """HTML representation of the pretty table."""
+    """Return HTML representation of a pretty table.
+
+    Args:
+        styled: Styled dataframe to render.
+        full_doc: Whether to wrap the table in a full HTML document.
+
+    Returns:
+        HTML code for the table.
+    """
     return (
         f"""
         <!doctype html>
@@ -430,10 +472,20 @@ def to_html(styled: Styler, full_doc: bool = True) -> str:
 
 
 def html_to_pdf(doc: str, file: Path):
-    """Render and save HTML ``doc`` as PDF document."""
+    """Render and save HTML ``doc`` as PDF document.
+
+    Args:
+        doc: HTML document to render.
+        file: File to save the rendered PDF document to.
+    """
     pdfkit.from_string(doc, file)
 
 
 def html_to_image(doc: str, file: Path):
-    """Render and save HTML ``doc`` as PNG image."""
+    """Render and save HTML ``doc`` as PNG image.
+
+    Args:
+        doc: HTML document to render.
+        file: File to save the rendered image to.
+    """
     imgkit.from_string(doc, file, options={"zoom": "3.125", "width": "3125"})

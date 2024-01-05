@@ -7,6 +7,12 @@ def ensure_dir_exists(path: Path | str):
     """Make sure the given path exists and is a directory.
 
     Create dir if necessary. Then return the path unchanged.
+
+    Args:
+        path: Path to ensure exists.
+
+    Returns:
+        The given path.
     """
     path = Path(path).absolute()
     p = Path(path.parts[0])
@@ -19,11 +25,3 @@ def ensure_dir_exists(path: Path | str):
                 raise NotADirectoryError()
 
     return path
-
-
-def ensure_parent_dir_exists(path: Path):
-    """Make sure the given path's parent exists and is a directory.
-
-    Create dir if necessary. Then return the path unchanged.
-    """
-    return ensure_dir_exists(path.parent)

@@ -43,17 +43,19 @@ def default_scales():
 
 @dataclass
 class ColorTheme:
-    """Define custom theme colors."""
+    """Define a color theme. Can be used as context manager to activate the theme."""
 
     highlights: dict[Any, str] = field(default_factory=default_highlights)
+    """Highlight colors for different, known categories."""
+
     scales: dict[Any, list[tuple[float, str]]] = field(default_factory=default_scales)
-    labels: dict[str, str] = field(default_factory=dict)
+    """Named or numbered color sclales."""
 
     def __post_init__(self):  # noqa: D105
         self.__token = None
 
     def activate(self):
-        """Set this the as current theme."""
+        """Set this as the current theme."""
         self.__token = active_theme.set(self)
 
     def __enter__(self):  # noqa: D105
@@ -111,5 +113,5 @@ def get_theme() -> ColorTheme:
 
 
 def to_bg_color(color: str, lightness: float = 0.8) -> str:
-    """Turn a highlight color into."""
+    """Turn a highlight color into a background color."""
     return rgb_to_hex(_adjust_lightness(_parse_css_color(color), lightness))

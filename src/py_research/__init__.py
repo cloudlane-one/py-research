@@ -1,1 +1,1 @@
-"""Smooth the corners of Python-based datascience work."""
+"""Collection of utilities for R&D coding in Python."""

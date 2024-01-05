@@ -1,4 +1,4 @@
-"""Functions for ranking entities by the nature and quantity of their publications."""
+"""Functions for ranking entities by multiple criteria."""
 from typing import Literal
 
 import numpy as np
@@ -15,7 +15,17 @@ def create_rank_series(
     exclude: pd.Series | None = None,
     name: str = "rank",
 ) -> pd.Series:
-    """Create a series of ranks."""
+    """Create a series of ranks given a series of values to rank by.
+
+    Args:
+        rank_by: Series of values to rank by.
+        rank_mode: Whether to rank ascending or descending.
+        exclude: Values to exclude from ranking.
+        name: Name of the resulting series.
+
+    Returns:
+        Series of ranks.
+    """
     data_table = pd.DataFrame(rank_by)
     filtered_data = (
         data_table.loc[~exclude]  # pylint: disable=E1130:invalid-unary-operand-type
@@ -52,7 +62,21 @@ def create_ranking_filter(
     show_always: pd.Series | None = None,
     count_always_shown: bool = False,
 ) -> pd.Series:
-    """Create a filter based on ranking."""
+    """Create a filter based on ranking.
+
+    Args:
+        rank_by: Series of values to rank by.
+        cutoff_rank: Cutoff rank for the filter.
+        sort_order: Whether to rank ascending or descending.
+        rank_only: Only rank the given values.
+        show_only: Only show the given values.
+        show_always: Always show the given values.
+        count_always_shown: Whether to count the values in show_always as ranks.
+
+    Returns:
+        Boolean series representing the filter. The series name contains a
+        description of the filter.
+    """
     loc = get_localization()
 
     def _filter_explanation(

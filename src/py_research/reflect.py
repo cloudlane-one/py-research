@@ -23,7 +23,7 @@ def _get_calling_frame(offset=0):
     return stack[offset + 2]
 
 
-def get_calling_module_name():
+def get_calling_module_name() -> str | None:
     """Return the name of the module calling the current function."""
     mod = inspect.getmodule(_get_calling_frame(offset=1).frame)
     return mod.__name__ if mod is not None else None
@@ -32,7 +32,16 @@ def get_calling_module_name():
 def get_full_args_dict(
     func: Callable, args: Sequence, kwargs: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Return dict of all args + kwargs with names."""
+    """Return dict of all args + kwargs.
+
+    Args:
+        func: Function to inspect.
+        args: Positional arguments given to the function.
+        kwargs: Keyword arguments given to the function.
+
+    Returns:
+        Dictionary of all args + kwargs.
+    """
     argspec = inspect.getfullargspec(func)
 
     arg_defaults = argspec.defaults or []
@@ -66,6 +75,7 @@ def _get_distributions() -> dict[str, meta.Distribution]:
 
 
 def _get_module_file(module: ModuleType) -> Path | None:
+    """Get the file of given module, if any."""
     return (
         Path(str(module.__file__))
         if not hasattr(module, "__file__") or module.__file__ is None
@@ -93,14 +103,21 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
 
 def get_all_module_dependencies(
     module: ModuleType,
-    ext_deps: set[str] | None = None,
-    int_deps: set[ModuleType] | None = None,
+    _ext_deps: set[str] | None = None,
+    _int_deps: set[ModuleType] | None = None,
 ) -> tuple[set[str], set[ModuleType]]:
-    """Return all dependency modules of given module."""
-    if ext_deps is None:
-        ext_deps = set()
-    if int_deps is None:
-        int_deps = set()
+    """Return all (indirect) dependency modules of given module.
+
+    Args:
+        module: Module to inspect.
+
+    Returns:
+        Tuple of external and internal dependencies.
+    """
+    if _ext_deps is None:
+        _ext_deps = set()
+    if _int_deps is None:
+        _int_deps = set()
 
     deps = [
         dep
@@ -112,22 +129,25 @@ def get_all_module_dependencies(
         for dep in deps
         if (dist := get_module_distribution(dep)) is not None
     }
-    new_ext_deps = set(ext_deps_map.values()) - ext_deps
+    new_ext_deps = set(ext_deps_map.values()) - _ext_deps
 
     these_int_deps = set(deps) - set(ext_deps_map.keys())
-    new_int_deps = these_int_deps - int_deps
+    new_int_deps = these_int_deps - _int_deps
 
     if len(new_ext_deps) > 0 or len(new_int_deps) > 0:
-        ext_deps |= new_ext_deps
-        int_deps |= new_int_deps
+        _ext_deps |= new_ext_deps
+        _int_deps |= new_int_deps
 
         sub_ext_deps, sub_int_deps = zip(
-            *[get_all_module_dependencies(d, ext_deps, int_deps) for d in new_int_deps]
+            *[
+                get_all_module_dependencies(d, _ext_deps, _int_deps)
+                for d in new_int_deps
+            ]
         )
 
         return set.union(*sub_ext_deps), set.union(*sub_int_deps)
     else:
-        return ext_deps, int_deps
+        return _ext_deps, _int_deps
 
 
 def get_module_repo(module: ModuleType) -> Repo | None:
@@ -144,11 +164,22 @@ class PyObjectRef(Generic[T]):
     """Reference to a static Python object."""
 
     type: type[T]
+    """Type of the object."""
+
     package: str
+    """Name of the package the object belongs to."""
+
     module: str
+    """Name of the module the object belongs to."""
+
     object: str
+    """Name of the object."""
+
     version: str = "1.0.0"
+    """Custom version of the object."""
+
     url: str = "https://pypi.org"
+    """URL of the package's index."""
 
     @staticmethod
     def _get_pkg_url(module: ModuleType, dist: meta.Distribution) -> str | None:

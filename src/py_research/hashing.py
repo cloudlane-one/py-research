@@ -26,7 +26,7 @@ def _hash_sequence(s: Sequence) -> int:
 
 
 def gen_int_hash(obj: Any) -> int:
-    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
+    """Generate stable hash for obj (must be known, hashable or composed of such)."""
     match obj:
         case (Number() | str() | bytes() | date() | time() | datetime() | timedelta()):
             return _stable_hash(obj)
@@ -62,7 +62,18 @@ def gen_int_hash(obj: Any) -> int:
 
 
 def gen_str_hash(x: Any, length: int = 10, raw_str: bool = False) -> str:
-    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
+    """Generate stable hash for obj (must be known, hashable or composed of such).
+
+    Args:
+        x: Object to hash.
+        length: Length of the hash.
+        raw_str:
+            Whether to use the raw string representation of the object,
+            if it is a string.
+
+    Returns:
+        Hash of the object as string.
+    """
     s = None
     match (x):
         case int() | float() | complex() | Decimal():
