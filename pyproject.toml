@@ -10,7 +10,6 @@ dependencies = [
   "pydantic<2.0.0,>=1.9.0",
   "streamlit<2.0.0,>=1.7.0",
   "tqdm<5.0.0,>=4.62.3",
-  "oracledb<2.0.0,>=1.2.2",
   "sqlalchemy<3.0.0,>=2.0.7",
   "strenum<1.0.0,>=0.4.10",
   "stqdm<1.0.0,>=0.0.5",
@@ -29,10 +28,14 @@ dependencies = [
   "importlib-metadata>=6.11.0",
 ]
 name = "py-research"
-description = "Smooth the corners of Python-based datascience work."
+description = "Collection of utilities for R&D coding in Python."
 readme = "README.md"
 
-[project.optional-dependencies]
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm.dev-dependencies]
 dev = [
   "black>=23.11.0",
   "notebook>=7.0.6",
@@ -47,10 +50,6 @@ dev = [
   "deptry>=0.12.0",
   "ruff>=0.1.7",
 ]
-
-[build-system]
-requires = ["pdm-backend"]
-build-backend = "pdm.backend"
 
 [tool.pdm.build]
 includes = ["src/py_research"]
@@ -76,8 +75,10 @@ convention = "google"
 max-complexity = 12
 
 [tool.deptry]
-ignore_unused = ["kaleido", "oracledb", "openpyxl"]
 known_first_party = ["py_research"]
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["openpyxl"]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]

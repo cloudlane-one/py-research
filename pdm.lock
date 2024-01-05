@@ -6,7 +6,7 @@ groups = ["default", "dev"]
 cross_platform = true
 static_urls = false
 lock_version = "4.3"
-content_hash = "sha256:2995af1162b9a61e78be20b1be4e1631012d1262dccbec3121f07c1382321eac"
+content_hash = "sha256:a79513caa4c955cc56bb69f6592b2e06960f4a73c721bbb3ca1f4e63d00badf4"
 
 [[package]]
 name = "accessible-pygments"
@@ -713,20 +713,6 @@ files = [
 ]
 
 [[package]]
-name = "inflect"
-version = "6.2.0"
-requires_python = ">=3.8"
-summary = "Correctly generate plurals, singular nouns, ordinals, indefinite articles; convert numbers to words"
-dependencies = [
-    "pydantic>=1.9.1",
-    "typing-extensions",
-]
-files = [
-    {file = "inflect-6.2.0-py3-none-any.whl", hash = "sha256:5a005e0c9afe152cc95d552a59b8b0c19efc51823405b43d89e984f0c33bc243"},
-    {file = "inflect-6.2.0.tar.gz", hash = "sha256:518088ef414a4e15df70e6bcb40d021da4d423cc6c2fd4c0cad5500d39f86627"},
-]
-
-[[package]]
 name = "iniconfig"
 version = "2.0.0"
 requires_python = ">=3.7"
@@ -1079,14 +1065,6 @@ summary = "Jupyter interactive widgets for JupyterLab"
 files = [
     {file = "jupyterlab_widgets-3.0.9-py3-none-any.whl", hash = "sha256:3cf5bdf5b897bf3bccf1c11873aa4afd776d7430200f765e0686bd352487b58d"},
     {file = "jupyterlab_widgets-3.0.9.tar.gz", hash = "sha256:6005a4e974c7beee84060fdfba341a3218495046de8ae3ec64888e5fe19fdb4c"},
-]
-
-[[package]]
-name = "kaleido"
-version = "0.2.1.post1"
-summary = "Static image export for web-based visualization libraries with zero dependencies"
-files = [
-    {file = "kaleido-0.2.1.post1-py2.py3-none-manylinux2014_armv7l.whl", hash = "sha256:d313940896c24447fc12c74f60d46ea826195fc991f58569a6e73864d53e5c20"},
 ]
 
 [[package]]
