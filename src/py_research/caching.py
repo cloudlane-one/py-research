@@ -39,12 +39,12 @@ class FileCache:
     path: Path
     """Root directory for storing cached results."""
 
-    max_cache_days: int = 7
-    """After how many days to invalidate cached objects and recompute."""
+    max_cache_time: datetime.timedelta = datetime.timedelta(days=7)
+    """After how long to invalidate cached objects and recompute."""
 
     def __post_init__(self):  # noqa: D105
         now = datetime.datetime.now()
-        self.__earliest_date = now - datetime.timedelta(days=self.max_cache_days)
+        self.__earliest_date = now - self.max_cache_time
         self.__now_str = now.strftime("%Y-%m-%d")
 
     @staticmethod
@@ -225,7 +225,7 @@ class FileCache:
 def get_cache(
     name: str | None = None,
     root_path: Path = default_root_path,
-    max_cache_time: datetime.timedelta = datetime.timedelta(days=365),
+    max_cache_time: datetime.timedelta = datetime.timedelta(days=7),
 ):
     """Return a named cache instance private to the calling module.
 
@@ -241,5 +241,5 @@ def get_cache(
 
     return FileCache(
         ensure_dir_exists(root_path / calling_module / (name or "")),
-        max_cache_time.days,
+        max_cache_time,
     )

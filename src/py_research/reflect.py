@@ -245,3 +245,9 @@ class PyObjectRef(Generic[T]):
             )
 
         return obj
+
+
+def stref(obj: Any) -> str:
+    """Get string representation of given object reference."""
+    obj_ref = PyObjectRef.reference(obj)
+    return f"{obj_ref.module}.{obj_ref.object}"

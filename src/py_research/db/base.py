@@ -331,8 +331,8 @@ class DB:
 
     # Attributes:
 
-    version: str | None = None
-    """Version of this database."""
+    table_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
+    """Dataframes containing the data of each table in this database."""
 
     relations: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
     """Relations between tables in this database."""
@@ -340,8 +340,8 @@ class DB:
     join_tables: set[str] = field(default_factory=set)
     """Names of tables that are used as n-to-m join tables in this database."""
 
-    table_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
-    """Dataframes containing the data of each table in this database."""
+    version: str | None = None
+    """Version of this database."""
 
     # Creation:
 
@@ -384,7 +384,7 @@ class DB:
         if "_join_tables" in df_dict:
             join_tables = set(df_dict["_join_tables"]["name"].tolist())
 
-        return DB(version, relations, join_tables, df_dict)
+        return DB(df_dict, relations, join_tables, version)
 
     # Public methods:
 
