@@ -6,7 +6,6 @@ from tempfile import gettempdir
 
 import pandas as pd
 import pytest
-
 from py_research.db import DB, Table
 
 
@@ -100,7 +99,7 @@ def db_from_tables(
     relations: dict[tuple[str, str], tuple[str, str]],
     join_tables: set[str],
 ):
-    """Test the creation of a DB instance from tables."""
+    """Return DB instance with tables."""
     db = DB(
         {
             "projects": table_df_projects,

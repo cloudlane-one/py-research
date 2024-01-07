@@ -49,7 +49,6 @@ dev = [
     "autodoc-pydantic>=1.9.0",
     "deptry>=0.12.0",
     "ruff>=0.1.7",
-    "pytest-mock>=3.12.0",
 ]
 
 [tool.pdm.build]

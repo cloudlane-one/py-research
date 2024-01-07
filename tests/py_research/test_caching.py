@@ -5,10 +5,7 @@ from pathlib import Path
 from tempfile import gettempdir
 from unittest.mock import patch
 
-import py_research.files
-import py_research.reflect
 from py_research.caching import FileCache, get_cache
-from py_research.reflect import stref
 
 
 def test_get_cache_default_params():
@@ -17,8 +14,8 @@ def test_get_cache_default_params():
     assert isinstance(cache, FileCache)
 
 
-@patch(stref(py_research.reflect.get_calling_module_name), return_value="test")
-@patch(stref(py_research.files.ensure_dir_exists), new=lambda x: x)
+@patch("py_research.reflect.get_calling_module_name", return_value="test")
+@patch("py_research.files.ensure_dir_exists", new=lambda x: x)
 def test_get_cache_custom_params():
     """Test the custom parameters of get_cache."""
     custom_root_path = Path("/custom/path")
@@ -45,7 +42,7 @@ def test_get_cache_custom_params():
     assert cache2.max_cache_time == custom_max_cache_time
 
 
-@patch(stref(py_research.reflect.get_calling_module_name), return_value="test")
+@patch("py_research.reflect.get_calling_module_name", return_value="test")
 def test_cache_function():
     """Test the cache_function decorator."""
     tempdir = Path(gettempdir())

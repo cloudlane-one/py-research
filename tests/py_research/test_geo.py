@@ -3,6 +3,7 @@
 import country_converter as coco
 import pandas as pd
 import pytest
+
 from py_research.geo import (
     CountryScheme,
     GeoRegion,
@@ -30,7 +31,12 @@ from py_research.geo import (
             None,
             pd.Series(["USA", "CAN", "MEX"]),
         ),
-        (pd.Series([]), GeoScheme.cc_iso3, None, pd.Series([])),
+        (
+            pd.Series([], dtype=object),
+            GeoScheme.cc_iso3,
+            None,
+            pd.Series([], dtype=object),
+        ),
     ],
 )
 def test_countries_to_scheme(

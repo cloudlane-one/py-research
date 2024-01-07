@@ -78,7 +78,7 @@ def _get_module_file(module: ModuleType) -> Path | None:
     """Get the file of given module, if any."""
     return (
         Path(str(module.__file__))
-        if not hasattr(module, "__file__") or module.__file__ is None
+        if hasattr(module, "__file__") and module.__file__ is not None
         else None
     )
 
@@ -207,7 +207,7 @@ class PyObjectRef(Generic[T]):
 
         dist = get_module_distribution(module)
         if dist is None:
-            raise ValueError("Object's module ")
+            raise ValueError("Object must be associated with a package.")
 
         url = PyObjectRef._get_pkg_url(module, dist)
 

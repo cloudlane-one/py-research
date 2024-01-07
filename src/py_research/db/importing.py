@@ -15,7 +15,7 @@ from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
 
 Scalar = str | int | float | datetime
 
-_AttrMap = Mapping[str, str | bool | "_AttrMap"]
+_AttrMap = Mapping[str, "str | bool | _AttrMap"]
 """Mapping of hierarchical attributes to table columns"""
 
 _RelationalMap = Mapping[str, "str | bool | _RelationalMap | TableMap | list[TableMap]"]
