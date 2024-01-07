@@ -376,7 +376,7 @@ class ResultTable:
             styled = styled.set_properties(
                 subset=[col],
                 width=(
-                    f"{width / width_sum * 100}%"
+                    f"{(width / width_sum * 100):.1f}%"
                     if isinstance(width, int | float)
                     else width
                 ),

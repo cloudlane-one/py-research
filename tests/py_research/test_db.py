@@ -6,6 +6,7 @@ from tempfile import gettempdir
 
 import pandas as pd
 import pytest
+
 from py_research.db import DB, Table
 
 
@@ -52,11 +53,12 @@ def table_df_memberships():
     """Return a dataframe for the memberships table."""
     return pd.DataFrame(
         {
+            "id": [0, 1, 2, 3],
             "project": [1, 2, 3, 1],
             "member": ["a", "b", "c", "b"],
             "role": ["leader", "member", "member", "member"],
         }
-    )
+    ).set_index(["id"])
 
 
 @pytest.fixture
@@ -164,11 +166,12 @@ def test_extend_db(db_from_tables: DB):
             ).set_index("id"),
             "memberships": pd.DataFrame(
                 {
+                    "id": [4, 5],
                     "project": ["a", "b"],
                     "member": [1, 2],
                     "role": ["leader", "member"],
                 }
-            ),
+            ).set_index(["id"]),
             "tasks": pd.DataFrame(
                 {
                     "id": [8, 9],
@@ -183,11 +186,11 @@ def test_extend_db(db_from_tables: DB):
     assert isinstance(db, DB)
     assert set(db["projects"].df.index) == {1, 2, 3, 4, 5, 6}
     assert set(db["persons"].df.index) == {"a", "b", "c", "d", "e"}
-    assert set(db["memberships"].df.index) == {0, 1, 2, 3}
+    assert set(db["memberships"].df.index) == {0, 1, 2, 3, 4, 5}
     assert set(db["tasks"].df.index) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 
-def filter_db(db_from_tables: DB):
+def test_filter_db(db_from_tables: DB):
     """Test the filtering of a DB instance."""
     db = db_from_tables.filter(
         {"projects": db_from_tables["projects"].df["status"] == "done"}
@@ -248,3 +251,15 @@ def test_extend_db_table(db_from_tables: DB):
     )
     assert isinstance(table_extended, Table)
     assert set(table_extended.df.index) == {1, 2, 3, 4, 5, 6}
+
+
+# test_merge_db_table(
+#     db_from_tables(
+#         table_df_projects(),
+#         table_df_persons(),
+#         table_df_memberships(),
+#         table_df_tasks(),
+#         relations(),
+#         join_tables(),
+#     )
+# )

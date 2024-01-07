@@ -1,6 +1,7 @@
 """Test tables module."""
 
 import pandas as pd
+
 from py_research.tables import ResultTable, TableStyle, to_html
 
 
@@ -32,12 +33,19 @@ def test_result_table():
     assert "Beta" in rendered
     assert "Gamma" in rendered
 
-    # Test the widths attribute
-    table.widths = {"A": 0.5, "B": "100px", "C": "auto"}
+    # Test widths attribute
+    table.widths = {"A": "10rem", "B": "100px", "C": "auto"}
     rendered = to_html(table.to_styled_df())
-    assert "width: 50%;" in rendered
+    assert "width: 10rem;" in rendered
     assert "width: 100px;" in rendered
     assert "width: auto;" in rendered
+
+    # Test relative widths attribute
+    table.widths = {"A": 1, "B": 2, "C": 2}
+    rendered = to_html(table.to_styled_df())
+    assert "width: 20.0%;" in rendered
+    assert "width: 40.0%;" in rendered
+    assert "width: 40.0%;" in rendered
 
     # Test the title attribute
     table.title = "Test Table"

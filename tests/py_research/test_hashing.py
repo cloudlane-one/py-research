@@ -21,6 +21,3 @@ def test_gen_str_hash():
 
     # Test with a date
     assert len(gen_str_hash(date.today(), length=10)) == 10
-
-    # Test with raw_str=True
-    assert gen_str_hash("test", length=10, raw_str=True) == "test"

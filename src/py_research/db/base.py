@@ -153,54 +153,59 @@ class SingleTable(Table):
             raise ValueError("Both tables must be from the same database.")
 
         merged = self.df.rename(columns=lambda c: f"{self.source_map}->{c}")
+        merged = merged.rename_axis(
+            f"{self.source_map}->{merged.index.name or 'id'}", axis="index"
+        )
         merged_source_map = {self.source_map: self.source_map}
 
         outgoing = self._get_outgoing_rels()
-        for tt, (sc, tc) in outgoing.items():
-            if other.source_map == tt:
-                merged = merged.merge(
-                    other.df.rename(columns=lambda c: f"{sc}->{c}"),
-                    left_on=f"{self.source_map}->{sc}",
-                    right_on=f"{sc}->{tc}",
-                    how="left",
-                )
-                merged_source_map[sc] = tt
-
-        incoming = self._get_incoming_rels()
-        for st, (sc, tc) in incoming.items():
-            if other.source_map == st:
-                merged = merged.merge(
-                    other.df.rename(columns=lambda c: f"{sc}_of->{c}"),
-                    left_on=f"{self.source_map}->{tc}",
-                    right_on=f"{sc}_of->{sc}",
-                    how="left",
-                )
-                merged_source_map[f"{sc}_of"] = st
-            elif st in self.db.join_tables:
-                join_table = self.db[st]
-                joint = join_table._get_outgoing_rels()
-
-                if other.source_map in joint:
-                    # Perform a double merge across a join table.
-                    half_merged = merged.merge(
-                        join_table.df.rename(
-                            columns=lambda c: f"{join_table.source_map}->{c}"
-                        ),
-                        left_on=f"{self.source_map}->{tc}",
-                        right_on=f"{join_table.source_map}->{sc}",
+        for tt, cols in outgoing.items():
+            for sc, tc in cols.items():
+                if other.source_map == tt:
+                    merged = merged.merge(
+                        other.df.rename(columns=lambda c: f"{sc}->{c}"),
+                        left_on=f"{self.source_map}->{sc}",
+                        right_on=f"{sc}->{tc}",
                         how="left",
                     )
-                    merged_source_map[join_table.source_map] = join_table.source_map
+                    merged_source_map[sc] = tt
 
-                    for tt, (sc, tc) in joint.items():
-                        if other.source_map == tt:
-                            merged = half_merged.merge(
-                                other.df.rename(columns=lambda c: f"{sc}->{c}"),
-                                left_on=f"{join_table.source_map}->{sc}",
-                                right_on=f"{sc}->{tc}",
-                                how="left",
-                            )
-                            merged_source_map[sc] = tt
+        incoming = self._get_incoming_rels()
+        for st, cols in incoming.items():
+            for sc, tc in cols.items():
+                if other.source_map == st:
+                    merged = merged.merge(
+                        other.df.rename(columns=lambda c: f"{sc}_of->{c}"),
+                        left_on=f"{self.source_map}->{tc}",
+                        right_on=f"{sc}_of->{sc}",
+                        how="left",
+                    )
+                    merged_source_map[f"{sc}_of"] = st
+                elif st in self.db.join_tables:
+                    join_table = self.db[st]
+                    joint = join_table._get_outgoing_rels()
+
+                    if other.source_map in joint:
+                        # Perform a double merge across a join table.
+                        half_merged = merged.merge(
+                            join_table.df.rename(
+                                columns=lambda c: f"{join_table.source_map}->{c}"
+                            ),
+                            left_on=f"{self.source_map}->{tc}",
+                            right_on=f"{join_table.source_map}->{sc}",
+                            how="left",
+                        )
+                        merged_source_map[join_table.source_map] = join_table.source_map
+
+                        for tt, (sc, tc) in joint.items():
+                            if other.source_map == tt:
+                                merged = half_merged.merge(
+                                    other.df.rename(columns=lambda c: f"{sc}->{c}"),
+                                    left_on=f"{join_table.source_map}->{sc}",
+                                    right_on=f"{sc}->{tc}",
+                                    how="left",
+                                )
+                                merged_source_map[sc] = tt
 
         merged = merged.reindex(
             columns=pd.MultiIndex.from_tuples(
@@ -293,7 +298,7 @@ class BaseTable(SingleTable):
                             # Raise an error.
                             raise DataConflictError(
                                 {
-                                    (c, str(i), c): (lv, rv)
+                                    (c, c, str(i)): (lv, rv)
                                     for (i, lv), (i, rv) in zip(
                                         left.loc[conflicts[c]][c].items(),
                                         right.loc[conflicts[c]][c].items(),
@@ -521,7 +526,9 @@ class DB:
             table_dfs={
                 t: (table.df[filters[t]] if t in filters else table.df)
                 for t, table in self.items()
-            }
+            },
+            relations=self.relations,
+            join_tables=self.join_tables,
         )
 
         # Always use the filter tables as circuit_breakes.

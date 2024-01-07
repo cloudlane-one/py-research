@@ -146,16 +146,15 @@ class GeoRegion:
 
 
 def _region_to_country_map(
-    self,
-    scheme: "CountryScheme" = GeoScheme.cc_iso3,
+    region: GeoRegion, scheme: "CountryScheme" = GeoScheme.cc_iso3, cc_col: str = "cc"
 ) -> pd.DataFrame:
     """Resolve geo-region definition to a dataframe.
 
     Result df maps the region's (display) label to one or more
     ISO3 country codes.
     """
-    iso3_list = self.to_country_list(scheme=scheme)
-    return pd.DataFrame({"cc": iso3_list}).assign(geo_region=self.get_label())
+    iso3_list = region.to_country_list(scheme=scheme)
+    return pd.DataFrame({cc_col: iso3_list}).assign(geo_region=region.get_label())
 
 
 CountryScheme: TypeAlias = Literal[
@@ -242,9 +241,16 @@ def expand_geo_col_to_cc(
     Returns:
         The expanded dataframe.
     """
+    if len(df) == 0:
+        return pd.DataFrame(columns=[geo_col])
+
+    cc_col = "cc" if geo_col != "cc" else "cc_mapped"
+
     cc_map = pd.concat(
         [
-            _region_to_country_map(GeoRegion(g, scheme=scheme), scheme=cc_scheme)
+            _region_to_country_map(
+                GeoRegion(g, scheme=scheme), scheme=cc_scheme, cc_col=cc_col
+            )
             for g in df[geo_col].dropna().unique()
         ]
     )
@@ -259,7 +265,6 @@ def merge_geo_regions(
     geo_col: str,
     geo_regions: Iterable[GeoRegion | str],
     input_scheme: GeoScheme = GeoScheme.country_name,
-    rest_of_world: bool = True,
     pretty_labels: bool = True,
 ) -> pd.DataFrame:
     """Right-merge ``geo_regions`` onto ``df`` based on ``geo_col``.
@@ -282,11 +287,10 @@ def merge_geo_regions(
     cc_coverage = set()
     res_df = pd.DataFrame()
 
-    if rest_of_world:
-        geo_regions = [
-            *geo_regions,
-            GeoRegion("world", GeoScheme.world, exclude_already_covered=True),
-        ]
+    geo_regions = [
+        *geo_regions,
+        GeoRegion("world", GeoScheme.world, exclude_already_covered=True),
+    ]
 
     for gr in geo_regions:
         gr = gr if isinstance(gr, GeoRegion) else GeoRegion(gr)

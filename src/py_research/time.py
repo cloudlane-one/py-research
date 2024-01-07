@@ -6,6 +6,8 @@ from typing import Any, cast
 
 import pandas as pd
 
+from py_research.data import parse_dtype
+
 
 def _auto_interval_format(
     time_interval: pd.offsets.BaseOffset, min_bin: datetime, max_bin: datetime
@@ -122,6 +124,7 @@ def datetime_to_interval_series(
 
     if time_interval.n == 1:
         resampled = apply_format(resampled)
+        resampled = parse_dtype(resampled)
     else:
         start = resampled
         end = cast(pd.Series, resampled + time_interval)  # type: ignore

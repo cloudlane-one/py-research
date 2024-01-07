@@ -3,8 +3,6 @@
 import hashlib
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
-from fractions import Fraction
 from functools import reduce
 from numbers import Number
 from typing import Any
@@ -61,7 +59,7 @@ def gen_int_hash(obj: Any) -> int:
     raise ValueError()
 
 
-def gen_str_hash(x: Any, length: int = 10, raw_str: bool = False) -> str:
+def gen_str_hash(x: Any, length: int = 10) -> str:
     """Generate stable hash for obj (must be known, hashable or composed of such).
 
     Args:
@@ -74,23 +72,5 @@ def gen_str_hash(x: Any, length: int = 10, raw_str: bool = False) -> str:
     Returns:
         Hash of the object as string.
     """
-    s = None
-    match (x):
-        case int() | float() | complex() | Decimal():
-            s = str(x)
-        case Fraction():
-            s = str(x).replace("/", "_over_")
-        case str() if raw_str:
-            s = x
-        case date():
-            s = x.isoformat()
-        case time():
-            s = f"HHMMSS{'ffffff' if x.microsecond != 0 else ''}".format(x)
-        case datetime():
-            s = str(x.timestamp())
-        case timedelta():
-            s = str(x.total_seconds())
-        case _:
-            s = str(abs(gen_int_hash(x)))
-
-    return s[:length]
+    s = str(abs(gen_int_hash(x)))
+    return s[:length].rjust(length, "0")

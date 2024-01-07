@@ -14,8 +14,8 @@ import pandas as pd
 import yaml
 from bs4 import BeautifulSoup, Tag
 
+from py_research.data import gen_id
 from py_research.files import ensure_dir_exists
-from py_research.hashing import gen_str_hash
 from py_research.reflect import (
     get_calling_module_name,
     get_full_args_dict,
@@ -96,7 +96,7 @@ class FileCache:
                             k: v for k, v in id_args.items() if k in id_arg_subset
                         }
 
-                id_value = gen_str_hash(
+                id_value = gen_id(
                     id_args if len(id_args) > 1 else list(id_args.values())[0],
                     raw_str=use_raw_arg,
                 )

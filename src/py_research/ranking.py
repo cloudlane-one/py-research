@@ -27,14 +27,10 @@ def create_rank_series(
         Series of ranks.
     """
     data_table = pd.DataFrame(rank_by)
-    filtered_data = (
-        data_table.loc[~exclude]  # pylint: disable=E1130:invalid-unary-operand-type
-        if exclude is not None
-        else data_table
-    )
+    filtered_data = data_table.loc[~exclude] if exclude is not None else data_table
 
     ranks = pd.Series(
-        np.arange(1, len(data_table) + 1),
+        np.arange(1, len(filtered_data) + 1),
         index=filtered_data.sort_values(
             by=list(filtered_data.columns), ascending=(rank_mode == "ascending")
         ).index,
@@ -44,8 +40,8 @@ def create_rank_series(
     if ranks.empty:
         return ranks
 
-    rank_by_cols = list(data_table.columns)
-    for _, g in data_table.groupby(
+    rank_by_cols = list(filtered_data.columns)
+    for _, g in filtered_data.groupby(
         by=(rank_by_cols[0] if len(rank_by_cols) == 1 else rank_by_cols)
     ):
         ranks.loc[g.index] = min(ranks.loc[g.index])

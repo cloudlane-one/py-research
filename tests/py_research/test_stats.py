@@ -9,32 +9,31 @@ def test_dist_table():
     # Test with a DataFrame
     df = pd.DataFrame(
         {
-            "id": ["A", "A", "B", "B", "C", "C"],
+            "id": ["A", "A", "B", "B", "B", "C"],
             "category": ["X", "Y", "X", "Y", "X", "Y"],
             "value": [1, 2, 3, 4, 5, 6],
         }
     )
     result = dist_table(df, "id", "category")
-    expected = pd.Series([2, 2, 2], index=["A", "B", "C"], name="frequency")
+    expected = pd.Series(
+        [2, 3], index=pd.Index(["X", "Y"], name="category"), name="freq"
+    )
     pd.testing.assert_series_equal(result, expected)
 
     # Test with multiple id_cols and category_cols
-    df["sub_id"] = ["P", "Q", "P", "Q", "P", "Q"]
+    df["sub_id"] = ["P", "Q", "P", "Q", "Q", "Q"]
     df["sub_category"] = ["U", "V", "U", "V", "U", "V"]
     result = dist_table(df, ["id", "sub_id"], ["category", "sub_category"])
     expected = pd.Series(
-        [1, 1, 1, 1, 1, 1],
+        [3, 3],
         index=pd.MultiIndex.from_tuples(
             [
-                ("A", "P", "X", "U"),
-                ("A", "Q", "Y", "V"),
-                ("B", "P", "X", "U"),
-                ("B", "Q", "Y", "V"),
-                ("C", "P", "X", "U"),
-                ("C", "Q", "Y", "V"),
-            ]
+                ("X", "U"),
+                ("Y", "V"),
+            ],
+            names=["category", "sub_category"],
         ),
-        name="frequency",
+        name="freq",
     )
     pd.testing.assert_series_equal(result, expected)
 

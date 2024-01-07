@@ -3,22 +3,13 @@
 import datetime
 from pathlib import Path
 from tempfile import gettempdir
-from unittest.mock import patch
 
 from py_research.caching import FileCache, get_cache
 
 
-def test_get_cache_default_params():
-    """Test the default parameters of get_cache."""
-    cache = get_cache()
-    assert isinstance(cache, FileCache)
-
-
-@patch("py_research.reflect.get_calling_module_name", return_value="test")
-@patch("py_research.files.ensure_dir_exists", new=lambda x: x)
 def test_get_cache_custom_params():
     """Test the custom parameters of get_cache."""
-    custom_root_path = Path("/custom/path")
+    custom_root_path = Path(gettempdir())
     custom_max_cache_time = datetime.timedelta(days=1)
 
     # Create via positional args.
@@ -26,7 +17,10 @@ def test_get_cache_custom_params():
 
     # Assert positional args result in correct instance.
     assert isinstance(cache1, FileCache)
-    assert cache1.path == custom_root_path / "test" / "custom_cache"
+    assert (
+        cache1.path
+        == custom_root_path / "tests.py_research.test_caching" / "custom_cache"
+    )
     assert cache1.max_cache_time == custom_max_cache_time
 
     # Create via keyword args.
@@ -38,11 +32,13 @@ def test_get_cache_custom_params():
 
     # Assert keyword args result in correct instance.
     assert isinstance(cache2, FileCache)
-    assert cache2.path == custom_root_path / "test" / "custom_cache"
+    assert (
+        cache2.path
+        == custom_root_path / "tests.py_research.test_caching" / "custom_cache"
+    )
     assert cache2.max_cache_time == custom_max_cache_time
 
 
-@patch("py_research.reflect.get_calling_module_name", return_value="test")
 def test_cache_function():
     """Test the cache_function decorator."""
     tempdir = Path(gettempdir())
@@ -51,8 +47,8 @@ def test_cache_function():
     cache = get_cache("test_cache", tempdir)
 
     # Assert cache dir was created.
-    assert cache.path == tempdir / "test" / "test_cache"
-    assert (tempdir / "test" / "test_cache").exists()
+    assert cache.path == tempdir / "tests.py_research.test_caching" / "test_cache"
+    assert (tempdir / "tests.py_research.test_caching" / "test_cache").exists()
 
     # Create function to cache.
     @cache.function(id_arg_subset=["a", "b"])

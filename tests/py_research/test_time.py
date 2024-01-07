@@ -19,4 +19,4 @@ def test_datetime_to_interval_series():
         ]
     )
     interval_series = datetime_to_interval_series(dt_series)
-    assert interval_series.equals(pd.Series([1, 1, 2, 3]))
+    assert interval_series.equals(pd.Series([2021, 2021, 2021, 2022, 2023]))

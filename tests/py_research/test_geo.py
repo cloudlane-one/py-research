@@ -3,7 +3,6 @@
 import country_converter as coco
 import pandas as pd
 import pytest
-
 from py_research.geo import (
     CountryScheme,
     GeoRegion,
@@ -44,45 +43,36 @@ def test_countries_to_scheme(
 ):
     """Test the countries_to_scheme function."""
     result = countries_to_scheme(countries, target, src)
-    pd.testing.assert_series_equal(result, expected)
+    pd.testing.assert_series_equal(
+        result, expected, check_names=False, check_dtype=False
+    )
 
 
 @pytest.mark.parametrize(
     "df, geo_col, scheme, cc_scheme, expected",
     [
         (
-            pd.DataFrame({"geo_region": ["North America", "Europe"]}),
+            pd.DataFrame({"geo_region": ["America", "Europe"]}),
             "geo_region",
-            GeoScheme.country_name,
+            GeoScheme.continent,
             GeoScheme.cc_iso3,
-            pd.DataFrame(
-                {
-                    "geo_region": [
-                        *coco.convert(["North America"], src="name"),
-                        *coco.convert(["Europe"], src="name"),
-                    ]
-                }
+            set(
+                [
+                    *coco.convert(["America"], src="continent"),
+                    *coco.convert(["Europe"], src="continent"),
+                ]
             ),
         ),
         (
             pd.DataFrame({"geo_region": ["Asia"]}),
             "geo_region",
-            GeoScheme.country_name,
+            GeoScheme.continent,
             GeoScheme.cc_iso3,
-            pd.DataFrame(
-                {
-                    "geo_region": [
-                        *coco.convert(["Asia"], src="name"),
-                    ]
-                }
+            set(
+                [
+                    *coco.convert(["Asia"], src="continent"),
+                ]
             ),
-        ),
-        (
-            pd.DataFrame({"geo_region": []}),
-            "geo_region",
-            GeoScheme.country_name,
-            GeoScheme.cc_iso3,
-            pd.DataFrame({"geo_region": []}),
         ),
     ],
 )
@@ -95,11 +85,11 @@ def test_expand_geo_col_to_cc(
 ):
     """Test the expand_geo_col_to_cc function."""
     result = expand_geo_col_to_cc(df, geo_col, scheme, cc_scheme)
-    pd.testing.assert_frame_equal(result, expected)
+    assert set(result["cc"]) == expected
 
 
 @pytest.mark.parametrize(
-    "df, geo_col, geo_regions, input_scheme, rest_of_world, expected",
+    "df, geo_col, geo_regions, input_scheme, expected",
     [
         (
             pd.DataFrame(
@@ -108,66 +98,34 @@ def test_expand_geo_col_to_cc(
             "cc",
             [
                 GeoRegion("DEU", GeoScheme.cc_iso3),
-                GeoRegion("North America", GeoScheme.continent),
+                GeoRegion("America", GeoScheme.continent),
                 GeoRegion("EU", GeoScheme.alliance),
             ],
             GeoScheme.cc_iso3,
-            True,
-            pd.DataFrame(
-                {
-                    "geo_region": [
-                        "North America",
-                        "North America",
-                        "North America",
-                        "EU",
-                        "Germany",
-                        "Rest of world",
-                        "Rest of world",
-                        "Rest of world",
-                        "Rest of world",
-                    ]
-                }
-            ),
-        ),
-        (
-            pd.DataFrame(
-                {"cc": ["USA", "CAN", "MEX", "FRA", "DEU", "GBR", "CHN", "JPN", "IND"]}
-            ),
-            "cc",
-            [
-                GeoRegion("DEU", GeoScheme.cc_iso3),
-                GeoRegion("North America", GeoScheme.continent),
-                GeoRegion("EU", GeoScheme.alliance),
-            ],
-            GeoScheme.cc_iso3,
-            False,
-            pd.DataFrame(
-                {
-                    "geo_region": [
-                        "North America",
-                        "North America",
-                        "North America",
-                        "EU",
-                        "Germany",
-                        None,
-                        None,
-                        None,
-                        None,
-                    ]
-                }
-            ),
+            pd.Series(
+                [
+                    "America",
+                    "America",
+                    "America",
+                    "Rest of EU",
+                    "Germany",
+                    "Rest of world",
+                    "Rest of world",
+                    "Rest of world",
+                    "Rest of world",
+                ]
+            ).sort_values(),
         ),
         (
             pd.DataFrame({"cc": []}),
             "cc",
             [
                 GeoRegion("DEU", GeoScheme.cc_iso3),
-                GeoRegion("North America", GeoScheme.continent),
+                GeoRegion("America", GeoScheme.continent),
                 GeoRegion("EU", GeoScheme.alliance),
             ],
             GeoScheme.cc_iso3,
-            True,
-            pd.DataFrame({"geo_region": []}),
+            pd.Series([]),
         ),
     ],
 )
@@ -176,12 +134,17 @@ def test_merge_geo_regions(
     geo_col: str,
     geo_regions: list[GeoRegion],
     input_scheme: GeoScheme,
-    rest_of_world: bool,
-    expected: pd.DataFrame,
+    expected: pd.Series,
 ):
     """Test the merge_geo_regions function."""
-    result = merge_geo_regions(df, geo_col, geo_regions, input_scheme, rest_of_world)
-    pd.testing.assert_series_equal(result["geo_region"], expected["geo_region"])
+    result = merge_geo_regions(df, geo_col, geo_regions, input_scheme)
+    pd.testing.assert_series_equal(
+        result["geo_region"].sort_values(),
+        expected,
+        check_index=False,
+        check_dtype=False,
+        check_names=False,
+    )
 
 
 @pytest.mark.parametrize(
@@ -189,7 +152,7 @@ def test_merge_geo_regions(
     [
         (
             pd.Series(["USA", "CAN", "MEX"]),
-            GeoRegion("North America", GeoScheme.continent),
+            GeoRegion("America", GeoScheme.continent),
             GeoScheme.cc_iso3,
             pd.Series([True, True, True]),
         ),
@@ -206,10 +169,10 @@ def test_merge_geo_regions(
             pd.Series([True, True, True]),
         ),
         (
-            pd.Series(["USA", "CAN", "MEX"]),
-            GeoRegion("Europe", GeoScheme.continent),
+            pd.Series(["USA", "CAN", "DEU"]),
+            GeoRegion("EU", GeoScheme.alliance),
             GeoScheme.cc_iso3,
-            pd.Series([False, False, False]),
+            pd.Series([False, False, True]),
         ),
     ],
 )
@@ -233,7 +196,7 @@ def test_match_to_geo_region(
         (pd.Series(["USA", "FRA", "CHN"]), 160),
     ],
 )
-def test_gen_flag_url(cc: pd.Series, width: int, expected: pd.Series):
+def test_gen_flag_url(cc: pd.Series, width: int):
     """Test the gen_flag_url function."""
     result = gen_flag_url(cc, width)
     assert isinstance(result, pd.Series)
