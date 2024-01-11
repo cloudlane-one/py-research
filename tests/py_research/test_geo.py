@@ -3,6 +3,7 @@
 import country_converter as coco
 import pandas as pd
 import pytest
+
 from py_research.geo import (
     CountryScheme,
     GeoRegion,
@@ -125,7 +126,7 @@ def test_expand_geo_col_to_cc(
                 GeoRegion("EU", GeoScheme.alliance),
             ],
             GeoScheme.cc_iso3,
-            pd.Series([]),
+            pd.Series([], dtype=object),
         ),
     ],
 )
