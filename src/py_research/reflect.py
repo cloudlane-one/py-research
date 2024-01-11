@@ -159,6 +159,13 @@ def get_module_repo(module: ModuleType) -> Repo | None:
     return Repo(mod_file)
 
 
+def _check_version(lower_bound: str, version: str) -> bool:
+    """Check if a version is compatible with a lower bound."""
+    lb = tuple(map(int, lower_bound.split(".")))
+    v = tuple(map(int, version.split(".")))
+    return v >= lb and v[0] == lb[0]
+
+
 @dataclass
 class PyObjectRef(Generic[T]):
     """Reference to a static Python object."""
@@ -175,7 +182,7 @@ class PyObjectRef(Generic[T]):
     object: str
     """Name of the object."""
 
-    version: str = "1.0.0"
+    version: str | None = None
     """Custom version of the object."""
 
     url: str = "https://pypi.org"
@@ -216,7 +223,13 @@ class PyObjectRef(Generic[T]):
             dist.name,
             module.__name__,
             qualname,
-            **(dict(version=version) if version else {}),
+            **(
+                dict(version=version)
+                if version
+                else dict(version=getattr(obj, "__version__"))
+                if hasattr(obj, "__version__")
+                else {}
+            ),
             **(dict(url=url) if url else {}),
         )
 
@@ -225,7 +238,7 @@ class PyObjectRef(Generic[T]):
         dist = _get_distributions().get(self.package)
         if dist is None:
             raise ImportError(
-                f"Please install package '{self.package}' "
+                f"Please install package '{self.package}' with version"
                 f"from '{self.url}' to resolve this object reference."
             )
 
@@ -242,6 +255,19 @@ class PyObjectRef(Generic[T]):
             raise TypeError(
                 f"Object `{'.'.join([self.package, self.module, self.object])}` "
                 f"must have type `{self.type}`"
+            )
+
+        if (
+            self.version is not None
+            and hasattr(obj, "__version__")
+            and not _check_version(
+                self.version,
+                given_version := getattr(obj, "__version__"),
+            )
+        ):
+            raise ValueError(
+                f"Requested version {self.version} is not compatible with "
+                + f"existing version {given_version}."
             )
 
         return obj

@@ -6,7 +6,6 @@ from tempfile import gettempdir
 
 import pandas as pd
 import pytest
-
 from py_research.db import DB, Table
 
 
@@ -215,6 +214,23 @@ def test_save_load_db(db_from_tables: DB):
     assert set(db_loaded.keys()) == set(db_from_tables.keys())
 
 
+def test_table_to_from_excel(db_from_tables: DB):
+    """Test saving / loading table to / from excel."""
+    tempdir = Path(gettempdir())
+    table_file_path = tempdir / "test_table.xlsx"
+
+    db_from_tables["persons"].to_excel(table_file_path)
+    loaded_persons = Table.from_excel(table_file_path)
+    pd.testing.assert_frame_equal(db_from_tables["persons"].df, loaded_persons.df)
+    assert db_from_tables["persons"].source_map == loaded_persons.source_map
+
+    merged = db_from_tables["persons"].merge(db_from_tables["projects"])
+    merged.to_excel(table_file_path)
+    merged_loaded = Table.from_excel(table_file_path)
+    pd.testing.assert_frame_equal(merged.df, merged_loaded.df)
+    assert merged.source_map == merged_loaded.source_map
+
+
 def test_filter_db_table(db_from_tables: DB):
     """Test the filtering of a DB table."""
     table = db_from_tables["projects"]
@@ -232,6 +248,24 @@ def test_merge_db_table(db_from_tables: DB):
 
     table_merged_2 = table.merge(db_from_tables["persons"])
     assert isinstance(table_merged_2, Table)
+
+
+def test_flatten_db_table(db_from_tables: DB):
+    """Test the flattening of a db table."""
+    table = db_from_tables["projects"]
+
+    table_merged = table.merge(db_from_tables["tasks"])
+    df_flattened = table_merged.flatten()
+    assert all(isinstance(c, str) for c in df_flattened.columns)
+
+
+def test_extract_db_table(db_from_tables: DB):
+    """Test the extraction of a db table."""
+    table = db_from_tables["projects"]
+
+    table_merged = table.merge(db_from_tables["tasks"])
+    extracted_db = table_merged.extract()
+    assert isinstance(extracted_db, DB)
 
 
 def test_extend_db_table(db_from_tables: DB):

@@ -1,13 +1,31 @@
 """Base classes and types for relational database package."""
 
 from collections.abc import Hashable, Iterable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import pandas as pd
 
-from py_research.db.conflicts import DataConflictError, DataConflictPolicy
+from py_research.reflect import PyObjectRef
+
+from .conflicts import DataConflictError, DataConflictPolicy
+
+
+def _unmerge(df: pd.DataFrame, with_relations: bool = True) -> dict[str, pd.DataFrame]:
+    """Extract this table into its own database.
+
+    Returns:
+        Database containing only this table.
+    """
+    if df.columns.nlevels != 2:
+        raise ValueError("Cannot only unmerge dataframe with two column levels.")
+
+    return {
+        s: cast(pd.DataFrame, df[s]).drop_duplicates()
+        for s in df.columns.get_level_values(0).unique()
+    }
 
 
 @dataclass
@@ -31,7 +49,58 @@ class Table:
     is then a mapping from the first level of these columns to the source tables.
     """
 
+    # Creation:
+
+    @staticmethod
+    def from_excel(path: Path) -> "Table":
+        """Load relational table from Excel file."""
+        source_map = pd.read_excel(path, sheet_name="_source_tables", index_col=0)[
+            "table"
+        ].to_dict()
+
+        data = pd.read_excel(
+            path,
+            sheet_name="data",
+            index_col=0,
+            header=(0 if len(source_map) == 1 else (0, 1)),
+        )
+
+        df_dict = (
+            {source_map[s]: df for s, df in _unmerge(data).items()}
+            if len(source_map) > 1
+            else {list(source_map.keys())[0]: data}
+        )
+
+        return Table(
+            DB(df_dict),
+            data,
+            source_map if len(source_map) > 1 else list(source_map.keys())[0],
+        )
+
     # Public methods:
+
+    def to_excel(self, path: Path) -> None:
+        """Save this table to an Excel file."""
+        sheets = {
+            "_source": pd.Series({"database": self.db.backend})
+            .rename("value")
+            .to_frame(),
+            "_source_tables": pd.DataFrame.from_dict(
+                {k: [v] for k, v in self.source_map.items()}
+                if isinstance(self.source_map, dict)
+                else {self.source_map: [None]},
+                orient="index",
+                columns=["table"],
+            ).rename_axis(index="col_prefix"),
+            "data": self.df,
+        }
+
+        with pd.ExcelWriter(
+            path,
+            engine="openpyxl",
+        ) as writer:
+            for name, df in sheets.items():
+                df.to_excel(writer, sheet_name=name, index=True)
 
     def filter(self, filter_series: pd.Series) -> "Table":
         """Filter this table.
@@ -46,6 +115,63 @@ class Table:
             self.db,
             self.df.loc[filter_series],
             self.source_map,
+        )
+
+    def flatten(
+        self,
+        sep: str = ".",
+        prefix_strategy: Literal["always", "on_conflict"] = "always",
+    ) -> pd.DataFrame:
+        """Collapse multi-dim. column labels of multi-source table, returning new df.
+
+        Args:
+            sep: Separator to use between column levels.
+            prefix_strategy: Strategy to use for prefixing column names.
+
+        Returns:
+            Dataframe representation of this table with flattened multi-dim columns.
+        """
+        level_counts = (
+            self.df.columns.to_frame()
+            .groupby(level=(1 if self.df.columns.nlevels > 1 else 0))
+            .size()
+        )
+
+        return self.df.rename(
+            lambda c: c
+            if isinstance(c, str)
+            or (
+                isinstance(c, tuple)
+                and prefix_strategy == "on_conflict"
+                and level_counts[c[1]] == 1
+            )
+            else sep.join(c),
+            axis="columns",
+        )
+
+    def extract(self, with_relations: bool = True) -> "DB":
+        """Extract this table into its own database.
+
+        Returns:
+            Database containing only this table.
+        """
+        source_tables = (
+            {self.source_map: self.df}
+            if isinstance(self.source_map, str)
+            else {
+                t: cast(pd.DataFrame, self.df[s]).drop_duplicates()
+                for s, t in self.source_map.items()
+            }
+        )
+        return (
+            self.db.filter(
+                {
+                    s: self.db[s].df.index.to_series().isin(df.index)
+                    for s, df in source_tables.items()
+                }
+            )
+            if with_relations
+            else DB(table_dfs=source_tables)
         )
 
     # Dictionary interface:
@@ -323,11 +449,8 @@ def _df_dict_from_excel(file_path: Path) -> dict[str, pd.DataFrame]:
     }
 
 
-def _check_version(lower_bound: str, version: str) -> bool:
-    """Check if a version is compatible with a lower bound."""
-    lb = tuple(map(int, lower_bound.split(".")))
-    v = tuple(map(int, version.split(".")))
-    return v >= lb and v[0] == lb[0]
+class DBSchema:
+    """Base class for static database schemas."""
 
 
 @dataclass
@@ -345,53 +468,107 @@ class DB:
     join_tables: set[str] = field(default_factory=set)
     """Names of tables that are used as n-to-m join tables in this database."""
 
-    version: str | None = None
-    """Version of this database."""
+    schema: type[DBSchema] | None = None
+    """Schema of this database."""
 
-    # Creation:
+    updates: dict[datetime, dict[str, Any]] = field(
+        default_factory=lambda: {datetime.now(): {}}
+    )
+    """List of update times with comments, tags, authors, etc."""
+
+    backend: Path | None = None
+    """File backend of this database, hence where it was loaded from and is
+    saved to by default.
+    """
+
+    # Public methods:
 
     @staticmethod
-    def load(file_path: Path, version: str | None = None) -> "DB":
+    def load(path: Path, version: str | None = None) -> "DB":
         """Load a database from an excel file.
 
         Args:
-            file_path: Path to the excel file.
+            path: Path to the excel file.
             version: Minimum version of the database to load.
 
         Returns:
             Database object.
         """
-        df_dict = _df_dict_from_excel(file_path)
-
-        given_version = None
-        if "_attributes" in df_dict and "version" in df_dict["_attributes"]:
-            given_version = df_dict["_attributes"]["version"]["value"]
-            if version and not _check_version(
-                given_version,
-                version,
-            ):
-                raise ValueError(
-                    f"Requested database version {version} is not compatible with "
-                    + f"given database version {given_version}."
-                )
+        df_dict = _df_dict_from_excel(path)
 
         relations = {}
         if "_relations" in df_dict:
-            relations = df_dict["_relations"]
-            assert isinstance(relations, pd.DataFrame)
-            relations = relations.set_index(["source_table", "source_col"]).apply(
-                lambda r: (r["target_table"], r["target_col"]),
-                axis="columns",
+            relations_df = df_dict["_relations"]
+            assert isinstance(relations_df, pd.DataFrame)
+            relations = (
+                relations_df.set_index(["source_table", "source_col"])
+                .apply(
+                    lambda r: (r["target_table"], r["target_col"]),
+                    axis="columns",
+                )
+                .to_dict()
             )
-            relations = relations.to_dict()
 
         join_tables = set()
         if "_join_tables" in df_dict:
             join_tables = set(df_dict["_join_tables"]["name"].tolist())
 
-        return DB(df_dict, relations, join_tables, version)
+        schema = None
+        if "_schema" in df_dict:
+            schema_ref = PyObjectRef(**df_dict["_schema"]["value"].to_dict())
+            schema_obj = schema_ref.resolve()
+            if not issubclass(schema_obj, DBSchema):
+                raise ValueError("Database schema must be a subclass of `DBSchema`.")
 
-    # Public methods:
+        updates = {datetime.now(): {}}
+        if "_updates" in df_dict:
+            updates = cast(
+                dict[datetime, dict[str, Any]],
+                df_dict["_updated"]
+                .reindex(df_dict["_updated"].index.astype(datetime))
+                .to_dict(orient="index"),
+            )
+
+        return DB(df_dict, relations, join_tables, schema, updates, path)
+
+    def save(self, path: Path | None = None) -> None:
+        """Save this database to an excel file.
+
+        Args:
+            path:
+                Path to excel file. Will be overridden if it exists.
+                Uses this database's backend as default path, if none given.
+        """
+        if path is None:
+            if self.backend is None:
+                raise ValueError(
+                    "Need to supply explicit path for databases without a backend."
+                )
+            path = self.backend
+
+        sheets = {
+            "_relations": pd.DataFrame.from_dict(
+                self.relations, orient="index", columns=["target_table", "target_col"]
+            ).rename_axis(index=["source_table", "source_col"]),
+            "_join_tables": pd.DataFrame({"name": list(self.join_tables)}),
+            **(
+                {
+                    "_schema": pd.Series(asdict(PyObjectRef.reference(self.schema)))
+                    .rename("name")
+                    .to_frame()
+                }
+                if self.schema is not None
+                else {}
+            ),
+            "_updates": pd.DataFrame.from_dict(self.updates, orient="index"),
+            **self.table_dfs,
+        }
+        with pd.ExcelWriter(
+            path,
+            engine="openpyxl",
+        ) as writer:
+            for name, sheet in sheets.items():
+                sheet.to_excel(writer, sheet_name=name, index=True)
 
     def describe(self) -> dict[str, dict[str, str]]:
         """Return a description of this database.
@@ -436,14 +613,14 @@ class DB:
 
     def extend(
         self,
-        other: "DB | dict[str, pd.DataFrame]",
+        other: "DB | dict[str, pd.DataFrame] | Table",
         conflict_policy: DataConflictPolicy
         | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]] = "raise",
     ) -> "DB":
         """Extend this database with data from another, returning a new database.
 
         Args:
-            other: Other database to extend with.
+            other: Other database, dataframe dict or table to extend with.
             conflict_policy:
                 Policy to use for resolving conflicts. Can be a global setting,
                 per-table via supplying a dict with table names as keys, or per-column
@@ -452,6 +629,15 @@ class DB:
         Returns:
             New database containing the extended data.
         """
+        # Standardize type of other.
+        other = (
+            other
+            if isinstance(other, DB)
+            else DB(other)
+            if isinstance(other, dict)
+            else other.extract()
+        )
+
         # Get the union of all table (names) in both databases.
         tables = set(self.keys()) | set(other.keys())
 
@@ -538,22 +724,6 @@ class DB:
         # Trim all other tables such that only rows with (indirect) references to
         # remaining rows in filter tables are left.
         return new_db.trim(list(filters.keys()), circuit_breakers=cb)
-
-    def save(self, file_path: Path) -> None:
-        """Save this database to an excel file.
-
-        Args:
-            file_path: Path to excel file. Will be overridden if it exists.
-        """
-        writer = pd.ExcelWriter(  # pylint: disable=E0110:abstract-class-instantiated
-            file_path,
-            engine="openpyxl",
-        )
-
-        for name, table in self.items():
-            table.df.to_excel(writer, sheet_name=name, index=True)
-
-        writer.close()
 
     # Dictionary interface:
 
