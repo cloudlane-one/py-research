@@ -560,6 +560,14 @@ class SingleTable(Table):
         assert isinstance(table.source_map, str)
         return SingleTable(name=table.source_map, db=table.db, df=table.df)
 
+    def trim(self, cols: list[str]) -> "SingleTable":
+        """Return a trimmed version of this table.
+
+        Args:
+            cols: Columns to keep.
+        """
+        return SingleTable(name=self.name, db=self.db, df=self.df[cols])
+
 
 class SourceTable(SingleTable):
     """Original table in a relational database."""
@@ -821,7 +829,11 @@ class DB:
             table_dfs={
                 name: (table.df.copy() if deep else table.df)
                 for name, table in self.items()
-            }
+            },
+            relations=self.relations,
+            join_tables=self.join_tables,
+            schema=self.schema,
+            updates=self.updates,
         )
 
     def extend(
@@ -878,7 +890,17 @@ class DB:
                     .df
                 )
 
-        return DB(table_dfs=merged)
+        return DB(
+            table_dfs=merged,
+            relations={**self.relations, **other.relations},
+            join_tables={*self.join_tables, *other.join_tables},
+            schema=self.schema,
+            updates={
+                **self.updates,
+                **other.updates,
+                datetime.now(): {"comment": "Extended database."},
+            },
+        )
 
     def trim(
         self,
@@ -1075,7 +1097,16 @@ class DB:
 
             result[t] = table.df.loc[f]
 
-        return DB(table_dfs=result)
+        return DB(
+            table_dfs=result,
+            relations=self.relations,
+            join_tables=self.join_tables,
+            schema=self.schema,
+            updates={
+                **self.updates,
+                datetime.now(): {"comment": "Filtered database."},
+            },
+        )
 
     def _centered_trim(
         self, centers: list[str], circuit_breakers: list[str] | None = None
@@ -1141,11 +1172,18 @@ class DB:
             current_stage = next_stage
 
         return DB(
-            table_dfs={t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()}
+            table_dfs={t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()},
+            relations=self.relations,
+            join_tables=self.join_tables,
+            schema=self.schema,
+            updates={
+                **self.updates,
+                datetime.now(): {"comment": "Filtered database."},
+            },
         )
 
     def to_graph(
-        self, nodes: Sequence[SingleTable]
+        self, nodes: Sequence[SingleTable | str]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -1153,12 +1191,13 @@ class DB:
 
         .. _Gephi: https://gephi.org/
         """
+        nodes = [self[n] if isinstance(n, str) else n for n in nodes]
         # Concat all node tables into one.
-        node_dfs = [self[n.name].df.reset_index().assign(table=n.name) for n in nodes]
+        node_dfs = [n.df.reset_index().assign(table=n.name) for n in nodes]
         node_df = (
             pd.concat(node_dfs, ignore_index=True)
             .reset_index()
-            .rename(columns={"index": "id"})
+            .rename(columns={"index": "node_id"})
         )
 
         # Find all link tables between the given node tables.

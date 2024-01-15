@@ -239,6 +239,7 @@ def test_save_load_db(db_from_tables: DB):
         pd.testing.assert_frame_equal(db_from_tables[t].df, db_loaded[t].df)
     assert db_from_tables.relations == db_loaded.relations
     assert db_from_tables.join_tables == db_loaded.join_tables
+    assert db_from_tables.updates == db_loaded.updates
     assert db_from_tables.schema == db_loaded.schema
 
 
@@ -445,13 +446,24 @@ def test_extend_db_table(db_from_tables: DB):
     assert set(table_extended.df.index) == {1, 2, 3, 4, 5, 6}
 
 
-# test_merge_db_table(
-#     db_from_tables(
-#         table_df_projects(),
-#         table_df_persons(),
-#         table_df_memberships(),
-#         table_df_tasks(),
-#         relations(),
-#         join_tables(),
-#     )
-# )
+def test_db_to_graph(db_from_tables: DB):
+    """Test transformation of database to graph."""
+    nodes, edges = db_from_tables.to_graph(["projects", "persons"])
+    assert len(nodes) == len(db_from_tables["projects"].df) + len(
+        db_from_tables["persons"].df
+    )
+    assert isinstance(edges, pd.DataFrame)
+
+    trimmed_projects = db_from_tables["projects"].trim(["name", "status"])
+    trimmed_persons = db_from_tables["persons"].trim(["name", "age"])
+    nodes, edges = db_from_tables.to_graph([trimmed_projects, trimmed_persons])
+    assert len(nodes) == len(trimmed_projects.df) + len(trimmed_persons.df)
+    assert set(nodes.columns.tolist()) == {
+        "node_id",
+        "table",
+        "id",
+        "name",
+        "status",
+        "age",
+    }
+    assert isinstance(edges, pd.DataFrame)
