@@ -6,72 +6,95 @@ from tempfile import gettempdir
 
 import pandas as pd
 import pytest
-from py_research.db import DB, Table
+
+from py_research.data import parse_dtype
+from py_research.db import DB, DBSchema, Table
 
 
 @pytest.fixture
 def table_df_projects():
     """Return a dataframe for the projects table."""
-    return pd.DataFrame(
-        {
-            "id": [1, 2, 3, 4],
-            "name": ["baking cake", "cleaning shoes", "fixing cars", "writing book"],
-            "start": [
-                date(2020, 1, 1),
-                date(2020, 1, 2),
-                date(2020, 1, 3),
-                date(2020, 1, 4),
-            ],
-            "end": [
-                date(2020, 1, 4),
-                date(2020, 1, 5),
-                date(2020, 1, 6),
-                date(2020, 1, 7),
-            ],
-            "status": ["done", "done", "started", "abandoned"],
-        }
-    ).set_index("id")
+    return (
+        pd.DataFrame(
+            {
+                "id": [1, 2, 3, 4],
+                "name": [
+                    "baking cake",
+                    "cleaning shoes",
+                    "fixing cars",
+                    "writing book",
+                ],
+                "start": [
+                    date(2020, 1, 1),
+                    date(2020, 1, 2),
+                    date(2020, 1, 3),
+                    date(2020, 1, 4),
+                ],
+                "end": [
+                    date(2020, 1, 4),
+                    date(2020, 1, 5),
+                    date(2020, 1, 6),
+                    date(2020, 1, 7),
+                ],
+                "status": ["done", "done", "started", "abandoned"],
+            }
+        )
+        .set_index("id")
+        .apply(parse_dtype, axis="index")
+    )
 
 
 @pytest.fixture
 def table_df_persons():
     """Return a dataframe for the persons table."""
-    return pd.DataFrame(
-        {
-            "id": ["a", "b", "c"],
-            "name": ["John", "Jane", "Joe"],
-            "age": [20, 30, 40],
-            "height": [1.8, 1.7, 1.9],
-            "weight": [80, 70, 90],
-        }
-    ).set_index("id")
+    return (
+        pd.DataFrame(
+            {
+                "id": ["a", "b", "c"],
+                "name": ["John", "Jane", "Joe"],
+                "age": [20, 30, 40],
+                "height": [1.8, 1.7, 1.9],
+                "weight": [80, 70, 90],
+            }
+        )
+        .set_index("id")
+        .apply(parse_dtype, axis="index")
+    )
 
 
 @pytest.fixture
 def table_df_memberships():
     """Return a dataframe for the memberships table."""
-    return pd.DataFrame(
-        {
-            "id": [0, 1, 2, 3],
-            "project": [1, 2, 3, 1],
-            "member": ["a", "b", "c", "b"],
-            "role": ["leader", "member", "member", "member"],
-        }
-    ).set_index(["id"])
+    return (
+        pd.DataFrame(
+            {
+                "id": [0, 1, 2, 3],
+                "project": [1, 2, 3, 1],
+                "member": ["a", "b", "c", "b"],
+                "role": ["leader", "member", "member", "member"],
+            }
+        )
+        .set_index(["id"])
+        .apply(parse_dtype, axis="index")
+    )
 
 
 @pytest.fixture
 def table_df_tasks():
     """Return a dataframe for the tasks table."""
-    return pd.DataFrame(
-        {
-            "id": [1, 2, 3, 4, 5, 6, 7],
-            "name": ["task1", "task2", "task3", "task4", "task5", "task6", "task7"],
-            "project": [1, 1, 1, 2, 2, 3, 3],
-            "assignee": ["a", "a", "b", "a", "b", "a", "c"],
-            "status": ["todo", "todo", "done", "todo", "todo", "todo", "done"],
-        }
-    ).set_index("id")
+    return (
+        pd.DataFrame(
+            {
+                "id": [1, 2, 3, 4, 5, 6, 7],
+                "name": ["task1", "task2", "task3", "task4", "task5", "task6", "task7"],
+                "project": [1, 1, 1, 2, 2, 3, 3],
+                "assignee": ["a", "a", "b", "a", "b", "a", "c"],
+                "status": ["todo", "todo", "done", "todo", "todo", "todo", "done"],
+            }
+        )
+        .set_index("id")
+        .apply(parse_dtype, axis="index")
+    )
 
 
 @pytest.fixture
@@ -88,7 +111,7 @@ def relations():
 @pytest.fixture
 def join_tables():
     """Return a list of join tables."""
-    return set("memberships")
+    return set(["memberships"])
 
 
 @pytest.fixture
@@ -206,12 +229,17 @@ def test_save_load_db(db_from_tables: DB):
     tempdir = Path(gettempdir())
     db_file_path = tempdir / "test_db.xlsx"
 
+    db_from_tables.schema = DBSchema  # Use base class as empty schema.
     db_from_tables.save(db_file_path)
     assert db_file_path.is_file()
 
     db_loaded = DB.load(db_file_path)
     assert isinstance(db_loaded, DB)
-    assert set(db_loaded.keys()) == set(db_from_tables.keys())
+    for t in db_loaded.keys():
+        pd.testing.assert_frame_equal(db_from_tables[t].df, db_loaded[t].df)
+    assert db_from_tables.relations == db_loaded.relations
+    assert db_from_tables.join_tables == db_loaded.join_tables
+    assert db_from_tables.schema == db_loaded.schema
 
 
 def test_table_to_from_excel(db_from_tables: DB):
@@ -224,7 +252,7 @@ def test_table_to_from_excel(db_from_tables: DB):
     pd.testing.assert_frame_equal(db_from_tables["persons"].df, loaded_persons.df)
     assert db_from_tables["persons"].source_map == loaded_persons.source_map
 
-    merged = db_from_tables["persons"].merge(db_from_tables["projects"])
+    merged = db_from_tables["persons"].merge(right=db_from_tables["projects"])
     merged.to_excel(table_file_path)
     merged_loaded = Table.from_excel(table_file_path)
     pd.testing.assert_frame_equal(merged.df, merged_loaded.df)
@@ -239,33 +267,163 @@ def test_filter_db_table(db_from_tables: DB):
     assert set(filtered_table.df.index) == {1, 2}
 
 
-def test_merge_db_table(db_from_tables: DB):
-    """Test the merging of a DB table."""
-    table = db_from_tables["projects"]
+def test_merge_db_table_forward(db_from_tables: DB):
+    """Test the forward merging of a DB table."""
+    table = db_from_tables["tasks"]
 
-    table_merged = table.merge(db_from_tables["tasks"])
+    table_merged = table.merge("project")
     assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
 
-    table_merged_2 = table.merge(db_from_tables["persons"])
-    assert isinstance(table_merged_2, Table)
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["tasks"]["name"].unique()) == set(
+        table_flat["tasks->name"].unique()
+    )
+    assert set(db_from_tables["tasks"]["project"].unique()) == set(
+        table_flat["tasks->project->id"].unique()
+    )
 
 
-def test_flatten_db_table(db_from_tables: DB):
-    """Test the flattening of a db table."""
+def test_merge_db_table_forward_filtered(db_from_tables: DB):
+    """Test the forward merging of a DB table with filters."""
+    left_table = db_from_tables["tasks"].filter(
+        db_from_tables["tasks"]["status"] == "todo"
+    )
+    right_table = db_from_tables["projects"].filter(
+        db_from_tables["projects"]["status"] == "done"
+    )
+
+    table_merged = left_table.merge("project", right=right_table)
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(left_table["name"].unique()) == set(table_flat["tasks->name"].unique())
+    assert set(right_table.df.index) == set(
+        table_flat["tasks->project->id"].dropna().unique()
+    )
+
+
+def test_merge_db_table_backward(db_from_tables: DB):
+    """Test the backward merging of a DB table."""
     table = db_from_tables["projects"]
 
-    table_merged = table.merge(db_from_tables["tasks"])
-    df_flattened = table_merged.flatten()
-    assert all(isinstance(c, str) for c in df_flattened.columns)
+    table_merged = table.merge(right=db_from_tables["tasks"])
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["projects"]["name"].unique()) == set(
+        table_flat["projects->name"].unique()
+    )
+    assert set(db_from_tables["tasks"]["project"].unique()) == set(
+        table_flat["projects<=tasks->project"].dropna().unique()
+    )
+
+
+def test_merge_db_table_backward_explicit(db_from_tables: DB):
+    """Test the explicit backward merging of a DB table."""
+    table = db_from_tables["projects"]
+
+    table_merged = table.merge(right=db_from_tables["tasks"], link_to_left="project")
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["projects"]["name"].unique()) == set(
+        table_flat["projects->name"].unique()
+    )
+    assert set(db_from_tables["tasks"]["project"].unique()) == set(
+        table_flat["projects<=tasks->project"].dropna().unique()
+    )
+
+
+def test_merge_db_table_double(db_from_tables: DB):
+    """Test the double merging of a DB table."""
+    table = db_from_tables["persons"]
+
+    table_merged = table.merge(right=db_from_tables["projects"])
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["persons"]["name"].unique()) == set(
+        table_flat["persons->name"].unique()
+    )
+    assert set(db_from_tables["memberships"]["project"].unique()) == set(
+        table_flat["persons->project->id"].unique()
+    )
+
+
+def test_merge_db_table_double_filtered(db_from_tables: DB):
+    """Test the double merging of a DB table with filtering."""
+    left_table = db_from_tables["persons"].filter(db_from_tables["persons"]["age"] < 30)
+    link_table = db_from_tables["memberships"].filter(
+        db_from_tables["memberships"]["role"] == "leader"
+    )
+
+    table_merged = left_table.merge(
+        right=db_from_tables["projects"], link_table=link_table
+    )
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(left_table["name"].unique()) == set(table_flat["persons->name"].unique())
+    assert set(table_flat["persons->project->id"].unique()) == {1}
+
+
+def test_merge_db_table_double_indefinite(db_from_tables: DB):
+    """Test the indefinite double merging of a DB table."""
+    table = db_from_tables["persons"]
+
+    table_merged = table.merge(link_table=db_from_tables["memberships"])
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["persons"]["name"].unique()) == set(
+        table_flat["persons->name"].unique()
+    )
+    assert set(db_from_tables["memberships"]["project"].unique()) == set(
+        table_flat["persons->project->id"].unique()
+    )
+
+
+def test_merge_db_table_double_explicit(db_from_tables: DB):
+    """Test the indefinite double merging of a DB table."""
+    table = db_from_tables["persons"]
+
+    table_merged = table.merge(
+        link_table=db_from_tables["memberships"], right=db_from_tables["projects"]
+    )
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten("->")
+    assert set(db_from_tables["persons"]["name"].unique()) == set(
+        table_flat["persons->name"].unique()
+    )
+    assert set(db_from_tables["memberships"]["project"].unique()) == set(
+        table_flat["persons->project->id"].unique()
+    )
 
 
 def test_extract_db_table(db_from_tables: DB):
     """Test the extraction of a db table."""
     table = db_from_tables["projects"]
 
-    table_merged = table.merge(db_from_tables["tasks"])
-    extracted_db = table_merged.extract()
-    assert isinstance(extracted_db, DB)
+    table_merged = table.merge(right=db_from_tables["tasks"])
+
+    extracted_db1 = table_merged.extract()
+    assert isinstance(extracted_db1, DB)
+    assert set(extracted_db1.keys()) == {"projects", "tasks", "memberships", "persons"}
+    assert set(extracted_db1["projects"].df.index) == {1, 2, 3, 4}
+
+    extracted_db2 = table_merged.extract(with_relations=False)
+    assert isinstance(extracted_db2, DB)
+    assert set(extracted_db2.keys()) == {"projects", "tasks"}
+    assert set(extracted_db2["projects"].df.index) == {1, 2, 3, 4}
 
 
 def test_extend_db_table(db_from_tables: DB):

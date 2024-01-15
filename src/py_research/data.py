@@ -14,6 +14,7 @@ from pandas.api.types import (
     is_float_dtype,
     is_integer_dtype,
     is_numeric_dtype,
+    is_string_dtype,
     is_timedelta64_dtype,
 )
 from pandas.core.dtypes.base import ExtensionDtype
@@ -81,7 +82,7 @@ def to_float(s: pd.Series) -> pd.Series:
     return s.astype(str).map(locale.atof)
 
 
-def parse_dtype(
+def parse_dtype(  # noqa: C901
     s: pd.Series,
     dtype: str | type | npt.DTypeLike | None = None,
     src_locale: str | None = None,
@@ -96,6 +97,12 @@ def parse_dtype(
     Returns:
       Converted series.
     """
+    if s.dtype == "object":
+        s = s.astype(str)
+
+    if not is_string_dtype(s):
+        return s
+
     result = None
 
     context_locale = None

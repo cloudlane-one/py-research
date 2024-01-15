@@ -1,6 +1,7 @@
 """Utils for Python code reflection."""
 
 import inspect
+import platform
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache, reduce
@@ -8,6 +9,7 @@ from importlib import import_module
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Generic, TypeVar
+from urllib.parse import urlparse
 
 import importlib_metadata as meta
 from git import Repo
@@ -83,6 +85,27 @@ def _get_module_file(module: ModuleType) -> Path | None:
     )
 
 
+def _file_url_to_path(file_url: str):
+    # Get the operating system name
+    os_name = platform.system()
+
+    # Parse the file URL
+    parsed_url = urlparse(file_url)
+
+    # Extract the path component from the parsed URL
+    file_path = parsed_url.path
+
+    # Convert the path to a Windows-compatible path
+    # On Windows, you may need to remove the leading '/' from the path
+    if os_name == "Windows" and file_path.startswith("/"):
+        file_path = file_path[1:]
+
+    # Create a Path object
+    path_object = Path(file_path)
+
+    return path_object
+
+
 def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
     """Get the distribution package of given module, if any."""
     mod_file = _get_module_file(module)
@@ -94,9 +117,16 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
         for name, dist in _get_distributions().items()
     }
 
-    mod_dists = [
-        dist for dist_path, dist in dists.items() if mod_file.is_relative_to(dist_path)
-    ]
+    mod_dists = []
+    for dist_path, dist in dists.items():
+        if mod_file.is_relative_to(dist_path):
+            mod_dists.append(dist)
+        elif dist.origin is not None and "url" in dist.origin.__dict__:  # type: ignore
+            url = str(dist.origin.url)
+            if url.startswith("file://"):
+                path = _file_url_to_path(url)
+                if mod_file.is_relative_to(path):
+                    mod_dists.append(dist)
 
     return mod_dists[0] if len(mod_dists) > 0 else None
 
@@ -156,7 +186,7 @@ def get_module_repo(module: ModuleType) -> Repo | None:
     if mod_file is None:
         return None
 
-    return Repo(mod_file)
+    return Repo(mod_file, search_parent_directories=True)
 
 
 def _check_version(lower_bound: str, version: str) -> bool:
@@ -191,10 +221,10 @@ class PyObjectRef(Generic[T]):
     @staticmethod
     def _get_pkg_url(module: ModuleType, dist: meta.Distribution) -> str | None:
         url: str | None = (
-            dict(dist.origin).get("url") if dist.origin is not None else None
+            dict(dist.origin.__dict__).get("url") if dist.origin is not None else None
         )
 
-        if url is not None and url.startswith("file://"):
+        if url is not None and str(url).startswith("file://"):
             repo = get_module_repo(module)
             if repo is not None:
                 url = repo.remote().url
@@ -236,13 +266,21 @@ class PyObjectRef(Generic[T]):
     def resolve(self) -> T:
         """Resolve object reference."""
         dist = _get_distributions().get(self.package)
-        if dist is None:
+        if dist is None or (
+            self.version is not None and not _check_version(self.version, dist.version)
+        ):
             raise ImportError(
-                f"Please install package '{self.package}' with version"
+                f"Please install package '{self.package}' with version '{self.version}'"
                 f"from '{self.url}' to resolve this object reference."
             )
 
-        module = import_module(".".join([self.package, self.module]))
+        try:
+            module = import_module(self.module)
+        except ModuleNotFoundError:
+            raise ImportError(
+                f"Cannot import module '{self.module}' from package '{self.package}'."
+            )
+
         url = PyObjectRef._get_pkg_url(module, dist)
         if url is not None and url != self.url:
             raise ImportError(
