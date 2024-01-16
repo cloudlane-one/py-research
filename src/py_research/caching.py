@@ -224,7 +224,7 @@ class FileCache:
 
 def get_cache(
     name: str | None = None,
-    root_path: Path = default_root_path,
+    root_path: Path | None = None,
     max_cache_time: datetime.timedelta = datetime.timedelta(days=7),
 ):
     """Return a named cache instance private to the calling module.
@@ -237,6 +237,7 @@ def get_cache(
     Returns:
         A cache instance.
     """
+    root_path = root_path or default_root_path
     calling_module = get_calling_module_name() or "root"
 
     return FileCache(
