@@ -1,0 +1,21 @@
+name: Lint & Test
+
+on: [push, pull_request]
+
+jobs:
+  lint_and_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup PDM
+        uses: pdm-project/setup-pdm@v3
+      - name: Install dependencies
+        run: pdm install
+      - name: Check Black formatting
+        uses: psf/black@stable
+      - name: Lint with Ruff
+        run: ruff check --output-format=github .
+      - name: Typecheck with Pyright
+        uses: jakebailey/pyright-action@v1
+      - name: Test with pytest
+        run: pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
