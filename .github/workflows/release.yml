@@ -29,7 +29,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - semantic-release
-    if: needs.semantic-release.outputs.new-release
+    if: needs.semantic-release.outputs.new-release == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
@@ -57,7 +57,7 @@ jobs:
     needs:
       - semantic-release
       - build
-    if: needs.semantic-release.outputs.new-release
+    if: needs.semantic-release.outputs.new-release == 'true'
     runs-on: ubuntu-latest
     environment:
       name: pypi
