@@ -11,9 +11,9 @@ permissions:
 jobs:
   semantic-release:
     runs-on: ubuntu-latest
-    # outputs:
-    #   new-release: ${{ steps.semantic-release.outputs.new_release_published }}
-    #   version: ${{ steps.semantic-release.outputs.new_release_version }}
+    outputs:
+      new-release: ${{ steps.semantic-release.outputs.new_release_published }}
+      version: ${{ steps.semantic-release.outputs.new_release_version }}
     steps:
       - uses: actions/checkout@v4
       - name: Run Semantic Release
@@ -43,6 +43,9 @@ jobs:
           --user
       - name: Build a binary wheel and a source tarball
         run: python3 -m build
+        env:
+          # PDM struggles to get the version from the git tag, so we pass it in directly.
+          PDM_BUILD_SCM_VERSION: ${{ needs.semantic-release.outputs.version }}
       - name: Store the distribution packages
         uses: actions/upload-artifact@v3
         with:
