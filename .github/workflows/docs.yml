@@ -24,6 +24,8 @@ jobs:
         run: sphinx-apidoc -efM -o ./docs/ref-api/py/ ./src
       - name: Build docs pages
         run: sphinx-build -b html ./ ./docs-html/
+      - name: Create index.html
+        run: cp ./docs-html/README.html ./docs-html/index.html
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:

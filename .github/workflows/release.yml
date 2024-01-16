@@ -54,7 +54,9 @@ jobs:
   publish-to-pypi:
     name: Publish Python 🐍 distribution 📦 to PyPI
     needs:
+      - semantic-release
       - build
+    if: needs.semantic-release.outputs.new-release
     runs-on: ubuntu-latest
     environment:
       name: pypi
