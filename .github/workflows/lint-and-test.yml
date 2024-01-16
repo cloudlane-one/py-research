@@ -11,13 +11,14 @@ jobs:
         uses: pdm-project/setup-pdm@v3
         with:
           python-version: 3.11
+          cache: true
       - name: Install dependencies
         run: pdm install
       - name: Check Black formatting
         uses: psf/black@stable
       - name: Lint with Ruff
-        run: ruff check --output-format=github .
+        run: pdm run ruff check --output-format=github .
       - name: Typecheck with Pyright
         uses: jakebailey/pyright-action@v1
       - name: Test with pytest
-        run: pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
+        run: pdm run pytest --doctest-modules --junitxml=junit/test-results.xml --cov=com --cov-report=xml --cov-report=html
