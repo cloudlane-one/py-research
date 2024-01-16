@@ -1,4 +1,4 @@
-name: Publish semantic release to PyPI based on Gitmoji commit messages
+name: Semantic release to PyPI
 on:
   push:
     branches:
