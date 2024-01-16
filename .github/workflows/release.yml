@@ -1,10 +1,13 @@
 name: Semantic release to PyPI
+
 on:
   push:
     branches:
       - main
+
 permissions:
   contents: write
+
 jobs:
   semantic-release:
     runs-on: ubuntu-latest
@@ -47,7 +50,6 @@ jobs:
           path: dist/
   publish-to-pypi:
     name: Publish Python 🐍 distribution 📦 to PyPI
-    if: startsWith(github.ref, 'refs/tags/')  # existence of tag means new semnatic release was created
     needs:
       - build
     runs-on: ubuntu-latest
