@@ -29,7 +29,7 @@ dependencies = [
   "pandas-stubs>=2.1.4.231227",
 ]
 name = "py-research"
-description = "Collection of utilities for R&D coding in Python."
+description = "Collection of utilities for R&D coding in Python 🐍"
 readme = "README.md"
 
 [build-system]
