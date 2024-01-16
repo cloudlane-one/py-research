@@ -21,7 +21,7 @@ pip install git+https://github.com/cloudlane-one/py-research.git
 ## Contents
 
 ```{toctree}
-docs/api/index
+docs/ref-api/index
 ```
 
 ## Indices and Tables

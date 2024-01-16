@@ -16,7 +16,7 @@ class GeoAlliance(StrEnum):
     """List of international alliances used to define geo-regions of interest."""
 
     EU = auto()
-    """https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:EU_enlargements"""
+    """`See Eurostat definition <https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:EU_enlargements>`_"""
 
     EU12 = auto()
     EU15 = auto()
@@ -26,28 +26,28 @@ class GeoAlliance(StrEnum):
     EU28 = auto()
 
     EEA = auto()
-    """https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:European_Economic_Area_(EEA)"""
+    """`EEA according to Eurostat <https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:European_Economic_Area_(EEA)>`_"""
 
     G7 = auto()
-    """https://en.wikipedia.org/wiki/G7"""
+    """`G7 according to Wikipedia <https://en.wikipedia.org/wiki/G7>`_"""
 
     G20 = auto()
-    """https://en.wikipedia.org/wiki/G20"""
+    """`G20 according to Wikipedia <https://en.wikipedia.org/wiki/G20>`_"""
 
     APEC = auto()
-    """https://en.wikipedia.org/wiki/Asia-Pacific_Economic_Cooperation"""
+    """`APEC according to Wikipedia <https://en.wikipedia.org/wiki/Asia-Pacific_Economic_Cooperation>`_"""
 
     BRIC = auto()
-    """https://en.wikipedia.org/wiki/BRIC"""
+    """`BRIC according to Wikipedia <https://en.wikipedia.org/wiki/BRIC>`_"""
 
     BASIC = auto()
-    """https://en.wikipedia.org/wiki/BASIC_countries"""
+    """`BASIC according to Wikipedia <https://en.wikipedia.org/wiki/BASIC_countries>`_"""
 
     CIS = auto()
-    """https://en.wikipedia.org/wiki/Commonwealth_of_Independent_States"""
+    """`CIS according to Wikipedia <https://en.wikipedia.org/wiki/Commonwealth_of_Independent_States>`_"""
 
     OECD = auto()
-    """https://www.oecd.org/about/members-and-partners/"""
+    """`OECD members <https://www.oecd.org/about/members-and-partners/>`_"""
 
 
 class GeoScheme(StrEnum):
@@ -345,7 +345,6 @@ def match_to_geo_region(
 
 
 flag_sizes = pd.Series([20, 40, 80, 160, 320, 640, 1280, 2560])
-"""List of available flag image sizes."""
 
 
 def gen_flag_url(cc: pd.Series, width: int) -> pd.Series:
