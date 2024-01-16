@@ -23,7 +23,7 @@ import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 from pandas.api.types import (
     is_datetime64_dtype,
-    is_int64_dtype,
+    is_integer_dtype,
     is_numeric_dtype,
     is_string_dtype,
 )
@@ -154,7 +154,7 @@ class Table(Data[S_cov]):
 def _map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
     if is_datetime64_dtype(c):
         return sqla.types.DATETIME()
-    elif is_int64_dtype(c):
+    elif is_integer_dtype(c):
         return sqla.types.INTEGER()
     elif is_numeric_dtype(c):
         return sqla.types.FLOAT()

@@ -155,7 +155,7 @@ class Table:
         self,
         link_to_right: str | tuple[str, str] | None = None,
         link_to_left: str | None = None,
-        right: "SingleTable" = ...,
+        right: "SingleTable | None" = ...,
         link_table: "SingleTable" = ...,
     ) -> "Table":
         ...

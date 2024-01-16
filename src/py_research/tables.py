@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import reduce
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 import imgkit
 import pandas as pd
@@ -16,43 +16,40 @@ from pandas.io.formats.style import Styler
 def _prettify_df(table: pd.DataFrame | Styler, font_size: float = 1.0) -> Styler:
     """Apply styles to a DataFrame or Styler and make it pretty."""
     table = table.style if isinstance(table, pd.DataFrame) else table
-    return cast(
-        Styler,
-        table.set_table_styles(
-            [
-                {
-                    "selector": "",
-                    "props": "font-family: Arial, Helvetica, sans-serif;"
-                    "border-collapse: collapse; width: 100%;"
-                    "color: black; text-align: left;",
-                },
-                {
-                    "selector": "caption",
-                    "props": f"margin-bottom: 1rem; "
-                    f"font-size: {(font_size*1.5):.3g}rem;",
-                },
-                {
-                    "selector": "td, th",
-                    "props": f"font-size: {font_size:.3g}rem;"
-                    "border: 1px solid #ddd; padding: 8px;",
-                },
-                {
-                    "selector": "tr:nth-child(even)",
-                    "props": "background-color: #f2f2f2;",
-                },
-                {
-                    "selector": "tr:nth-child(odd)",
-                    "props": "background-color: #fff;",
-                },
-                {
-                    "selector": "th",
-                    "props": "padding: 12px 8px 12px;"
-                    "background-color: #677a96; color: black;"
-                    "text-align: left",
-                },
-            ]
-        ).format(na_rep=""),
-    )
+    return table.set_table_styles(
+        [
+            {
+                "selector": "",
+                "props": "font-family: Arial, Helvetica, sans-serif;"
+                "border-collapse: collapse; width: 100%;"
+                "color: black; text-align: left;",
+            },
+            {
+                "selector": "caption",
+                "props": f"margin-bottom: 1rem; "
+                f"font-size: {(font_size*1.5):.3g}rem;",
+            },
+            {
+                "selector": "td, th",
+                "props": f"font-size: {font_size:.3g}rem;"
+                "border: 1px solid #ddd; padding: 8px;",
+            },
+            {
+                "selector": "tr:nth-child(even)",
+                "props": "background-color: #f2f2f2;",
+            },
+            {
+                "selector": "tr:nth-child(odd)",
+                "props": "background-color: #fff;",
+            },
+            {
+                "selector": "th",
+                "props": "padding: 12px 8px 12px;"
+                "background-color: #677a96; color: black;"
+                "text-align: left",
+            },
+        ]
+    ).format(na_rep="")
 
 
 @dataclass
@@ -309,21 +306,22 @@ class ResultTable:
         return styled
 
     def _apply_col_defaults(self, styled: Styler) -> Styler:
+        res = styled
         for col in self.df.columns:
-            styled = styled.set_properties(
+            res = res.set_properties(
                 subset=[col],
                 **{
                     "text-align": self.default_style.alignment
                     or self._default_alignment(col)
                 },
             )
-            styled = styled.format(
+            res = res.format(
                 subset=[col],
                 formatter=self.default_style.str_format
                 or self._default_str_format(col),
             )
 
-        return cast(Styler, styled)
+        return res
 
     def _apply_styles(self, styled: Styler) -> Styler:
         for style in self.styles:
@@ -368,7 +366,7 @@ class ResultTable:
                     else style.str_format,
                 )
 
-        return cast(Styler, styled)
+        return styled
 
     def __apply_widths(self, styled: Styler) -> Styler:
         widths = {
@@ -386,7 +384,7 @@ class ResultTable:
                 ),
             )
 
-        return cast(Styler, styled)
+        return styled
 
     def __apply_labels(self, styled: Styler) -> Styler:
         labels = (
@@ -400,19 +398,16 @@ class ResultTable:
 
         hidden_headers = self.__hidden_headers
 
-        return cast(
-            Styler,
-            styled.relabel_index(
-                [
-                    ""
-                    if c in hidden_headers
-                    else label
-                    if isinstance(label, str)
-                    else label(c)
-                    for c, label in labels.items()
-                ],
-                axis="columns",
-            ),
+        return styled.relabel_index(
+            [
+                ""
+                if c in hidden_headers
+                else label
+                if isinstance(label, str)
+                else label(c)
+                for c, label in labels.items()
+            ],
+            axis="columns",
         )
 
     def to_styled_df(self) -> Styler:
@@ -448,7 +443,7 @@ class ResultTable:
         if self.hide_index:
             styled = styled.hide(axis="index")
 
-        return cast(Styler, styled)
+        return styled
 
 
 def to_html(styled: Styler, full_doc: bool = True) -> str:

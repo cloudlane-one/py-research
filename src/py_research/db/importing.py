@@ -393,7 +393,7 @@ def tree_to_db(
 def tree_to_db(
     data: dict | str,
     mapping: TableMap,
-    collect_conflicts: bool = ...,
+    collect_conflicts: Literal[False] = ...,
 ) -> DB:
     ...
 
