@@ -1,4 +1,4 @@
-name: Semantic release to PyPI
+name: Build & Release
 
 on:
   push:
