@@ -2,6 +2,7 @@
 
 import inspect
 import platform
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache, reduce
@@ -213,23 +214,17 @@ class PyObjectRef(Generic[T]):
     """Name of the object."""
 
     version: str | None = None
-    """Custom version of the object."""
+    """Version of the package or object."""
 
-    url: str = "https://pypi.org"
-    """URL of the package's index."""
+    repo: str | None = None
+    """URL of the package's repository."""
+
+    revision: str | None = None
+    """Revision of the repo."""
 
     @staticmethod
-    def _get_pkg_url(module: ModuleType, dist: meta.Distribution) -> str | None:
-        url: str | None = (
-            dict(dist.origin.__dict__).get("url") if dist.origin is not None else None
-        )
-
-        if url is not None and str(url).startswith("file://"):
-            repo = get_module_repo(module)
-            if repo is not None:
-                url = repo.remote().url
-
-        return url
+    def _follows_semver(version: str) -> bool:
+        return re.match(r"^\d+\.\d+\.\d+$", version) is not None
 
     @staticmethod
     def reference(obj: T2, version: str | None = None) -> "PyObjectRef[T2]":
@@ -246,21 +241,32 @@ class PyObjectRef(Generic[T]):
         if dist is None:
             raise ValueError("Object must be associated with a package.")
 
-        url = PyObjectRef._get_pkg_url(module, dist)
+        url: str | None = (
+            dict(dist.origin.__dict__).get("url") if dist.origin is not None else None
+        )
+
+        repo = None
+        if url is not None and str(url).startswith("file://"):
+            repo = get_module_repo(module)
+            if repo is not None:
+                url = repo.remote().url
 
         return PyObjectRef(
-            type(obj),
-            dist.name,
-            module.__name__,
-            qualname,
-            **(
-                dict(version=version)
+            type=type(obj),
+            package=dist.name,
+            module=module.__name__,
+            object=qualname,
+            version=(
+                version
                 if version
-                else dict(version=getattr(obj, "__version__"))
+                else getattr(obj, "__version__")
                 if hasattr(obj, "__version__")
-                else {}
+                else dist.version
+                if PyObjectRef._follows_semver(dist.version)
+                else None
             ),
-            **(dict(url=url) if url else {}),
+            repo=(url if url else "https://pypi.org"),
+            revision=repo.head.commit.hexsha if repo is not None else None,
         )
 
     def resolve(self) -> T:
@@ -271,7 +277,7 @@ class PyObjectRef(Generic[T]):
         ):
             raise ImportError(
                 f"Please install package '{self.package}' with version '{self.version}'"
-                f"from '{self.url}' to resolve this object reference."
+                f"from '{self.repo}' to resolve this object reference."
             )
 
         try:
@@ -281,12 +287,19 @@ class PyObjectRef(Generic[T]):
                 f"Cannot import module '{self.module}' from package '{self.package}'."
             )
 
-        url = PyObjectRef._get_pkg_url(module, dist)
-        if url is not None and url != self.url:
-            raise ImportError(
-                f"URL mismatch: Package '{self.package} should be from "
-                f"'{self.url}' but is from '{url}'."
-            )
+        url: str | None = (
+            dict(dist.origin.__dict__).get("url") if dist.origin is not None else None
+        )
+        if url is not None:
+            if str(url).startswith("file://"):
+                repo = get_module_repo(module)
+                if repo is not None:
+                    url = repo.remote().url
+            if url != self.repo:
+                raise ImportError(
+                    f"URL mismatch: Package '{self.package} should be from "
+                    f"'{self.repo}' but is from '{url}'."
+                )
 
         obj = reduce(getattr, self.object.split("."), module)
         if not isinstance(obj, self.type):

@@ -2,7 +2,6 @@
 
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, cast, overload
 
@@ -690,8 +689,10 @@ class DB:
     schema: type[DBSchema] | None = None
     """Schema of this database."""
 
-    updates: dict[datetime, dict[str, Any]] = field(
-        default_factory=lambda: {datetime.now(): {}}
+    updates: dict[pd.Timestamp, dict[str, Any]] = field(
+        default_factory=lambda: {
+            pd.Timestamp.now().round("s"): {"comment": "Created database."}
+        }
     )
     """List of update times with comments, tags, authors, etc."""
 
@@ -736,10 +737,7 @@ class DB:
 
         update_df = pd.read_excel(path, sheet_name="_updates", index_col=0)
         update_df.index = pd.to_datetime(update_df.index)
-        updates = cast(
-            dict[datetime, dict[str, Any]],
-            update_df.to_dict(orient="index"),
-        )
+        updates = {cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()}
 
         df_dict = {
             str(k): df.apply(parse_dtype, axis="index") if auto_parse_dtype else df
@@ -765,12 +763,6 @@ class DB:
             path = self.backend
 
         sheets = {
-            "_relations": pd.DataFrame.from_records(
-                list(self.relations.values()),
-                columns=["target_table", "target_col"],
-                index=pd.MultiIndex.from_tuples(list(self.relations.keys())),
-            ).rename_axis(index=["source_table", "source_col"]),
-            "_join_tables": pd.DataFrame({"name": list(self.join_tables)}),
             **(
                 {
                     "_schema": pd.Series(asdict(PyObjectRef.reference(self.schema)))
@@ -781,7 +773,15 @@ class DB:
                 if self.schema is not None
                 else {}
             ),
-            "_updates": pd.DataFrame.from_dict(self.updates, orient="index"),
+            "_relations": pd.DataFrame.from_records(
+                list(self.relations.values()),
+                columns=["target_table", "target_col"],
+                index=pd.MultiIndex.from_tuples(list(self.relations.keys())),
+            ).rename_axis(index=["source_table", "source_col"]),
+            "_join_tables": pd.DataFrame({"name": list(self.join_tables)}),
+            "_updates": pd.DataFrame.from_dict(
+                self.updates, orient="index"
+            ).rename_axis(index="time"),
             **self.table_dfs,
         }
         with pd.ExcelWriter(
@@ -898,7 +898,7 @@ class DB:
             updates={
                 **self.updates,
                 **other.updates,
-                datetime.now(): {"comment": "Extended database."},
+                pd.Timestamp.now().round("s"): {"comment": "Extended database."},
             },
         )
 
@@ -1104,7 +1104,7 @@ class DB:
             schema=self.schema,
             updates={
                 **self.updates,
-                datetime.now(): {"comment": "Filtered database."},
+                pd.Timestamp.now().round("s"): {"comment": "Filtered database."},
             },
         )
 
@@ -1178,7 +1178,7 @@ class DB:
             schema=self.schema,
             updates={
                 **self.updates,
-                datetime.now(): {"comment": "Filtered database."},
+                pd.Timestamp.now().round("s"): {"comment": "Filtered database."},
             },
         )
 
