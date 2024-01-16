@@ -9,11 +9,14 @@ jobs:
   docs:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-python@v3
-      - name: Install dependencies
-        run: |
-          pip install sphinx sphinx_rtd_theme myst_parser
+      - uses: actions/checkout@v4
+      - uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: 3.11
+          cache: true
+      - run: pdm install
+      - run: source .venv/bin/activate
+      - run: echo "$PWD/.venv/bin" >> $GITHUB_PATH
       - name: Build API docs
         run: sphinx-apidoc -efM -o ./docs/ref-api/py/ ./src
       - name: Build docs pages
