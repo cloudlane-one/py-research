@@ -109,13 +109,14 @@ def datetime_to_interval_series(
     ).set_index(datetime_series.index.name or "index")["time_bin"]
 
     format_func = format
-    if format is None:
+    if format_func is None:
         format_func, interval_name = _auto_interval_format(
             time_interval, resampled.min(), resampled.max()
         )
         interval_col = interval_col or interval_name
 
     def apply_format(s: pd.Series) -> pd.Series:
+        assert format_func is not None
         return (
             s.dt.strftime(format_func)
             if isinstance(format_func, str)

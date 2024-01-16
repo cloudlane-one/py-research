@@ -87,3 +87,5 @@ pythonpath = ["src"]
 
 [tool.pyright]
 reportMatchNotExhaustive = true
+reportIncompatibleVariableOverride = true
+reportIncompatibleMethodOverride = true

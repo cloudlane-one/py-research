@@ -66,13 +66,11 @@ S_contra = TypeVar("S_contra", bound=SchemaBase, contravariant=True)
 V_contra = TypeVar("V_contra", contravariant=True)
 
 
-class ColRef(
-    orm.InstrumentedAttribute[V], Generic[V, S_contra]
-):  # pylint: disable=W0223:abstract-method
-    """Reference a column by scheme type, name and value type."""
+class ColRef(orm.InstrumentedAttribute[V], Generic[V, S_contra]):
+    """Reference a column by scheme type, name and value type."""  # type: ignore[override]
 
 
-class Col(orm.MappedColumn[V]):  # pylint: disable=W0223:abstract-method
+class Col(orm.MappedColumn[V]):
     """Define table column within a table schema."""
 
     if TYPE_CHECKING:
@@ -127,7 +125,7 @@ class Data(Protocol[S_cov]):
         ...
 
     @property
-    def name(self) -> str:
+    def name(self) -> str | None:
         """Data object's name, if any."""
         ...
 

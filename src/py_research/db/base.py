@@ -13,7 +13,7 @@ from py_research.reflect import PyObjectRef
 from .conflicts import DataConflictError, DataConflictPolicy
 
 
-def _unmerge(df: pd.DataFrame, with_relations: bool = True) -> dict[str, pd.DataFrame]:
+def _unmerge(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
     """Extract this table into its own database.
 
     Returns:
@@ -23,7 +23,7 @@ def _unmerge(df: pd.DataFrame, with_relations: bool = True) -> dict[str, pd.Data
         raise ValueError("Cannot only unmerge dataframe with two column levels.")
 
     return {
-        s: cast(pd.DataFrame, df[s]).drop_duplicates()
+        str(s): cast(pd.DataFrame, df[s]).drop_duplicates()
         for s in df.columns.get_level_values(0).unique()
     }
 
@@ -542,12 +542,12 @@ class SingleTable(Table):
     # Computed properties:
 
     @property
-    def source_map(self) -> str:
+    def source_map(self) -> str:  # type: ignore[override]
         """Name of the source table of this table."""
         return self.name
 
     @property
-    def indexes(self) -> dict[str, str]:
+    def indexes(self) -> dict[str, str]:  # type: ignore[override]
         """Name of the source table of this table."""
         return {self.name: self.df.index.name or "id"}
 
