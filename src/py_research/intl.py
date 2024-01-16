@@ -245,7 +245,7 @@ if texts_file_path.is_file():
 def _get_default_locale() -> Locale:
     """Get default locale, falling back to English."""
     try:
-        return Locale.parse(normalize(getlocale()[0] or "en_US"), sep="_")
+        return Locale.parse(normalize(getlocale()[0] or "C"), sep="_")
     except UnknownLocaleError:
         return Locale("en", "US")
 

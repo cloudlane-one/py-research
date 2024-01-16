@@ -145,7 +145,7 @@ def parse_dtype(  # noqa: C901
                                 result = s.astype("category")
 
                             if src_locale is None:
-                                result = parse_dtype(s, dtype, "en_US")
+                                result = parse_dtype(s, dtype, "C")
                             else:
                                 result = s
 
