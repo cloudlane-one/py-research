@@ -1,0 +1,30 @@
+name: Sphinx Docs Build
+on:
+  push:
+    branches:
+      - main
+permissions:
+  contents: write
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: 3.11
+          cache: true
+      - run: pdm install
+      - run: source .venv/bin/activate
+      - run: echo "$PWD/.venv/bin" >> $GITHUB_PATH
+      - name: Build API docs
+        run: sphinx-apidoc -efM -o ./docs/ref-api/py/ ./src
+      - name: Build docs pages
+        run: sphinx-build -b html ./ ./docs-html/
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          publish_branch: gh-pages
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: docs-html/
+          force_orphan: true

@@ -1,4 +1,4 @@
-"""Connect to an SQL server and perform cached analysis queries."""
+"""Connect to an SQL server, validate its schema and perform cached analysis queries."""
 
 from collections.abc import Callable, Mapping
 from contextvars import ContextVar
@@ -23,7 +23,7 @@ import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 from pandas.api.types import (
     is_datetime64_dtype,
-    is_int64_dtype,
+    is_integer_dtype,
     is_numeric_dtype,
     is_string_dtype,
 )
@@ -66,13 +66,11 @@ S_contra = TypeVar("S_contra", bound=SchemaBase, contravariant=True)
 V_contra = TypeVar("V_contra", contravariant=True)
 
 
-class ColRef(
-    orm.InstrumentedAttribute[V], Generic[V, S_contra]
-):  # pylint: disable=W0223:abstract-method
-    """Reference a column by scheme type, name and value type."""
+class ColRef(orm.InstrumentedAttribute[V], Generic[V, S_contra]):
+    """Reference a column by scheme type, name and value type."""  # type: ignore[override]
 
 
-class Col(orm.MappedColumn[V]):  # pylint: disable=W0223:abstract-method
+class Col(orm.MappedColumn[V]):
     """Define table column within a table schema."""
 
     if TYPE_CHECKING:
@@ -127,7 +125,7 @@ class Data(Protocol[S_cov]):
         ...
 
     @property
-    def name(self) -> str:
+    def name(self) -> str | None:
         """Data object's name, if any."""
         ...
 
@@ -156,7 +154,7 @@ class Table(Data[S_cov]):
 def _map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
     if is_datetime64_dtype(c):
         return sqla.types.DATETIME()
-    elif is_int64_dtype(c):
+    elif is_integer_dtype(c):
         return sqla.types.INTEGER()
     elif is_numeric_dtype(c):
         return sqla.types.FLOAT()
@@ -195,10 +193,15 @@ class Query(Data[S_cov]):
     """SQL data defined by a query."""
 
     sel: sqla.Select
+    """SQLAlchemy select statement."""
+
     query_name: InitVar[str]
+    """Name of this query."""
+
     schema: type[S_cov] | None = None
-    
-    __subquery: sqla.Subquery | None = None
+    """Schema of this query's result."""
+
+    _subquery: sqla.Subquery | None = None
 
     def __post_init__(self, query_name: str):  # noqa: D105
         self.__name = query_name
@@ -213,10 +216,10 @@ class Query(Data[S_cov]):
         return dict(self.__clause_element__().columns)
 
     def __clause_element__(self) -> sqla.Subquery:  # noqa: D105
-        if self.__subquery is None:
-            self.__subquery = self.sel.subquery()
-            
-        return self.__subquery
+        if self._subquery is None:
+            self._subquery = self.sel.subquery()
+
+        return self._subquery
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
@@ -233,20 +236,23 @@ class DeferredQuery(Data[S_cov]):
     """SQL data defined by a query or table-returning Python function."""
 
     func: BoundSelFunc
+    """Function returning a SQL query or table."""
+
     schema: type[S_cov] | None = None
-    
-    __subquery: sqla.Subquery | sqla.Table | None = None
+    """Schema of this query's result."""
+
+    _subquery: sqla.Subquery | sqla.Table | None = None
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
         return dict(self.__clause_element__().columns)
 
     def __clause_element__(self) -> sqla.Subquery | sqla.Table:  # noqa: D105
-        if self.__subquery is None:
+        if self._subquery is None:
             res = self.func()
-            self.__subquery = res.subquery() if isinstance(res, sqla.Select) else res
-            
-        return self.__subquery
+            self._subquery = res.subquery() if isinstance(res, sqla.Select) else res
+
+        return self._subquery
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
@@ -293,9 +299,16 @@ class Schema(Generic[S_cov, DS]):
     """SQL schema defining multiple related tables."""
 
     schema_def: type[S_cov] | None = None
+    """Schema base class for this schema's tables."""
+
     db_schema: type[DS] | None = None
+    """DBSchema instance this schema is defined in."""
+
     default: bool = False
+    """Whether this is the default schema for its schema type."""
+
     name: str | None = None
+    """Name of this schema."""
 
     def __set_name__(self, _: type, name: str):  # noqa: D105
         self.name = name if name != "__default__" else None
@@ -336,6 +349,7 @@ class DBSchema(Generic[S_cov]):
     """Schema for an entire SQL database."""
 
     __default__: Schema[S_cov, Self] = Schema()
+    """Default schema for this DB."""
 
     @classmethod
     def schema_dict(cls) -> dict[str | None, Schema | None]:
@@ -369,7 +383,7 @@ class DBSchema(Generic[S_cov]):
 
     @classmethod
     def metadata(cls) -> sqla.MetaData:
-        """Return metadata containing all this DB's schemas and tables."""
+        """Return metadata object containing all this DB's schemas and tables."""
         if hasattr(cls, "__metadata__"):
             return cls.__metadata__
 
@@ -417,12 +431,19 @@ def _remove_external_fk(table: sqla.Table):
 
 @dataclass
 class DB(Generic[S_cov, DS]):
-    """Active connection to a SQL server with schema."""
+    """Active connection to a SQL server."""
 
     url: str | sqla.URL
+    """Connection URL."""
+
     schema: type[DBSchema[S_cov]] = DBSchema
+    """Schema for this DB."""
+
     tag: str = datetime.today().strftime("YYYY-MM-dd")
+    """Tag for this DB session. Used to identify automatically created tables."""
+
     validate: bool = True
+    """Whether to validate the DB schema on connection."""
 
     def __post_init__(self):  # noqa: D105
         self.__token = None
@@ -504,7 +525,14 @@ class DB(Generic[S_cov, DS]):
             active_con.reset(self.__token)
 
     def default_table(self, schema: type[S]) -> Table[S]:
-        """Return default table for given table schema."""
+        """Return default table for given table schema.
+
+        Args:
+            schema: Schema of the table to return.
+
+        Returns:
+            Default table for given schema.
+        """
         defaults = self.schema.defaults()
 
         valid_keys = list(filter(lambda s: issubclass(schema, s), defaults.keys()))
@@ -619,7 +647,17 @@ class DB(Generic[S_cov, DS]):
         name: str | None = None,
         with_external_fk: bool = False,
     ) -> Table[S_cov]:
-        """Transfer dataframe or sql query results to manifested table."""
+        """Transfer dataframe or sql query results to manifested SQL table.
+
+        Args:
+            src: Source / definition of data.
+            schema: Schema of the table to create.
+            name: Name of the table to create.
+            with_external_fk: Whether to include foreign keys to external tables.
+
+        Returns:
+            Reference to manifested SQL table.
+        """
         match src:
             case pd.DataFrame():
                 return self._table_from_df(src, schema, name)
@@ -627,7 +665,14 @@ class DB(Generic[S_cov, DS]):
                 return self._table_from_query(src, with_external_fk)
 
     def to_df(self, q: Data) -> pd.DataFrame:
-        """Transfer manifested table or query results to local dataframe."""
+        """Transfer manifested table or query results to local dataframe.
+
+        Args:
+            q: Source / definition of data.
+
+        Returns:
+            Dataframe containing the data.
+        """
         sel = sqla.select(q)
         with self.engine.connect() as con:
             return pd.read_sql(sel, con)
@@ -682,7 +727,16 @@ def query(
     QueryFunc[Params, S]
     | Callable[[SelFunc[Params]], QueryFunc[Params, S] | DefQueryFunc[Params, S]]
 ):
-    """Transform :py:obj:`sqla.Selectable`-returning function into query."""
+    """Decorator to transform query-returning function into a referencable query.
+
+    Args:
+        func: Function returning a :py:obj:`sqla.Selectable`.
+        defer: Whether to defer execution of the query.
+        schema: Schema of the query's result.
+
+    Returns:
+        Decorated function.
+    """
 
     def inner(
         func: SelFunc[Params],
@@ -708,7 +762,14 @@ def query(
 
 
 def default_table(schema: type[S]) -> DeferredQuery[S]:
-    """Return default table for given table schema."""
+    """Return default table for given table schema.
+
+    Args:
+        schema: Schema of the table to return.
+
+    Returns:
+        Reference to default table for given schema.
+    """
 
     def get_current_default_table() -> sqla.Table:
         ctx = _get_sql_ctx()

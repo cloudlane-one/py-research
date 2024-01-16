@@ -51,6 +51,7 @@ def _check_streamlit():
 T = TypeVar("T")
 
 
+@wraps(base_tqdm)
 def tqdm(
     iterable: Iterable[T],
     desc: str | None = None,
@@ -199,12 +200,12 @@ def configure_logging(purpose: Literal["status", "report", "log"] = "status") ->
     )
 
 
-# Ensure that logging is configured to use `structlog.stdlib.BoundLogger`
-# for `get_logger()`.
-configure_logging()
-
-
 @wraps(structlog.get_logger)
 def get_logger(name: str | None = None, **kwds) -> structlog.stdlib.BoundLogger:
     """Typed interface for `structlog.get_logger`."""
     return structlog.get_logger(name, **kwds)
+
+
+# Ensure that logging is configured to use `structlog.stdlib.BoundLogger`
+# for `get_logger()`.
+configure_logging()

@@ -20,5 +20,5 @@ __pycache__/
 # Env files
 .env*
 
-# Running cross-platform with the same lock file is error-prone
-/poetry.lock
+# PDM
+/.pdm-python

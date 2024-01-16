@@ -10,6 +10,14 @@ def dist_table(
 
     Entities are identified by ``id_cols``. Distribution is presented over
     unique categories in ``category_cols``.
+
+    Args:
+        df: Dataframe to evaluate.
+        id_cols: Columns to identify entities by.
+        category_cols: Columns to evaluate distribution over.
+
+    Returns:
+        Frequency table of the distribution of unique entities.
     """
     id_cols = (
         [id_cols]

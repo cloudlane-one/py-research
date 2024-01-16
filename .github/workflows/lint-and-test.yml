@@ -7,10 +7,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup PDM
-        uses: pdm-project/setup-pdm@v3
-      - name: Install dependencies
-        run: pdm install
+      - uses: pdm-project/setup-pdm@v3
+        with:
+          python-version: 3.11
+          cache: true
+      - run: pdm install
+      - run: source .venv/bin/activate
+      - run: echo "$PWD/.venv/bin" >> $GITHUB_PATH
       - name: Check Black formatting
         uses: psf/black@stable
       - name: Lint with Ruff

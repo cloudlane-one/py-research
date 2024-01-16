@@ -6,6 +6,8 @@ from typing import Any, cast
 
 import pandas as pd
 
+from py_research.data import parse_dtype
+
 
 def _auto_interval_format(
     time_interval: pd.offsets.BaseOffset, min_bin: datetime, max_bin: datetime
@@ -73,6 +75,9 @@ def _auto_interval_format(
                 format_func = f"{date_prefix}%M:%S"
             else:
                 format_func = f"{date_prefix}%H:%M:%S"
+        case _:
+            interval_name = "datetime"
+            format_func = "%c"
 
     return format_func, interval_name
 
@@ -83,7 +88,17 @@ def datetime_to_interval_series(
     format: str | None = None,
     interval_col: str | None = None,
 ) -> pd.Series:
-    """Assign intervals matching ``datetime_col`` to new column."""
+    """Assign intervals matching ``datetime_col`` to new column.
+
+    Args:
+        datetime_series: Series of datetime values.
+        time_interval: Interval to use for grouping.
+        format: Format to use for the interval column.
+        interval_col: Name of the interval column.
+
+    Returns:
+        Series of intervals matching ``datetime_col``.
+    """
     datetime_df = (
         datetime_series.to_frame().assign(time_bin=datetime_series).reset_index()
     )
@@ -94,13 +109,14 @@ def datetime_to_interval_series(
     ).set_index(datetime_series.index.name or "index")["time_bin"]
 
     format_func = format
-    if format is None:
+    if format_func is None:
         format_func, interval_name = _auto_interval_format(
             time_interval, resampled.min(), resampled.max()
         )
         interval_col = interval_col or interval_name
 
     def apply_format(s: pd.Series) -> pd.Series:
+        assert format_func is not None
         return (
             s.dt.strftime(format_func)
             if isinstance(format_func, str)
@@ -109,6 +125,7 @@ def datetime_to_interval_series(
 
     if time_interval.n == 1:
         resampled = apply_format(resampled)
+        resampled = parse_dtype(resampled)
     else:
         start = resampled
         end = cast(pd.Series, resampled + time_interval)  # type: ignore

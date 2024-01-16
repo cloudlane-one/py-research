@@ -17,7 +17,17 @@ def export_html(
     name: str = "plot",
     download_format: ImageFormat = "svg",
 ):
-    """Save plotly figure to interactive html."""
+    """Save plotly figure to interactive html.
+
+    Args:
+        fig: Plotly figure to save.
+        out: Path to save to or file-like object to write to.
+        width: Width of the figure in pixels.
+        height: Height of the figure in pixels.
+        scale: Scale factor for the figure.
+        name: Name of the figure.
+        download_format: Format to use when downloading the figure.
+    """
     fig.write_html(
         out,
         include_plotlyjs="cdn",

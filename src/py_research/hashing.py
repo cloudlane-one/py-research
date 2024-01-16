@@ -3,8 +3,6 @@
 import hashlib
 from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
-from fractions import Fraction
 from functools import reduce
 from numbers import Number
 from typing import Any
@@ -26,7 +24,7 @@ def _hash_sequence(s: Sequence) -> int:
 
 
 def gen_int_hash(obj: Any) -> int:
-    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
+    """Generate stable hash for obj (must be known, hashable or composed of such)."""
     match obj:
         case (Number() | str() | bytes() | date() | time() | datetime() | timedelta()):
             return _stable_hash(obj)
@@ -61,25 +59,18 @@ def gen_int_hash(obj: Any) -> int:
     raise ValueError()
 
 
-def gen_str_hash(x: Any, length: int = 10, raw_str: bool = False) -> str:
-    """Generate stable hash for obj (must be hashable or composed of hashable types)."""
-    s = None
-    match (x):
-        case int() | float() | complex() | Decimal():
-            s = str(x)
-        case Fraction():
-            s = str(x).replace("/", "_over_")
-        case str() if raw_str:
-            s = x
-        case date():
-            s = x.isoformat()
-        case time():
-            s = f"HHMMSS{'ffffff' if x.microsecond != 0 else ''}".format(x)
-        case datetime():
-            s = str(x.timestamp())
-        case timedelta():
-            s = str(x.total_seconds())
-        case _:
-            s = str(abs(gen_int_hash(x)))
+def gen_str_hash(x: Any, length: int = 10) -> str:
+    """Generate stable hash for obj (must be known, hashable or composed of such).
 
-    return s[:length]
+    Args:
+        x: Object to hash.
+        length: Length of the hash.
+        raw_str:
+            Whether to use the raw string representation of the object,
+            if it is a string.
+
+    Returns:
+        Hash of the object as string.
+    """
+    s = str(abs(gen_int_hash(x)))
+    return s[:length].rjust(length, "0")
