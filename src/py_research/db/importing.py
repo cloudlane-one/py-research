@@ -354,58 +354,64 @@ def _tree_to_db(  # noqa: C901
         mapping, db, row, refs, collect_conflicts, _all_conflicts
     )
 
-    existing_row: dict[str, Any] | None = None
-    if mapping.match_by_attr:
-        # Make sure any existing data in database is consistent with new data.
-        match_by = cast(str, mapping.match_by_attr)
-        if mapping.match_by_attr is True:
-            assert isinstance(resolved_map, str)
-            match_by = resolved_map
+    if not row.empty:
+        existing_row: dict[str, Any] | None = None
+        if mapping.match_by_attr:
+            # Make sure any existing data in database is consistent with new data.
+            match_by = cast(str, mapping.match_by_attr)
+            if mapping.match_by_attr is True:
+                assert isinstance(resolved_map, str)
+                match_by = resolved_map
 
-        match_to = row[match_by]
+            match_to = row[match_by]
 
-        # Match to existing row or create new one.
-        existing_rows: list[tuple[str, dict[str, Any]]] = list(
-            filter(
-                lambda i: i[1][match_by] == match_to, database[mapping.table].items()
+            # Match to existing row or create new one.
+            existing_rows: list[tuple[str, dict[str, Any]]] = list(
+                filter(
+                    lambda i: i[1][match_by] == match_to,
+                    database[mapping.table].items(),
+                )
             )
-        )
 
-        if len(existing_rows) > 0:
-            existing_row_id, existing_row = existing_rows[0]
-            # Take over the id of the existing row.
-            row.name = existing_row_id
-    else:
-        existing_row = database[mapping.table].get(row.name)
-
-    if existing_row is not None:
-        existing_attrs = set(
-            str(k) for k, v in existing_row.items() if k and pd.notna(v)
-        )
-        new_attrs = set(str(k) for k, v in row.items() if k and pd.notna(v))
-
-        # Assert that overlapping attributes are equal.
-        intersect = existing_attrs & new_attrs
-
-        if mapping.conflict_policy == "raise":
-            conflicts = {
-                (mapping.table, row.name, c): (existing_row[c], row[c])
-                for c in intersect
-                if existing_row[c] != row[c]
-            }
-
-            if len(conflicts) > 0:
-                if not collect_conflicts:
-                    raise DataConflictError(conflicts)
-
-                _all_conflicts = {**_all_conflicts, **conflicts}
-        if mapping.conflict_policy == "ignore":
-            row = pd.Series({**row.loc[list(new_attrs)], **existing_row}, name=row.name)
+            if len(existing_rows) > 0:
+                existing_row_id, existing_row = existing_rows[0]
+                # Take over the id of the existing row.
+                row.name = existing_row_id
         else:
-            row = pd.Series({**existing_row, **row.loc[list(new_attrs)]}, name=row.name)
+            existing_row = database[mapping.table].get(row.name)
 
-    # Add row to database table or update it.
-    database[mapping.table][row.name] = row.to_dict()
+        if existing_row is not None:
+            existing_attrs = set(
+                str(k) for k, v in existing_row.items() if k and pd.notna(v)
+            )
+            new_attrs = set(str(k) for k, v in row.items() if k and pd.notna(v))
+
+            # Assert that overlapping attributes are equal.
+            intersect = existing_attrs & new_attrs
+
+            if mapping.conflict_policy == "raise":
+                conflicts = {
+                    (mapping.table, row.name, c): (existing_row[c], row[c])
+                    for c in intersect
+                    if existing_row[c] != row[c]
+                }
+
+                if len(conflicts) > 0:
+                    if not collect_conflicts:
+                        raise DataConflictError(conflicts)
+
+                    _all_conflicts = {**_all_conflicts, **conflicts}
+            if mapping.conflict_policy == "ignore":
+                row = pd.Series(
+                    {**row.loc[list(new_attrs)], **existing_row}, name=row.name
+                )
+            else:
+                row = pd.Series(
+                    {**existing_row, **row.loc[list(new_attrs)]}, name=row.name
+                )
+
+        # Add row to database table or update it.
+        database[mapping.table][row.name] = row.to_dict()
 
     # Return row (used for recursion).
     return row, _all_conflicts
@@ -457,7 +463,7 @@ def tree_to_db(  # noqa: C901
     db = DB(
         table_dfs={
             name: pd.DataFrame.from_dict(df, orient="index").rename_axis(
-                "id", axis="index"
+                "_id", axis="index"
             )
             for name, df in df_dict.items()
         },

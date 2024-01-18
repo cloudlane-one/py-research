@@ -133,39 +133,43 @@ class Table:
     @overload
     def merge(
         self,
+        right: "SingleTable | None" = None,
         link_to_right: str | tuple[str, str] = ...,
         link_to_left: str | None = None,
-        right: "SingleTable | None" = None,
         link_table: "SingleTable | None" = None,
+        naming: Literal["source", "path"] = ...,
     ) -> "Table":
         ...
 
     @overload
     def merge(
         self,
-        link_to_right: str | tuple[str, str] | None = None,
-        link_to_left: str | None = None,
         right: "SingleTable" = ...,
+        link_to_right: str | tuple[str, str] | None = None,
+        link_to_left: str | None = None,
         link_table: "SingleTable | None" = None,
+        naming: Literal["source", "path"] = ...,
     ) -> "Table":
         ...
 
     @overload
     def merge(
         self,
+        right: "SingleTable | None" = ...,
         link_to_right: str | tuple[str, str] | None = None,
         link_to_left: str | None = None,
-        right: "SingleTable | None" = ...,
         link_table: "SingleTable" = ...,
+        naming: Literal["source", "path"] = ...,
     ) -> "Table":
         ...
 
     def merge(  # noqa: C901
         self,
+        right: "SingleTable | None" = None,
         link_to_right: str | tuple[str, str] | None = None,
         link_to_left: str | None = None,
-        right: "SingleTable | None" = None,
         link_table: "SingleTable | None" = None,
+        naming: Literal["source", "path"] = "source",
     ) -> "Table":
         """Merge this table with another, returning a new table.
 
@@ -174,6 +178,9 @@ class Table:
             link_to_left: Name of column to use for linking from right to left table.
             right: Other (left) table to merge with.
             link_table: Link table (join table) to use for double merging.
+            naming:
+                Naming strategy to use for naming the first level of merged columns.
+                Use "path" if you merge multiple times from the same source table.
 
         Note:
             At least one of ``link_to_right``, ``right`` or ``link_table`` must be
@@ -241,7 +248,9 @@ class Table:
             merges += [
                 (
                     (sp, sc),
-                    f"{sp}->{sc}=>{tc}<-{tt}"
+                    tt
+                    if naming == "source"
+                    else f"{sp}->{sc}=>{tc}<-{tt}"
                     if tc != (self.db[tt].df.index.name or "id")
                     else f"{sp}->{sc}",
                     (right or self.db[tt], tc),
@@ -257,7 +266,9 @@ class Table:
             merges += [
                 (
                     (sp, sc),
-                    f"{sp}->{sc}=>{tc}<-{tt}"
+                    tt
+                    if naming == "source"
+                    else f"{sp}->{sc}=>{tc}<-{tt}"
                     if tc != (self.db[tt].df.index.name or "id")
                     else f"{sp}->{sc}",
                     (tt, tc),
@@ -299,7 +310,9 @@ class Table:
                 merges += [
                     (
                         (tp, tc),
-                        f"{tp}->{tc}<={right.name}"
+                        tt
+                        if naming == "source"
+                        else f"{tp}->{tc}<={right.name}"
                         if tc != (self.db[tt].df.index.name or "id")
                         else f"{tp}<={right.name}",
                         (right, link_to_left),
@@ -310,7 +323,9 @@ class Table:
                 merges += [
                     (
                         (tp, tc),
-                        f"{tp}->{tc}<={sc}<-{st}"
+                        tt
+                        if naming == "source"
+                        else f"{tp}->{tc}<={sc}<-{st}"
                         if tc != (self.db[tt].df.index.name or "id")
                         else f"{tp}<={sc}<-{st}",
                         (self.db[st], sc),
@@ -365,12 +380,16 @@ class Table:
                         merges += [
                             (
                                 (jt_prefix, osc),
-                                (jt_prefix if len(link_tables) > 1 else btp)
-                                + "->"
-                                + (
-                                    f"{osc}<={otc}<-{ott}"
-                                    if otc != (self.db[ott].df.index.name or "id")
-                                    else osc
+                                ott
+                                if naming == "source"
+                                else (
+                                    (jt_prefix if len(link_tables) > 1 else btp)
+                                    + "->"
+                                    + (
+                                        f"{osc}<={otc}<-{ott}"
+                                        if otc != (self.db[ott].df.index.name or "id")
+                                        else osc
+                                    )
                                 ),
                                 (right or self.db[ott], otc),
                             )
@@ -420,7 +439,7 @@ class Table:
 
     def flatten(
         self,
-        sep: str = "->",
+        sep: str = ".",
         prefix_strategy: Literal["always", "on_conflict"] = "always",
     ) -> pd.DataFrame:
         """Collapse multi-dim. column labels of multi-source table, returning new df.
