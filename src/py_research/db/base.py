@@ -440,7 +440,7 @@ class Table:
     def flatten(
         self,
         sep: str = ".",
-        prefix_strategy: Literal["on_conflict", "always"] = "on_conflict",
+        prefix_strategy: Literal["always", "on_conflict"] = "always",
     ) -> pd.DataFrame:
         """Collapse multi-dim. column labels of multi-source table, returning new df.
 
