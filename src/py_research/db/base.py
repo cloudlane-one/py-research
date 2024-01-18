@@ -979,6 +979,102 @@ class DB:
         # remaining rows in filter tables are left.
         return new_db.trim(list(filters.keys()), circuit_breakers=cb)
 
+    def to_graph(
+        self, nodes: Sequence[Table | str]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        nodes = [self[n] if isinstance(n, str) else n for n in nodes]
+        # Concat all node tables into one.
+        node_dfs = [
+            n.df.reset_index().assign(table=n.source_map)
+            if isinstance(n.source_map, str)
+            else pd.concat(
+                [
+                    cast(pd.DataFrame, n.df[p])
+                    .drop_duplicates()
+                    .reset_index()
+                    .assign(table=s)
+                    for p, s in n.source_map.items()
+                    if s not in self.join_tables
+                ],
+                ignore_index=True,
+            )
+            for n in nodes
+        ]
+        node_df = (
+            pd.concat(node_dfs, ignore_index=True)
+            .reset_index()
+            .rename(columns={"index": "node_id"})
+        )
+
+        if "level_0" in node_df.columns:
+            node_df = node_df.drop(columns=["level_0"])
+
+        # Find all link tables between the given node tables.
+        node_names = list(node_df["table"].unique())
+
+        directed_edges = self._get_rels(sources=node_names, targets=node_names)
+        undirected_edges = pd.concat(
+            [self._get_rels(sources=[j], targets=node_names) for j in self.join_tables]
+        )
+
+        # Concat all edges into one table.
+        edge_df = pd.concat(
+            [
+                *[
+                    node_df.loc[node_df["table"] == str(rel["source_table"])]
+                    .rename(columns={"node_id": "source"})
+                    .merge(
+                        node_df.loc[node_df["table"] == str(rel["target_table"])],
+                        left_on=rel["source_col"],
+                        right_on=rel["target_col"],
+                    )
+                    .rename(columns={"node_id": "target"})[["source", "target"]]
+                    .assign(ltr=rel["source_col"], rtl=None)
+                    for _, rel in directed_edges.iterrows()
+                ],
+                *[
+                    self[str(source_table)]
+                    .df.merge(
+                        node_df.loc[
+                            node_df["table"] == str(rel.iloc[0]["target_table"])
+                        ].dropna(axis="columns", how="all"),
+                        left_on=rel.iloc[0]["source_col"],
+                        right_on=rel.iloc[0]["target_col"],
+                        how="inner",
+                    )
+                    .rename(columns={"node_id": "source"})
+                    .merge(
+                        node_df.loc[
+                            node_df["table"] == str(rel.iloc[1]["target_table"])
+                        ].dropna(axis="columns", how="all"),
+                        left_on=rel.iloc[1]["source_col"],
+                        right_on=rel.iloc[1]["target_col"],
+                        how="inner",
+                    )
+                    .rename(columns={"node_id": "target"})[
+                        list(
+                            {"source", "target", *self[str(source_table)].columns}
+                            - {rel.iloc[0]["source_col"], rel.iloc[1]["source_col"]}
+                        )
+                    ]
+                    .assign(
+                        ltr=rel.iloc[1]["source_col"], rtl=rel.iloc[0]["source_col"]
+                    )
+                    for source_table, rel in undirected_edges.groupby("source_table")
+                    if len(rel) == 2  # We do not export hyper-graphs.
+                ],
+            ],
+            ignore_index=True,
+        )
+
+        return node_df, edge_df
+
     # Dictionary interface:
 
     def __getitem__(self, name: str) -> SourceTable:  # noqa: D105
@@ -1200,51 +1296,3 @@ class DB:
                 pd.Timestamp.now().round("s"): {"comment": "Filtered database."},
             },
         )
-
-    def to_graph(
-        self, nodes: Sequence[SingleTable | str]
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Export links between select database objects in a graph format.
-
-        E.g. for usage with `Gephi`_
-
-        .. _Gephi: https://gephi.org/
-        """
-        nodes = [self[n] if isinstance(n, str) else n for n in nodes]
-        # Concat all node tables into one.
-        node_dfs = [n.df.reset_index().assign(table=n.name) for n in nodes]
-        node_df = (
-            pd.concat(node_dfs, ignore_index=True)
-            .reset_index()
-            .rename(columns={"index": "node_id"})
-        )
-
-        # Find all link tables between the given node tables.
-        node_names = [n.name for n in nodes]
-        relations = pd.concat(
-            [self._get_rels(sources=[j], targets=node_names) for j in self.join_tables]
-        )
-
-        # Concat all edges into one table.
-        edge_df = pd.concat(
-            [
-                self[str(source_table)]
-                .df.merge(
-                    node_df.loc[node_df["table"] == rel.iloc[0]["target_table"]],
-                    left_on=rel.iloc[0]["source_col"],
-                    right_on=rel.iloc[0]["target_col"],
-                )
-                .rename(columns={"id": "source"})
-                .merge(
-                    node_df.loc[node_df["table"] == rel.iloc[1]["target_table"]],
-                    left_on=rel.iloc[1]["source_col"],
-                    right_on=rel.iloc[1]["target_col"],
-                )
-                .rename(columns={"id": "target"})[["source", "target"]]
-                for source_table, rel in relations.groupby("source_table")
-                if len(rel) == 2  # We do not export hyper-graphs.
-            ],
-            ignore_index=True,
-        )
-
-        return node_df, edge_df
