@@ -272,11 +272,11 @@ def test_merge_db_table_forward(db_from_tables: DB):
     """Test the forward merging of a DB table."""
     table = db_from_tables["tasks"]
 
-    table_merged = table.merge("project")
+    table_merged = table.merge(link_to_right="project", naming="path")
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["tasks"]["name"].unique()) == set(
         table_flat["tasks->name"].unique()
     )
@@ -294,11 +294,13 @@ def test_merge_db_table_forward_filtered(db_from_tables: DB):
         db_from_tables["projects"]["status"] == "done"
     )
 
-    table_merged = left_table.merge("project", right=right_table)
+    table_merged = left_table.merge(
+        right=right_table, link_to_right="project", naming="path"
+    )
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(left_table["name"].unique()) == set(table_flat["tasks->name"].unique())
     assert set(right_table.df.index) == set(
         table_flat["tasks->project->id"].dropna().unique()
@@ -309,11 +311,11 @@ def test_merge_db_table_backward(db_from_tables: DB):
     """Test the backward merging of a DB table."""
     table = db_from_tables["projects"]
 
-    table_merged = table.merge(right=db_from_tables["tasks"])
+    table_merged = table.merge(right=db_from_tables["tasks"], naming="path")
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["projects"]["name"].unique()) == set(
         table_flat["projects->name"].unique()
     )
@@ -326,11 +328,13 @@ def test_merge_db_table_backward_explicit(db_from_tables: DB):
     """Test the explicit backward merging of a DB table."""
     table = db_from_tables["projects"]
 
-    table_merged = table.merge(right=db_from_tables["tasks"], link_to_left="project")
+    table_merged = table.merge(
+        right=db_from_tables["tasks"], link_to_left="project", naming="path"
+    )
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["projects"]["name"].unique()) == set(
         table_flat["projects->name"].unique()
     )
@@ -343,11 +347,11 @@ def test_merge_db_table_double(db_from_tables: DB):
     """Test the double merging of a DB table."""
     table = db_from_tables["persons"]
 
-    table_merged = table.merge(right=db_from_tables["projects"])
+    table_merged = table.merge(right=db_from_tables["projects"], naming="path")
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -364,12 +368,12 @@ def test_merge_db_table_double_filtered(db_from_tables: DB):
     )
 
     table_merged = left_table.merge(
-        right=db_from_tables["projects"], link_table=link_table
+        right=db_from_tables["projects"], link_table=link_table, naming="path"
     )
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(left_table["name"].unique()) == set(table_flat["persons->name"].unique())
     assert set(table_flat["persons->project->id"].unique()) == {1}
 
@@ -378,11 +382,11 @@ def test_merge_db_table_double_indefinite(db_from_tables: DB):
     """Test the indefinite double merging of a DB table."""
     table = db_from_tables["persons"]
 
-    table_merged = table.merge(link_table=db_from_tables["memberships"])
+    table_merged = table.merge(link_table=db_from_tables["memberships"], naming="path")
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -396,12 +400,14 @@ def test_merge_db_table_double_explicit(db_from_tables: DB):
     table = db_from_tables["persons"]
 
     table_merged = table.merge(
-        link_table=db_from_tables["memberships"], right=db_from_tables["projects"]
+        link_table=db_from_tables["memberships"],
+        right=db_from_tables["projects"],
+        naming="path",
     )
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->")
+    table_flat = table_merged.flatten("->", "always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -414,7 +420,7 @@ def test_extract_db_table(db_from_tables: DB):
     """Test the extraction of a db table."""
     table = db_from_tables["projects"]
 
-    table_merged = table.merge(right=db_from_tables["tasks"])
+    table_merged = table.merge(right=db_from_tables["tasks"], naming="path")
 
     extracted_db1 = table_merged.extract()
     assert isinstance(extracted_db1, DB)
