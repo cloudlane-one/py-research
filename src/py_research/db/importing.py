@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from itertools import chain, groupby
 from typing import Any, Literal, TypeAlias, cast, overload
+from uuid import uuid4
 
 import pandas as pd
 
@@ -37,10 +38,10 @@ class TableMap:
     ext_maps: "list[TableMap] | None" = None
     """Map attributes on the same level to different tables"""
 
-    ref_attr: str | None = None
+    link_attr: str | None = None
     """Override attribute to use when referencing this table from a parent table."""
 
-    ref_type: Literal["1-n", "n-1", "n-m"] = "n-m"
+    link_type: Literal["1-n", "n-1", "n-m"] = "n-m"
     """Type of reference between this table and the parent table.
     Only ``n-m`` will create a join table.
     """
@@ -48,15 +49,24 @@ class TableMap:
     join_table_name: str | None = None
     """Name of the join table to use for referencing this table to its parent, if any"""
 
-    ref_map: _AttrMap | None = None
+    join_table_map: _AttrMap | None = None
     """Mapping of hierarchical attributes to join table rows."""
 
-    id_attr: str | None = None
-    """Use given attr as id directly, no hashing."""
+    id_type: Literal["hash", "attr", "uuid"] = "hash"
+    """Type of id to use for this table.
+    - ``hash``: sha256 hash of a subset of all mapped attributes
+    - ``attr``: use given attr as id directly, no hashing
+    - ``uuid``: generate random uuid for each row
+    """
 
-    hash_id_subset: list[str] | None = None
-    """List of column names to use as a subset of all columns for
-    auto-generating row ids via sha256 hashing.
+    id_attr: str | list[str] | None = None
+    """Name of unique, mapped attribute to use as id directly or
+    list of mapped attributes to use for auto-generating row ids via sha256 hashing.
+    If None, all mapped attributes will be used for hashing.
+    """
+
+    hash_id_with_path: bool = False
+    """If True, the id will be generated based on the data and the full tree path.
     """
 
     match_by_attr: bool | str = False
@@ -123,12 +133,20 @@ def _map_sublayer(
     return pd.Series(cols, dtype=object), refs
 
 
-def _gen_row_id(row: pd.Series, hash_subset: list[str] | None = None) -> str:
-    """Generate and assign row id."""
+def _gen_row_hash(
+    row: pd.Series,
+    context_path: list[str | int] | None = None,
+    hash_subset: list[str] | None = None,
+) -> str:
+    """Generate hash for given row."""
     hash_row = (
         row[list(set(hash_subset) & set(row.index))] if hash_subset is not None else row
     )
-    row_id = gen_str_hash(hash_row.to_dict())
+    row_id = gen_str_hash(
+        hash_row.to_dict()
+        if context_path is not None
+        else (hash_row.to_dict(), context_path)
+    )
 
     return row_id
 
@@ -153,9 +171,11 @@ def _handle_refs(  # noqa: C901
     refs: list[tuple[str | None, _SubMap]],
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
+    _path: list[str | int] | None = None,
 ) -> DataConflicts:
     """Handle references to other tables."""
     _all_conflicts = _all_conflicts or {}
+    _path = _path or []
     database, relations, join_tables = db
 
     # Handle nested data, which is to be extracted into separate tables and referenced.
@@ -168,9 +188,8 @@ def _handle_refs(  # noqa: C901
 
         for sub_map in sub_maps:
             join_table_name = sub_map.join_table_name
-            join_table_exists = True
+            join_table_exists = False
             alt_join_table_names = [
-                sub_map.join_table_name,
                 f"{mapping.table}_{sub_map.table}",
                 f"{sub_map.table}_{mapping.table}",
             ]
@@ -185,27 +204,31 @@ def _handle_refs(  # noqa: C901
             else:
                 join_table_exists = join_table_name in database
 
-            if not join_table_exists:
-                database[join_table_name] = {}
-
             if not isinstance(sub_data, list):
                 sub_data = [sub_data]
 
-            for sub_data_item in sub_data:
+            for i, sub_data_item in enumerate(sub_data):
+                _sub_path = [_path, attr, i]
+
                 rel_row, _all_conflicts = _tree_to_db(
                     sub_data_item,
                     sub_map,
                     db,
                     collect_conflicts,
                     _all_conflicts,
+                    _sub_path,
                 )
 
-                if sub_map.ref_type == "n-m":
+                if sub_map.link_type == "n-m":
                     # Map via join table.
+                    if not join_table_exists:
+                        database[join_table_name] = {}
+                        join_table_exists = True
+
                     ref_row, _ = (
-                        _map_sublayer(sub_data_item, sub_map.ref_map)
+                        _map_sublayer(sub_data_item, sub_map.join_table_map)
                         if isinstance(sub_data_item, dict)
-                        and sub_map.ref_map is not None
+                        and sub_map.join_table_map is not None
                         else (pd.Series(dtype=object), None)
                     )
 
@@ -223,11 +246,11 @@ def _handle_refs(  # noqa: C901
                     )
                     ref_row[right_col] = rel_row.name
 
-                    ref_row.name = _gen_row_id(ref_row)
+                    ref_row.name = _gen_row_hash(ref_row, _sub_path)
 
                     database[join_table_name][ref_row.name] = ref_row.to_dict()
                     join_tables |= {join_table_name}
-                elif sub_map.ref_type == "1-n":
+                elif sub_map.link_type == "1-n":
                     # Map via direct reference from children to parent.
                     col = f"{attr}_of" if attr is not None else mapping.table
 
@@ -243,7 +266,7 @@ def _handle_refs(  # noqa: C901
                         **rel_row.to_dict(),
                         col: row.name,
                     }
-                elif sub_map.ref_type == "n-1":
+                elif sub_map.link_type == "n-1":
                     # Map via direct reference from parents to child.
                     col = attr if attr is not None else sub_map.table
 
@@ -269,9 +292,11 @@ def _tree_to_db(  # noqa: C901
     db: RelDB,
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
+    _path: list[str | int] | None = None,
 ) -> tuple[pd.Series, DataConflicts]:
     """Transform recursive dictionary data into relational format."""
     _all_conflicts = _all_conflicts or {}
+    _path = _path or []
     database, _, _ = db
 
     # Initialize new table as defined by mapping, if it doesn't exist yet.
@@ -304,9 +329,15 @@ def _tree_to_db(  # noqa: C901
             )
 
     row.name = (
-        _gen_row_id(row, mapping.hash_id_subset)
-        if not mapping.id_attr
-        else row[mapping.id_attr]
+        row[mapping.id_attr]
+        if mapping.id_type == "attr" and isinstance(mapping.id_attr, str)
+        else _gen_row_hash(
+            row,
+            _path,
+            [mapping.id_attr] if isinstance(mapping.id_attr, str) else mapping.id_attr,
+        )
+        if mapping.id_type == "hash"
+        else str(uuid4())[-10:]
     )
 
     if not isinstance(row.name, str | int):
@@ -317,7 +348,7 @@ def _tree_to_db(  # noqa: C901
 
     if mapping.ext_maps is not None:
         assert isinstance(data, dict)
-        refs = [*refs, *((m.ref_attr, (data, m)) for m in mapping.ext_maps)]
+        refs = [*refs, *((m.link_attr, (data, m)) for m in mapping.ext_maps)]
 
     _all_conflicts = _handle_refs(
         mapping, db, row, refs, collect_conflicts, _all_conflicts
