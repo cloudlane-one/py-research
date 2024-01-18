@@ -6,7 +6,6 @@ from tempfile import gettempdir
 
 import pandas as pd
 import pytest
-
 from py_research.data import parse_dtype
 from py_research.db import DB, DBSchema, Table
 
@@ -272,16 +271,16 @@ def test_merge_db_table_forward(db_from_tables: DB):
     """Test the forward merging of a DB table."""
     table = db_from_tables["tasks"]
 
-    table_merged = table.merge(link_to_right="project", naming="path")
+    table_merged = table.merge(link_to_right="project", naming="source")
     assert isinstance(table_merged, Table)
     assert table_merged.df.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.flatten(".", "always")
     assert set(db_from_tables["tasks"]["name"].unique()) == set(
-        table_flat["tasks->name"].unique()
+        table_flat["tasks.name"].unique()
     )
     assert set(db_from_tables["tasks"]["project"].unique()) == set(
-        table_flat["tasks->project->id"].unique()
+        table_flat["projects.id"].unique()
     )
 
 
