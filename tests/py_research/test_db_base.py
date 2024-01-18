@@ -453,22 +453,49 @@ def test_extend_db_table(db_from_tables: DB):
 
 def test_db_to_graph(db_from_tables: DB):
     """Test transformation of database to graph."""
-    nodes, edges = db_from_tables.to_graph(["projects", "persons"])
-    assert len(nodes) == len(db_from_tables["projects"].df) + len(
-        db_from_tables["persons"].df
+    nodes, edges = db_from_tables.to_graph(
+        [
+            trimmed_proj := db_from_tables["projects"].trim(["name", "status"]),
+            trimmed_pers := db_from_tables["persons"].trim(["name", "age"]),
+            "tasks",
+        ]
     )
+    assert isinstance(nodes, pd.DataFrame)
+    assert len(nodes) == len(trimmed_proj.df) + len(trimmed_pers.df) + len(
+        db_from_tables["tasks"].df
+    )
+    assert set(nodes.columns) == {
+        "node_id",
+        "table",
+        "id",
+        "name",
+        "status",
+        "project",
+        "assignee",
+        "age",
+    }
     assert isinstance(edges, pd.DataFrame)
+    assert set(edges.columns) == {"source", "target", "ltr", "rtl", "role"}
 
-    trimmed_projects = db_from_tables["projects"].trim(["name", "status"])
-    trimmed_persons = db_from_tables["persons"].trim(["name", "age"])
-    nodes, edges = db_from_tables.to_graph([trimmed_projects, trimmed_persons])
-    assert len(nodes) == len(trimmed_projects.df) + len(trimmed_persons.df)
-    assert set(nodes.columns.tolist()) == {
+
+def test_db_to_graph_merged(db_from_tables: DB):
+    """Test transformation of database to graph."""
+    table = db_from_tables["persons"]
+    table_merged = table.merge(right=db_from_tables["projects"], naming="path")
+
+    nodes, edges = db_from_tables.to_graph([table_merged])
+    assert isinstance(nodes, pd.DataFrame)
+    assert set(nodes.columns) == {
         "node_id",
         "table",
         "id",
         "name",
         "status",
         "age",
+        "start",
+        "end",
+        "height",
+        "weight",
     }
     assert isinstance(edges, pd.DataFrame)
+    assert set(edges.columns) == {"source", "target", "ltr", "rtl", "role"}
