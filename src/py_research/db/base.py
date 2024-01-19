@@ -2,6 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
+from functools import reduce
 from pathlib import Path
 from typing import Any, Literal, cast, overload
 
@@ -257,7 +258,7 @@ class Table:
                 )
                 for (sp, sc), (tt, tc) in rels
             ]
-        elif right is None:
+        elif right is None and link_table is None:
             outgoing = self.db._get_rels(
                 sources=list(self.source_map.values())
                 if isinstance(self.source_map, dict)
@@ -271,7 +272,7 @@ class Table:
                     else f"{sp}->{sc}=>{tc}<-{tt}"
                     if tc != (self.db[tt].df.index.name or "id")
                     else f"{sp}->{sc}",
-                    (tt, tc),
+                    (self.db[tt], tc),
                 )
                 for st, sc, tt, tc in outgoing.itertuples(index=False)
                 for sp in inv_src_map[st]
@@ -586,29 +587,6 @@ class SingleTable(Table):
         """
         return SingleTable(name=self.name, db=self.db, df=self.df[cols])
 
-
-class SourceTable(SingleTable):
-    """Original table in a relational database."""
-
-    # Custom constuctor:
-
-    def __init__(self, name: str, db: "DB") -> None:
-        """Initialize this table.
-
-        Args:
-            name: Name of the source table.
-            db: Database this table belongs to.
-        """
-        self.name = name
-        self.db = db
-
-    # Computed properties:
-
-    @property
-    def df(self) -> pd.DataFrame:
-        """Return the dataframe of this table."""
-        return self.db.table_dfs[self.name]
-
     # Public methods:
 
     def extend(
@@ -684,6 +662,29 @@ class SourceTable(SingleTable):
             self.db,
             extended_df,
         )
+
+
+class SourceTable(SingleTable):
+    """Original table in a relational database."""
+
+    # Custom constuctor:
+
+    def __init__(self, name: str, db: "DB") -> None:
+        """Initialize this table.
+
+        Args:
+            name: Name of the source table.
+            db: Database this table belongs to.
+        """
+        self.name = name
+        self.db = db
+
+    # Computed properties:
+
+    @property
+    def df(self) -> pd.DataFrame:
+        """Return the dataframe of this table."""
+        return self.db.table_dfs[self.name]
 
 
 class DBSchema:
@@ -1085,39 +1086,39 @@ class DB:
 
     # Dictionary interface:
 
-    def __getitem__(self, name: str) -> SourceTable:  # noqa: D105
+    def __getitem__(self, name: str) -> SingleTable:  # noqa: D105
         if name.startswith("_"):
             raise KeyError(f"Table '{name}' does not exist in this database.")
-        return SourceTable(name=name, db=self)
+        return (
+            SourceTable(name=name, db=self)
+            if name in self.table_dfs
+            else self._manifest_virtual_table(name)
+        )
 
     def __contains__(self, name: str) -> bool:  # noqa: D105
-        return name in self.table_dfs and not name.startswith("_")
+        return name in self.keys() and not name.startswith("_")
 
     def __iter__(self) -> Iterable[str]:  # noqa: D105
-        return (k for k in self.table_dfs if not k.startswith("_"))
+        return (k for k in self.keys() if not k.startswith("_"))
 
     def __len__(self) -> int:  # noqa: D105
-        return len(list(k for k in self.table_dfs if not k.startswith("_")))
+        return len(list(k for k in self.keys() if not k.startswith("_")))
 
-    def keys(self) -> Iterable[str]:  # noqa: D102
-        return (k for k in self.table_dfs if not k.startswith("_"))
+    def keys(self) -> set[str]:  # noqa: D102
+        return set(k for k in self.table_dfs if not k.startswith("_")) | set(
+            self._get_rels()["target_table"].unique()
+        )
 
-    def values(self) -> Iterable[SourceTable]:  # noqa: D102
-        return [
-            SourceTable(name, self)
-            for name in self.table_dfs
-            if not name.startswith("_")
-        ]
+    def values(self) -> Iterable[SingleTable]:  # noqa: D102
+        return [self[name] for name in self.keys() if not name.startswith("_")]
 
-    def items(self) -> Iterable[tuple[str, SourceTable]]:  # noqa: D102
-        return [
-            (name, SourceTable(name, self))
-            for name in self.table_dfs
-            if not name.startswith("_")
-        ]
+    def items(self) -> Iterable[tuple[str, SingleTable]]:  # noqa: D102
+        return [(name, self[name]) for name in self.keys() if not name.startswith("_")]
 
-    def get(self, name: str) -> SourceTable | None:  # noqa: D102
-        return SourceTable(name, self) if not name.startswith("_") else None
+    def get(self, name: str) -> SingleTable | None:  # noqa: D102
+        return (
+            self[name] if not name.startswith("_") and name in self.table_dfs else None
+        )
 
     # Custom operators:
 
@@ -1185,6 +1186,36 @@ class DB:
                 rel_keys.append((t, tt))
 
         return pd.concat(rel_vals, keys=rel_keys, names=["src_table", "target_table"])
+
+    def _manifest_virtual_table(
+        self, name: str, rel: tuple[str, str] | None = None
+    ) -> "SingleTable":
+        """Manifest a virtual table with the required cols."""
+        rels = (
+            self._get_rels(targets=[name])
+            if rel is None
+            else pd.DataFrame.from_records(
+                [(*rel, *self.relations[rel])],
+                columns=["source_table", "source_col", "target_table", "target_col"],
+            )
+        )
+        if len(rels) == 0:
+            raise ValueError(f"Cannot find any relations with target table '{name}'.")
+
+        frames = []
+        for tc, rel_group in rels.groupby("target_col"):
+            col_values = reduce(
+                set.union,
+                (
+                    set(self[st][sc].unique())
+                    for st, sc in rel_group[["source_table", "source_col"]]
+                    .drop_duplicates()
+                    .itertuples(index=False)
+                ),
+            )
+            frames.append(pd.DataFrame({tc: list(col_values)}))
+
+        return SingleTable(name=name, db=self, df=pd.concat(frames, ignore_index=True))
 
     def _isotropic_trim(self) -> "DB":
         """Return new database without orphan data (data w/ no refs to or from)."""

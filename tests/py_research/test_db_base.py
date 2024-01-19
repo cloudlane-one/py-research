@@ -54,6 +54,7 @@ def table_df_persons():
                 "age": [20, 30, 40],
                 "height": [1.8, 1.7, 1.9],
                 "weight": [80, 70, 90],
+                "gender": ["male", "male", "diverse"],
             }
         )
         .set_index("id")
@@ -104,6 +105,7 @@ def relations():
         ("memberships", "member"): ("persons", "id"),
         ("tasks", "project"): ("projects", "id"),
         ("tasks", "assignee"): ("persons", "id"),
+        ("persons", "gender"): ("genders", "name"),
     }
 
 
@@ -150,10 +152,13 @@ def test_create_db_from_tables(db_from_tables: DB):
         "persons",
         "memberships",
         "tasks",
+        "genders",
     }
     assert isinstance(db_from_tables["projects"].df, pd.DataFrame)
     assert "persons" in db_from_tables
-    assert len(db_from_tables) == 4
+    assert "genders" in db_from_tables
+    assert set(db_from_tables["genders"]["name"]) == {"male", "diverse"}
+    assert len(db_from_tables) == 5
 
 
 def test_trim_db_anisotropic(db_from_tables: DB):
@@ -281,6 +286,23 @@ def test_merge_db_table_forward(db_from_tables: DB):
     )
     assert set(db_from_tables["tasks"]["project"].unique()) == set(
         table_flat["projects.id"].unique()
+    )
+
+
+def test_merge_db_table_forward_virtual(db_from_tables: DB):
+    """Test the forward merging of a DB table."""
+    table = db_from_tables["persons"]
+
+    table_merged = table.merge(link_to_right="gender", naming="source")
+    assert isinstance(table_merged, Table)
+    assert table_merged.df.columns.nlevels == 2
+
+    table_flat = table_merged.flatten(".", "always")
+    assert set(db_from_tables["persons"]["name"].unique()) == set(
+        table_flat["persons.name"].unique()
+    )
+    assert set(db_from_tables["persons"]["gender"].unique()) == set(
+        table_flat["genders.name"].unique()
     )
 
 
@@ -423,7 +445,13 @@ def test_extract_db_table(db_from_tables: DB):
 
     extracted_db1 = table_merged.extract()
     assert isinstance(extracted_db1, DB)
-    assert set(extracted_db1.keys()) == {"projects", "tasks", "memberships", "persons"}
+    assert set(extracted_db1.keys()) == {
+        "projects",
+        "tasks",
+        "memberships",
+        "persons",
+        "genders",
+    }
     assert set(extracted_db1["projects"].df.index) == {1, 2, 3, 4}
 
     extracted_db2 = table_merged.extract(with_relations=False)
@@ -496,6 +524,7 @@ def test_db_to_graph_merged(db_from_tables: DB):
         "end",
         "height",
         "weight",
+        "gender",
     }
     assert isinstance(edges, pd.DataFrame)
     assert set(edges.columns) == {"source", "target", "ltr", "rtl", "role"}
