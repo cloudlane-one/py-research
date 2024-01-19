@@ -733,14 +733,18 @@ class DB:
         Returns:
             Database object.
         """
-        rel_df = pd.read_excel(path, sheet_name="_relations", index_col=[0, 1])
-        relations = rel_df.apply(
-            lambda r: (r["target_table"], r["target_col"]),
-            axis="columns",
-        ).to_dict()
+        relations = {}
+        if "_relations" in pd.ExcelFile(path).sheet_names:
+            rel_df = pd.read_excel(path, sheet_name="_relations", index_col=[0, 1])
+            relations = rel_df.apply(
+                lambda r: (r["target_table"], r["target_col"]),
+                axis="columns",
+            ).to_dict()
 
-        jt_df = pd.read_excel(path, sheet_name="_join_tables", index_col=0)
-        join_tables = set(jt_df["name"].tolist())
+        join_tables = set()
+        if "_join_tables" in pd.ExcelFile(path).sheet_names:
+            jt_df = pd.read_excel(path, sheet_name="_join_tables", index_col=0)
+            join_tables = set(jt_df["name"].tolist())
 
         schema = None
         if "_schema" in pd.ExcelFile(path).sheet_names:
@@ -754,9 +758,13 @@ class DB:
             if not issubclass(schema, DBSchema):
                 raise ValueError("Database schema must be a subclass of `DBSchema`.")
 
-        update_df = pd.read_excel(path, sheet_name="_updates", index_col=0)
-        update_df.index = pd.to_datetime(update_df.index)
-        updates = {cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()}
+        updates = {}
+        if "_updates" in pd.ExcelFile(path).sheet_names:
+            update_df = pd.read_excel(path, sheet_name="_updates", index_col=0)
+            update_df.index = pd.to_datetime(update_df.index)
+            updates = {
+                cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()
+            }
 
         df_dict = {
             str(k): df.apply(parse_dtype, axis="index") if auto_parse_dtype else df
