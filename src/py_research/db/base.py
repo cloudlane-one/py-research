@@ -367,16 +367,30 @@ class Table:
                     backlink_count = sum(backlinks["target_table"] == btt)
                     for btp in inv_src_map[btt]:
                         jt_prefix = (
-                            (
-                                f"{btp}->{btc}"
-                                if btc != (self.db[btt].df.index.name or "id")
-                                else btp
+                            jt.name
+                            if naming == "source"
+                            else (
+                                (
+                                    f"{btp}->{btc}"
+                                    if btc != (self.db[btt].df.index.name or "id")
+                                    else btp
+                                )
+                                + "<="
+                                + (
+                                    f"{bsc}<-{jt.name}"
+                                    if backlink_count > 1
+                                    else jt.name
+                                )
                             )
-                            + "<="
-                            + (f"{bsc}<-{jt.name}" if backlink_count > 1 else jt.name)
                         )
                         # First perform a merge with the joint table.
-                        merges.append(((btp, btc), jt_prefix, (jt, bsc)))
+                        merges.append(
+                            (
+                                (btp, btc),
+                                jt_prefix,
+                                (jt, bsc),
+                            )
+                        )
                         # Then perform a merge with all other tables linked from there.
                         merges += [
                             (
@@ -460,10 +474,11 @@ class Table:
 
         res_df = self.df.copy()
         res_df.columns = [
-            c
-            if isinstance(c, str)
-            or (
-                isinstance(c, tuple)
+            c[0]
+            if len(c) == 1
+            else c[1]
+            if (
+                len(c) > 1
                 and prefix_strategy == "on_conflict"
                 and level_counts[c[1]] == 1
             )
