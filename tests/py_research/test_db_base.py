@@ -272,6 +272,17 @@ def test_filter_db_table(db_from_tables: DB):
     assert set(filtered_table.df.index) == {1, 2}
 
 
+def test_set_db_table(db_from_tables: DB):
+    """Test the filtering of a DB table."""
+    table = db_from_tables["projects"]
+    filtered_table = table.filter(table.df["status"] == "done")
+
+    db_from_tables["projects"] = filtered_table
+    assert set(db_from_tables["projects"].df.index) == {1, 2}
+    with pytest.raises(ValueError):
+        db_from_tables["projects"] = filtered_table.df.reset_index()[["name"]]
+
+
 def test_merge_db_table_forward(db_from_tables: DB):
     """Test the forward merging of a DB table."""
     table = db_from_tables["tasks"]

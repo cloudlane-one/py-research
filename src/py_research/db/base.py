@@ -724,11 +724,7 @@ class DB:
     schema: type[DBSchema] | None = None
     """Schema of this database."""
 
-    updates: dict[pd.Timestamp, dict[str, Any]] = field(
-        default_factory=lambda: {
-            pd.Timestamp.now().round("s"): {"comment": "Created database."}
-        }
-    )
+    updates: dict[pd.Timestamp, dict[str, Any]] = field(default_factory=dict)
     """List of update times with comments, tags, authors, etc."""
 
     backend: Path | None = None
@@ -736,10 +732,24 @@ class DB:
     saved to by default.
     """
 
+    _copied: bool = False
+    """Whether this database has been copied from somewhere else."""
+
+    # Construction:
+
+    def __post_init__(self) -> None:  # noqa: D105
+        if not self._copied:
+            self.updates[pd.Timestamp.now().round("s")] = {
+                "action": "construct",
+                "table_dfs": str(set(self.table_dfs.keys())),
+                "relations": str(set(self.relations.items())),
+                "join_tables": str(self.join_tables),
+            }
+
     # Public methods:
 
     @staticmethod
-    def load(path: Path, auto_parse_dtype: bool = False) -> "DB":
+    def load(path: Path | str, auto_parse_dtype: bool = False) -> "DB":
         """Load a database from an excel file.
 
         Args:
@@ -749,6 +759,8 @@ class DB:
         Returns:
             Database object.
         """
+        path = Path(path) if isinstance(path, str) else path
+
         relations = {}
         if "_relations" in pd.ExcelFile(path).sheet_names:
             rel_df = pd.read_excel(path, sheet_name="_relations", index_col=[0, 1])
@@ -776,8 +788,12 @@ class DB:
 
         updates = {}
         if "_updates" in pd.ExcelFile(path).sheet_names:
-            update_df = pd.read_excel(path, sheet_name="_updates", index_col=0)
-            update_df.index = pd.to_datetime(update_df.index)
+            update_df = pd.read_excel(path, sheet_name="_updates", index_col=0).drop(
+                columns=["comment"]
+            )
+            update_df.index = pd.to_datetime(
+                update_df.index, infer_datetime_format=True
+            )
             updates = {
                 cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()
             }
@@ -788,9 +804,9 @@ class DB:
             if not k.startswith("_")
         }
 
-        return DB(df_dict, relations, join_tables, schema, updates, path)
+        return DB(df_dict, relations, join_tables, schema, updates, path, True)
 
-    def save(self, path: Path | None = None) -> None:
+    def save(self, path: Path | str | None = None) -> None:
         """Save this database to an excel file.
 
         Args:
@@ -798,6 +814,7 @@ class DB:
                 Path to excel file. Will be overridden if it exists.
                 Uses this database's backend as default path, if none given.
         """
+        path = Path(path) if isinstance(path, str) else path
         if path is None:
             if self.backend is None:
                 raise ValueError(
@@ -823,8 +840,11 @@ class DB:
             ).rename_axis(index=["source_table", "source_col"]),
             "_join_tables": pd.DataFrame({"name": list(self.join_tables)}),
             "_updates": pd.DataFrame.from_dict(
-                self.updates, orient="index"
-            ).rename_axis(index="time"),
+                {t.strftime("%Y-%m-%d %X"): d for t, d in self.updates.items()},
+                orient="index",
+            )
+            .rename_axis(index="time")
+            .assign(comment=""),
             **self.table_dfs,
         }
         with pd.ExcelWriter(
@@ -877,6 +897,7 @@ class DB:
             join_tables=self.join_tables,
             schema=self.schema,
             updates=self.updates,
+            _copied=True,
         )
 
     def extend(
@@ -940,8 +961,12 @@ class DB:
             schema=self.schema,
             updates={
                 **self.updates,
-                **other.updates,
-                pd.Timestamp.now().round("s"): {"comment": "Extended database."},
+                pd.Timestamp.now().round("s"): {
+                    "action": "extend",
+                    "table_dfs": str(set(other.table_dfs.keys())),
+                    "relations": str(set(other.relations.items())),
+                    "join_tables": str(other.join_tables),
+                },
             },
         )
 
@@ -959,11 +984,18 @@ class DB:
         Returns:
             New database containing the trimmed data.
         """
-        return (
+        res = (
             self._isotropic_trim()
             if centers is None
             else self._centered_trim(centers, circuit_breakers)
         )
+        res.updates[pd.Timestamp.now().round("s")] = {
+            "action": "trim",
+            "centers": str(set(centers or [])),
+            "circuit_breakers": str(set(circuit_breakers or [])),
+            "remaining_tables": str(set(self.keys())),
+        }
+        return res
 
     def filter(
         self, filters: dict[str, pd.Series], extra_cb: list[str] | None = None
@@ -1001,7 +1033,14 @@ class DB:
 
         # Trim all other tables such that only rows with (indirect) references to
         # remaining rows in filter tables are left.
-        return new_db.trim(list(filters.keys()), circuit_breakers=cb)
+        res = new_db.trim(list(filters.keys()), circuit_breakers=cb)
+        res.updates[pd.Timestamp.now().round("s")] = {
+            "action": "filter",
+            "filter_tables": str(set(filters.keys())),
+            "extra_cb": str(set(extra_cb or [])),
+            "remaining_tables": str(set(self.keys())),
+        }
+        return res
 
     def to_graph(
         self, nodes: Sequence[Table | str]
@@ -1109,6 +1148,29 @@ class DB:
             if name in self.table_dfs
             else self._manifest_virtual_table(name)
         )
+
+    def __setitem__(  # noqa: D105
+        self, name: str, value: SingleTable | pd.DataFrame
+    ) -> None:
+        if name.startswith("_"):
+            raise KeyError("Table names starting with '_' are not allowed.")
+
+        value = value.df if isinstance(value, SingleTable) else value
+        rels = self._get_rels()
+        target_tables = rels["target_table"].unique()
+        if name in target_tables:
+            target_cols = rels.loc[rels["target_table"] == name, "target_col"].unique()
+            if not set(target_cols).issubset(value.reset_index().columns):
+                raise ValueError(
+                    "Relations to given table name already exist, "
+                    f"but not all referenced columns were supplied: {target_cols}."
+                )
+
+        self.table_dfs[name] = value
+        self.updates[pd.Timestamp.now().round("s")] = {
+            "action": "set_table",
+            "table": name,
+        }
 
     def __contains__(self, name: str) -> bool:  # noqa: D105
         return name in self.keys() and not name.startswith("_")
@@ -1271,10 +1333,6 @@ class DB:
             relations=self.relations,
             join_tables=self.join_tables,
             schema=self.schema,
-            updates={
-                **self.updates,
-                pd.Timestamp.now().round("s"): {"comment": "Filtered database."},
-            },
         )
 
     def _centered_trim(
@@ -1345,8 +1403,4 @@ class DB:
             relations=self.relations,
             join_tables=self.join_tables,
             schema=self.schema,
-            updates={
-                **self.updates,
-                pd.Timestamp.now().round("s"): {"comment": "Filtered database."},
-            },
         )
