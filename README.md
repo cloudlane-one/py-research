@@ -1,4 +1,4 @@
-# Py-Research
+# py-research
 
 [![PyPI - Version](https://img.shields.io/pypi/v/py-research)](https://pypi.org/project/py-research)
 [![Docs](https://github.com/cloudlane-one/py-research/actions/workflows/docs.yml/badge.svg)](https://cloudlane-one.github.io/py-research)
@@ -12,11 +12,21 @@
 
 ## About this project
 
-This package contains multiple, related but not necessarily interdependent, modules meant to aid with automating and simplifying typical R&D coding workflows in Python.
+This repository is a collection of Python utilities to help you analyze & visualize data, automate workflows and manage knowledge while working in an interdisciplinary R&D project. More precisely, it serves these main puposes:
+
+1. Extend existing, well-established packages (e.g. pandas, numpy sqlalchemy, structlog, ...) with small helper functions and abstractions to provide lacking functionality or make them easier to use & automate.
+2. Enforce best practices on scientific code to make it more reliable, quick to deploy, and easy to monitor.
+3. Provide a framework for knowledge and information management backed by different data sources and databases, to which analysis / dataviz functions can tie in seamlessly.
+
+## Current status
+
+This project is actively maintained, but still under construction. The modules in their current form are working and continuously tested, but documentation is still minimal and many components of the framework are not yet implemented. Release versioning follows the [Semver Spec](https://semver.org/), so breaking changes in existing API will only happen with major version upgrades, of which there are expected to be a few before the framework is complete.
+
+Furthermore, some of the current functionality may be outsourced into a separate repo and package with these upgrades.
 
 ## How to install
 
-This package is available on PyPI:
+`py-research` is available as a Python package on PyPI:
 
 ```bash
 pip install py-research
