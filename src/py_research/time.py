@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, cast
 
 import pandas as pd
+from typing_extensions import deprecated
 
 from py_research.data import parse_dtype
 
@@ -82,6 +83,7 @@ def _auto_interval_format(
     return format_func, interval_name
 
 
+@deprecated("Use datetime formatting options of ``py_research.intl`` instead.")
 def datetime_to_interval_series(
     datetime_series: pd.Series,
     time_interval: pd.offsets.BaseOffset = pd.offsets.YearEnd(),
