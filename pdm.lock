@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["cross_platform"]
 lock_version = "4.4.1"
-content_hash = "sha256:a2850434fe2de1133dc7f913e65e621325ecaa043d14eab6947fc8dc82c74017"
+content_hash = "sha256:72cad493cef880f5f83740416674ba127e7d11402032d2658bab473760a4d90a"
 
 [[package]]
 name = "accessible-pygments"
@@ -555,15 +555,6 @@ dependencies = [
 files = [
     {file = "deep_translator-1.11.4-py3-none-any.whl", hash = "sha256:d635df037e23fa35d12fd42dab72a0b55c9dd19e6292009ee7207e3f30b9e60a"},
     {file = "deep_translator-1.11.4.tar.gz", hash = "sha256:801260c69231138707ea88a0955e484db7d40e210c9e0ae0f77372ffda5f4bf5"},
-]
-
-[[package]]
-name = "deepmerge"
-version = "1.1.0"
-summary = "a toolset to deeply merge python dictionaries."
-files = [
-    {file = "deepmerge-1.1.0-py3-none-any.whl", hash = "sha256:59e6ef80b77dc52af3882a1ea78da22bcfc91ae9cdabc0c80729049fe295ff8b"},
-    {file = "deepmerge-1.1.0.tar.gz", hash = "sha256:4c27a0db5de285e1a7ceac7dbc1531deaa556b627dea4900c8244581ecdfea2d"},
 ]
 
 [[package]]
