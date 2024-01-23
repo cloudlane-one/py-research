@@ -1,11 +1,10 @@
 """Test intl module."""
 
-import re
 from datetime import datetime
 from typing import Any
 
 import pytest
-from py_research.intl import DtUnit, Format, Overrides, Rendered, iter_locales
+from py_research.intl import DtUnit, Format, Overrides, TextMatch, iter_locales
 
 
 @pytest.fixture
@@ -18,10 +17,12 @@ def locales() -> list[str]:
 def base_overrides() -> Overrides:
     """Return sample translation overrides."""
     return Overrides(
-        labels={
-            "house": "mouse",
+        {
+            None: {
+                "house": "mouse",
+            },
+            "headers": {("bike", "car"): "Vehicle: {0}"},
         },
-        templates={"headers": {("bike", "car"): "Vehicle: {0}"}},
     )
 
 
@@ -30,17 +31,19 @@ def translations() -> dict[str, Overrides]:
     """Return sample translation overrides."""
     return {
         "en_US": Overrides(
-            labels={
-                "car": "automobile",
-            },
-            templates={
+            {
+                None: {
+                    "car": "automobile",
+                },
                 "starting_letters": {
-                    re.compile(r"^b.*$"): "{0} (label starts with b)",
-                    Rendered(r"K.*"): "{0} (rendered text starts with K)",
-                }
+                    TextMatch(r"^b.*$"): "{0} (label starts with b)",
+                    TextMatch(
+                        r"K.*", match_current=True
+                    ): "{0} (rendered text starts with K)",
+                },
             },
         ),
-        "de_DE": Overrides(labels={"car": "Karren", "house": "Haus"}),
+        "de_DE": Overrides({"car": "Karren", "house": "Haus"}),
     }
 
 

@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import partial
+from itertools import groupby
 from locale import LC_ALL, getlocale, normalize, setlocale
 from os import environ
 from pathlib import Path
@@ -161,18 +162,17 @@ class Format:
 
 
 @dataclass
-class Rendered:
+class TextMatch:
     """Match the current rendered text instead of the original label."""
 
     regex: str | re.Pattern
+    match_current: bool = False
 
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash(self.__dict__)
 
 
-LabelOverrides: TypeAlias = dict[str | tuple[str, ...], str]
-
-TemplateOverrides: TypeAlias = dict[str | tuple[str, ...] | re.Pattern | Rendered, str]
+TextOverrides: TypeAlias = dict[str | tuple[str, ...] | TextMatch, str]
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -189,26 +189,40 @@ def _merge_ordered_dicts(d1: dict[K, V], d2: dict[K, V]) -> dict[K, V]:
 class Overrides:
     """Custom, language-dependent text overrides."""
 
-    labels: LabelOverrides = field(default_factory=dict)
-    """Override texts with static labels."""
-
-    templates: Mapping[str, TemplateOverrides] = field(default_factory=dict)
-    """Context-dependent templates for text overrides."""
+    texts: TextOverrides | Mapping[str | None, TextOverrides] = field(
+        default_factory=dict
+    )
+    """(Context-dependent) text overrides."""
 
     format: Format = field(default_factory=Format)
     """Overrides for formatting."""
 
+    def get_texts(self) -> dict[str | None, TextOverrides]:
+        """Return all text overrides."""
+        return (
+            cast(dict[str | None, TextOverrides], self.texts)
+            if all(isinstance(v, dict) for v in self.texts.values())
+            else {None: cast(TextOverrides, self.texts)}
+        )
+
+    def get_texts_for_context(self, context: str | None) -> TextOverrides:
+        """Return text overrides for given context."""
+        return _merge_ordered_dicts(
+            self.get_texts().get(None, {}), self.get_texts().get(context, {})
+        )
+
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
+        self_texts = self.get_texts()
+        other_texts = other.get_texts()
         return cast(
             Self,
             Overrides(
-                labels=_merge_ordered_dicts(self.labels, other.labels),
-                templates={
+                texts={
                     ctx: _merge_ordered_dicts(
-                        self.templates.get(ctx, {}), other.templates.get(ctx, {})
+                        self_texts.get(ctx, {}), other_texts.get(ctx, {})
                     )
-                    for ctx in set(self.templates.keys()).union(other.templates.keys())
+                    for ctx in set(self_texts.keys()).union(other_texts.keys())
                 },
                 format=self.format.merge(other.format),
             ),
@@ -423,6 +437,7 @@ class Localization:
         self,
         text: str,
         *extra_args: Any,
+        label: str | None = None,
         context: str | None = None,
         locale: Locale | None = None,
     ) -> str:
@@ -431,12 +446,14 @@ class Localization:
         Args:
             text: Text to localize.
             extra_args: Extra args to pass, if given label is a template string.
+            label: Custom label for referencing this text in translation overrides.
             context: Context in which the label is used.
             locale: Locale to use for localization.
 
         Returns:
             Localized label.
         """
+        label = label or text
         locale = locale or self.locale
 
         if self.show_raw:
@@ -450,56 +467,40 @@ class Localization:
 
         base, translation = self.get_overrides(locale or self.locale)
 
-        all_labels = _merge_ordered_dicts(
-            {k: (Locale("en", "US"), v) for k, v in base.labels.items()},
-            {k: (locale, v) for k, v in translation.labels.items()},
-        )
-        rendered = text
-        translated = False
-        for search, (loc, replace) in all_labels.items():
-            matched = (
-                text == search
-                if isinstance(search, str)
-                else text in search
-                if isinstance(search, tuple)
-                else False
-            )
-            if matched:
-                rendered = (
-                    replace
-                    if loc == locale
-                    else self.__machine_translate(replace, locale)
-                )
-                translated = True
-
-        if not translated:
-            rendered = self.__machine_translate(text, locale)
-
-        all_templates = _merge_ordered_dicts(
+        all_texts = _merge_ordered_dicts(
             {
                 k: (Locale("en", "US"), v)
-                for k, v in base.templates.get(context or "", {}).items()
+                for k, v in base.get_texts_for_context(context).items()
             },
             {
                 k: (locale, v)
-                for k, v in translation.templates.get(context or "", {}).items()
+                for k, v in translation.get_texts_for_context(context).items()
             },
         )
-        for search, (loc, replace) in all_templates.items():
+        all_texts_grouped = dict(
+            (t, list(g)) for t, g in groupby(all_texts.items(), lambda i: type(i[0]))
+        )
+        all_texts_sorted = [
+            *all_texts_grouped.get(str, []),
+            *all_texts_grouped.get(tuple, []),
+            *all_texts_grouped.get(TextMatch, []),
+        ]
+
+        rendered = text
+        translated = False
+        for search, (loc, replace) in all_texts_sorted:
             matched = (
-                text == search
+                label == search
                 if isinstance(search, str)
-                else (search.match(text) is not None)
-                if isinstance(search, re.Pattern)
-                else text in search
+                else label in search
                 if isinstance(search, tuple)
                 else (
                     search.regex
                     if isinstance(search.regex, re.Pattern)
                     else re.compile(search.regex)
-                ).match(rendered)
+                ).match(rendered if search.match_current else text)
                 is not None
-                if isinstance(search, Rendered)
+                if isinstance(search, TextMatch)
                 else False
             )
             if matched:
@@ -507,13 +508,17 @@ class Localization:
                     replace
                     if loc == locale
                     else self.__machine_translate(replace, locale),
-                    rendered,
+                    rendered
+                    if translated
+                    else self.__machine_translate(rendered, locale),
                     extra_args,
                     locale,
                     context,
                 )
+                if loc == locale:
+                    translated = True
 
-        return rendered
+        return rendered if translated else self.__machine_translate(rendered, locale)
 
     def value(
         self,
