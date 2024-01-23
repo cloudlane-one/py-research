@@ -406,55 +406,45 @@ class Localization:
         self,
         tmpl: str,
         text: str,
-        combined_args: dict[str | int, Any],
+        extra_args: tuple,
         locale: Locale | None,
         context: str | None,
     ) -> str:
-        intl_args = {
-            k: self.text(combined_args[k], locale=locale, context=context)
-            if isinstance(combined_args[k], str)
-            else self.value(combined_args[k], locale=locale)
-            for k, v in combined_args.items()
-        }
+        loc_args = [
+            self.text(a, locale=locale, context=context)
+            if isinstance(a, str)
+            else self.value(a, locale=locale)
+            for a in extra_args
+        ]
 
-        return tmpl.format(
-            text,
-            *(v for k, v in intl_args.items() if isinstance(k, int)),
-            **{k: v for k, v in intl_args.items() if isinstance(k, str)},
-        )
+        return tmpl.format(text, *loc_args)
 
     def text(
         self,
-        label: str,
-        *args: Any,
+        text: str,
+        *extra_args: Any,
         context: str | None = None,
         locale: Locale | None = None,
-        **kwargs: Any,
     ) -> str:
-        """Localize given text label.
+        """Localize given text.
 
         Args:
-            label: Label to localize.
-            args: Args to pass, if given label is a template string.
+            text: Text to localize.
+            extra_args: Extra args to pass, if given label is a template string.
             context: Context in which the label is used.
             locale: Locale to use for localization.
-            kwargs: Kwargs to pass, if given label is a template string.
 
         Returns:
             Localized label.
         """
         locale = locale or self.locale
-        combined_args = {**dict(enumerate(args)), **kwargs}
 
         if self.show_raw:
-            arg_str = (
-                (", " + ", ".join(f"{k}={v}" for k, v in combined_args.items()))
-                if len(combined_args) > 0
-                else ""
-            )
+            arg_str = (", " + ", ".join(extra_args)) if len(extra_args) > 0 else ""
             return (
-                f"text('{label}'{f', ctx={context}' if context is not None else ''}"
+                f"text('{text}'"
                 + arg_str
+                + (f", ctx={context}" if context is not None else "")
                 + ")"
             )
 
@@ -464,18 +454,18 @@ class Localization:
             {k: (Locale("en", "US"), v) for k, v in base.labels.items()},
             {k: (locale, v) for k, v in translation.labels.items()},
         )
-        text = label
+        rendered = text
         translated = False
         for search, (loc, replace) in all_labels.items():
             matched = (
-                label == search
+                text == search
                 if isinstance(search, str)
-                else label in search
+                else text in search
                 if isinstance(search, tuple)
                 else False
             )
             if matched:
-                text = (
+                rendered = (
                     replace
                     if loc == locale
                     else self.__machine_translate(replace, locale)
@@ -483,7 +473,7 @@ class Localization:
                 translated = True
 
         if not translated:
-            text = self.__machine_translate(label, locale)
+            rendered = self.__machine_translate(text, locale)
 
         all_templates = _merge_ordered_dicts(
             {
@@ -497,33 +487,33 @@ class Localization:
         )
         for search, (loc, replace) in all_templates.items():
             matched = (
-                label == search
+                text == search
                 if isinstance(search, str)
-                else (search.match(label) is not None)
+                else (search.match(text) is not None)
                 if isinstance(search, re.Pattern)
-                else label in search
+                else text in search
                 if isinstance(search, tuple)
                 else (
                     search.regex
                     if isinstance(search.regex, re.Pattern)
                     else re.compile(search.regex)
-                ).match(text)
+                ).match(rendered)
                 is not None
                 if isinstance(search, Rendered)
                 else False
             )
             if matched:
-                text = self.__apply_template(
+                rendered = self.__apply_template(
                     replace
                     if loc == locale
                     else self.__machine_translate(replace, locale),
-                    text,
-                    combined_args,
+                    rendered,
+                    extra_args,
                     locale,
                     context,
                 )
 
-        return text
+        return rendered
 
     def value(
         self,
