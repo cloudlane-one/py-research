@@ -8,6 +8,9 @@ jobs:
   lint_and_test:
     runs-on: ubuntu-latest
     steps:
+      - run: sudo locale-gen en_US
+      - run: sudo locale-gen de_DE
+      - run: sudo update-locale
       - uses: actions/checkout@v4
       - uses: pdm-project/setup-pdm@v3
         with:

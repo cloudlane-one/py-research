@@ -355,7 +355,7 @@ class DBSchema(Generic[S_cov]):
     def schema_dict(cls) -> dict[str | None, Schema | None]:
         """Return dict with all sub-schemas."""
         return {
-            None: cls.__default__,
+            None: cls.__default__,  # type: ignore
             **{
                 (name if name != "__default__" else None): s
                 for name, s in cls.__dict__.items()
@@ -366,7 +366,7 @@ class DBSchema(Generic[S_cov]):
     @classmethod
     def default(cls) -> Schema[S_cov, Self]:
         """Return default schema."""
-        return cls.__default__
+        return cls.__default__  # type: ignore
 
     @classmethod
     def defaults(cls) -> dict[type[SchemaBase], Schema]:
