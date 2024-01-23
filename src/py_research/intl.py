@@ -226,7 +226,7 @@ if texts_file_path.is_file():
 def _get_default_locale() -> Locale:
     """Get default locale, falling back to English."""
     try:
-        return Locale.parse(normalize(getlocale()[0] or "C"), sep="_")
+        return Locale.parse(normalize(getlocale()[0] or "en_US"), sep="_")
     except UnknownLocaleError:
         return Locale("en", "US")
 
@@ -461,7 +461,7 @@ class Localization:
         base, translation = self.get_overrides(locale or self.locale)
 
         all_labels = _merge_ordered_dicts(
-            {k: (Locale.parse("en_US"), v) for k, v in base.labels.items()},
+            {k: (Locale("en", "US"), v) for k, v in base.labels.items()},
             {k: (locale, v) for k, v in translation.labels.items()},
         )
         text = label
@@ -487,7 +487,7 @@ class Localization:
 
         all_templates = _merge_ordered_dicts(
             {
-                k: (Locale.parse("en_US"), v)
+                k: (Locale("en", "US"), v)
                 for k, v in base.templates.get(context or "", {}).items()
             },
             {
