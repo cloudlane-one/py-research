@@ -8,7 +8,6 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from functools import partial
 from locale import LC_ALL, getlocale, normalize, setlocale
-from numbers import Rational
 from os import environ
 from pathlib import Path
 from typing import (
@@ -67,8 +66,21 @@ class Format:
     decimal_group_separator: bool | None = None
     """Whether to use decimal group separators."""
 
-    datetime_format: Literal["short", "medium", "long"] | None = None
-    """How to format datetimes."""
+    datetime_format: str | None = None
+    """`ldml pattern`_ for formatting datetime objects.
+    .. _ldml pattern: https://www.unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table
+    """
+
+    datetime_auto_format: Literal["short", "medium", "long"] | None = None
+    """How to auto-format datetimes."""
+
+    timedelta_unit: Literal[
+        "year", "month", "week", "day", "hour", "minute", "second"
+    ] | None = None
+    """Unit to use for formatting timedeltas."""
+
+    timedelta_auto_format: Literal["narrow", "short", "medium", "long"] | None = None
+    """How to auto-format timedeltas."""
 
     country_format: CountryScheme | None = None
     """How to format countries."""
@@ -91,27 +103,31 @@ class Format:
         return get_localization().format_spec(t, self)
 
     def auto_digits(
-        self, sample: Iterable[Rational], min_sig: int = 3, fixed: bool = True
+        self, series: Iterable[float], min_sig: int = 3, fixed: bool = True
     ) -> Self:
         """Copy and change options according to numbers in ``sample``.
 
         Change such that all given numbers have minimum ``min_sig`` significant digits.
 
         Args:
-            sample: Sample of numbers to use for determining the number of digits.
+            series: Series of numbers to use for determining options.
             min_sig: Minimum number of significant digits.
             fixed: Whether to fix the number of digits after the decimal point.
 
         Returns:
             New instance with changed options.
         """
+        minimum = min(abs(i) for i in series)
         min_int_digits = (
-            min(
+            (
                 len(str(i))
-                if (i := int(num if self.decimal_notation == "plain" else num * 100))
+                if (
+                    i := int(
+                        minimum if self.decimal_notation == "plain" else minimum * 100
+                    )
+                )
                 != 0
                 else 0
-                for num in sample
             )
             if self.decimal_notation in ("plain", "percent")
             else 1
@@ -252,29 +268,55 @@ def _get_default_locale() -> Locale:
 
 _ldml_to_posix = {
     "a": "%p",  # AM or PM
-    "d": "%e",  # day of month, unpadded
     "dd": "%d",  # day of month, padded
-    "D": "%j",  # day of year
+    "d": "%e",  # day of month, unpadded
+    "DDD": "%j",  # day of year, padded
+    "DD": "%-j",  # day of year, unpadded
+    "D": "%-j",  # day of year, unpadded
     "EEEE": "%A",  # weekday
-    "h": "%-I",  # 12-hour time, unpadded
     "hh": "%I",  # 12-hour time, padded
-    "H": "%-H",  # 24-hour time, unpadded
+    "h": "%-I",  # 12-hour time, unpadded
     "HH": "%H",  # 24-hour time, padded
-    "M": "%-m",  # month, unpadded
-    "MM": "%m",  # month, padded
-    "MMM": "%b",  # month name, short
+    "H": "%-H",  # 24-hour time, unpadded
     "MMMM": "%B",  # month: name, full
-    "m": "%-M",  # minute, unpadded
+    "MMM": "%b",  # month name, short
+    "MM": "%m",  # month, padded
+    "M": "%-m",  # month, unpadded
     "mm": "%M",  # minute, padded
-    "s": "%-S",  # second, unpadded
+    "m": "%-M",  # minute, unpadded
     "ss": "%S",  # second, padded
-    "y": "%Y",  # year, full
-    "yy": "%y",  # year, two-digit
+    "s": "%-S",  # second, unpadded
     "yyyy": "%Y",  # year, full
+    "yy": "%y",  # year, two-digit
+    "y": "%Y",  # year, full
     "Z": "%Z",  # timezone
-    "z": "%Z",  # timezone
     "zzzz": "%Z",  # timezone
+    "z": "%Z",  # timezone
+    "SSSSSS": "%f",  # microseconds
 }
+
+
+def _match_ldml_to_posix(ldml: str) -> tuple[int, str] | None:
+    for k in _ldml_to_posix:
+        pos = ldml.find(k)
+        if pos != -1:
+            return pos, k
+
+    return None
+
+
+def _ldml_to_posix_format(ldml: str) -> str:
+    res = _match_ldml_to_posix(ldml)
+    if res is None:
+        return ldml
+
+    pos, k = res
+
+    return (
+        _ldml_to_posix_format(ldml[:pos])
+        + _ldml_to_posix[k]
+        + _ldml_to_posix_format(ldml[pos + len(k) :])
+    )
 
 
 @cache.function(id_arg_subset=["lang", "text"])
@@ -639,18 +681,41 @@ class Localization:
                         )
             case datetime() | pd.Timestamp():
                 return format_datetime(
-                    v, options.datetime_format or "short", locale=locale
+                    v,
+                    options.datetime_format or options.datetime_auto_format or "medium",
+                    locale=locale,
                 )
             case date():
-                return format_date(v, options.datetime_format or "short", locale=locale)
+                return format_date(
+                    v,
+                    options.datetime_format or options.datetime_auto_format or "short",
+                    locale=locale,
+                )
             case time():
-                return format_time(v, options.datetime_format or "short", locale=locale)
+                return format_time(
+                    v,
+                    options.datetime_format or options.datetime_auto_format or "medium",
+                    locale=locale,
+                )
             case timedelta() | pd.Timedelta():
                 return format_timedelta(
-                    v, format=(options.datetime_format or "short"), locale=locale
+                    v,
+                    format=(
+                        options.timedelta_auto_format
+                        or options.datetime_auto_format
+                        or "short"
+                    ),
+                    granularity=options.timedelta_unit or "second",
+                    threshold=0.99,
+                    locale=locale,
                 )
-            case pd.Interval():
-                return format_interval(v.left, v.right, locale=locale)
+            case pd.Interval() if isinstance(v.left, pd.Timestamp) and isinstance(
+                v.right, pd.Timestamp
+            ):
+                # Only do locale-aware formatting for datetime intervals.
+                return format_interval(
+                    v.left, v.right, skeleton=options.datetime_format, locale=locale
+                )
             case Country():
                 if (
                     options.country_format == GeoScheme.country_name
@@ -704,18 +769,25 @@ class Localization:
                 case "plain" | _:
                     return f".{options.decimal_min_digits or 3}f"
         elif issubclass(typ, datetime | pd.Timestamp):
-            opt = options.datetime_format or "medium"
-            date_format = _ldml_to_posix[locale.date_formats[opt]]
-            time_format = _ldml_to_posix[locale.time_formats[opt]]
-            return str.format(locale.datetime_formats[opt], date_format, time_format)
+            opt = options.datetime_auto_format or "medium"
+            return _ldml_to_posix_format(
+                options.datetime_format
+                or str.format(
+                    locale.datetime_formats[opt],
+                    locale.date_formats[opt],
+                    locale.time_formats[opt],
+                )
+            )
         elif issubclass(typ, date):
-            return _ldml_to_posix[
-                locale.date_formats[options.datetime_format or "medium"]
-            ]
+            return _ldml_to_posix_format(
+                options.datetime_format
+                or locale.date_formats[options.datetime_auto_format or "medium"]
+            )
         elif issubclass(typ, time):
-            return _ldml_to_posix[
-                locale.time_formats[options.datetime_format or "medium"]
-            ]
+            return _ldml_to_posix_format(
+                options.datetime_format
+                or locale.time_formats[options.datetime_auto_format or "medium"]
+            )
         else:
             return ""
 
