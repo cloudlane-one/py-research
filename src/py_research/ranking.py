@@ -4,7 +4,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from py_research.intl import Template, get_localization
+from py_research.intl import get_localization
 
 RankMode = Literal["ascending", "descending"]
 
@@ -107,20 +107,21 @@ def create_ranking_filter(
             if s
         )
 
-    desc = loc.message(
-        Template(_filter_explanation, context="col_title"),
-        cutoff_rank,
-        str(rank_by.name),
-        sort_order,
-        rank_only=str(rank_only.name)
-        if rank_only is not None and rank_only.name is not None
-        else None,
-        show_only=str(show_only.name)
-        if show_only is not None and show_only.name is not None
-        else None,
-        show_always=str(show_always.name)
-        if show_always is not None and show_always.name is not None
-        else None,
+    desc = loc.text(
+        _filter_explanation(
+            cutoff_rank,
+            str(rank_by.name),
+            sort_order,
+            rank_only=str(rank_only.name)
+            if rank_only is not None and rank_only.name is not None
+            else None,
+            show_only=str(show_only.name)
+            if show_only is not None and show_only.name is not None
+            else None,
+            show_always=str(show_always.name)
+            if show_always is not None and show_always.name is not None
+            else None,
+        )
     )
 
     rank_by_filter = np.full(len(rank_by), True)
