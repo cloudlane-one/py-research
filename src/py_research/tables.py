@@ -116,7 +116,7 @@ class ResultTable:
     title: str | None = None
     """Title of the table."""
 
-    hide_index: bool = True
+    hide_index: bool | list[str] = True
     """Whether to hide the index columns."""
 
     max_row_cutoff: int = 100
@@ -135,7 +135,10 @@ class ResultTable:
     """
 
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
-        if not self.hide_index:
+        if self.hide_index is not True:
+            hidden_indexes = (
+                self.hide_index if isinstance(self.hide_index, list) else []
+            )
             index_names = (
                 df.index.names
                 if all(df.index.names)
@@ -144,17 +147,19 @@ class ResultTable:
 
             df = df.rename_axis(index=index_names)
 
+            index_col_names = [
+                name for name in index_names if name not in hidden_indexes
+            ]
             if df.index.nlevels > 1:
-                index_names = [("", name) for name in index_names]
+                index_col_names = [("", name) for name in index_col_names]
 
             df = df.copy()
-            for name in index_names:
-                df[name] = df.index.get_level_values(
-                    name if isinstance(name, str) else name[1]
-                )
+            for col_name in index_col_names:
+                index_name = col_name if isinstance(col_name, str) else col_name[1]
+                df[col_name] = df.index.get_level_values(index_name)
 
             self.data = df[
-                [*index_names, *[c for c in df.columns if c not in index_names]]
+                [*index_col_names, *[c for c in df.columns if c not in index_col_names]]
             ]
         else:
             self.data = df
