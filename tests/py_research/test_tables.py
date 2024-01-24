@@ -1,7 +1,6 @@
 """Test tables module."""
 
 import pandas as pd
-
 from py_research.tables import ResultTable, TableStyle, to_html
 
 
@@ -56,18 +55,32 @@ def test_result_table():
 def test_result_table_multi_df():
     """Test ResultTable."""
     # Create a DataFrame
-    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]}, index=[1, 2, 3])
+    df = pd.DataFrame(
+        {
+            "A": [1, 2, 3],
+            "B": [4, 5, 6],
+            "C": [7, 8, 9],
+            "D": [10, 11, 12],
+            "E": [13, 14, 15],
+        }
+    ).set_index(["D", "E"])
 
     # Create a different DataFrame
     df2 = pd.DataFrame(
-        {"A": [10, 20, 30], "B": [40, 50, 60], "C": [70, 80, 90]}, index=[2, 3, 4]
-    )
+        {
+            "A": [10, 20, 30],
+            "B": [40, 50, 60],
+            "C": [70, 80, 90],
+            "D": [11, 12, 13],
+            "E": [14, 15, 16],
+        }
+    ).set_index(["D", "E"])
 
     # Merge the two DataFrames
     merge_df = pd.concat({"df1": df, "df2": df2}, axis="columns")
 
     # Create a ResultTable
-    table = ResultTable(merge_df, show_index=True)
+    table = ResultTable(merge_df, hide_index=False)
 
     # Test the render method
     rendered = to_html(table.to_styled_df())
@@ -78,11 +91,17 @@ def test_result_table_multi_df():
     assert "B" in rendered
     assert "C" in rendered
 
-    # Test the styles attribute
+    # Test the styles attribute with a col filter
     style = TableStyle(cols=["A"], css={"font-weight": "bold"})
     table.styles.append(style)
     rendered = to_html(table.to_styled_df())
     assert "font-weight: bold;" in rendered
+
+    # Test the styles attribute with a row filter
+    style = TableStyle(rows=(merge_df[("df1", "A")] < 3), css={"color": "blue"})
+    table.styles.append(style)
+    rendered = to_html(table.to_styled_df())
+    assert "color: blue;" in rendered
 
     # Test the styles attribute with an exact col
     style = TableStyle(cols=[("df1", "A")], css={"color": "red"})

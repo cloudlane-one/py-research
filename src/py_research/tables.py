@@ -57,7 +57,9 @@ class TableStyle:
     """Define a pretty table column format."""
 
     cols: str | tuple[str, str] | list[str | tuple[str, str]] | None = None
-    """Column(s) to apply this style to. If None, apply to all columns."""
+    """Column(s) to apply this style to. If None, apply to all columns.
+    Index levels can be styled via their names as if they were columns.
+    """
 
     rows: pd.Series | None = None
     """Rows to apply this style to. If None, apply to all rows."""
@@ -115,7 +117,7 @@ class ResultTable:
     """Title of the table."""
 
     hide_index: bool = True
-    """Whether to hide the index column."""
+    """Whether to hide the index columns."""
 
     max_row_cutoff: int = 100
     """Maximum number of rows to render."""
@@ -132,12 +134,28 @@ class ResultTable:
     Format string must take two positional arguments, e.g. "{0}_{1}".
     """
 
-    show_index: bool = False
-    """Whether to show the index as columns."""
-
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
-        if self.show_index:
-            self.data = df.reset_index()
+        if not self.hide_index:
+            index_names = (
+                df.index.names
+                if all(df.index.names)
+                else [f"index_{i}" for i in range(df.index.nlevels)]
+            )
+
+            df = df.rename_axis(index=index_names)
+
+            if df.index.nlevels > 1:
+                index_names = [("", name) for name in index_names]
+
+            df = df.copy()
+            for name in index_names:
+                df[name] = df.index.get_level_values(
+                    name if isinstance(name, str) else name[1]
+                )
+
+            self.data = df[
+                [*index_names, *[c for c in df.columns if c not in index_names]]
+            ]
         else:
             self.data = df
 
@@ -452,26 +470,31 @@ class ResultTable:
     def __apply_labels(self, styled: Styler) -> Styler:
         label_func = self.labels.get if isinstance(self.labels, dict) else self.labels
         labels = (
-            [
-                "" if c in self.__hidden_headers else label_func(c) or c
+            {
+                c: "" if c in self.__hidden_headers else label_func(c) or c
                 for c in self.data.columns
-            ]
+            }
             if self.data.columns.nlevels == 1
-            else [
-                ("", "")
+            else {
+                c: ("", "")
                 if c in self.__hidden_headers
                 else (c[0], label_func(c[1]) or c[1])
                 if c[1]
                 else ("", label_func(c[0]) or c[0])
                 for c in self.data.columns
-            ]
+            }
         )
 
         if self.column_flatten_format is not None and self.data.columns.nlevels > 1:
-            labels = [self.column_flatten_format.format(*label) for label in labels]
+            labels = {
+                c: self.column_flatten_format.format(*label)
+                if c[1] not in self.data.index.names
+                else label[1]
+                for c, label in labels.items()
+            }
 
         return styled.relabel_index(
-            labels,  # type: ignore
+            list(labels.values()),  # type: ignore
             axis="columns",
         )
 
@@ -508,8 +531,7 @@ class ResultTable:
         if self.title is not None:
             styled = styled.set_caption(self.title)
 
-        if self.hide_index:
-            styled = styled.hide(axis="index")
+        styled = styled.hide(axis="index")
 
         return styled
 
