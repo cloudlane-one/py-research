@@ -178,10 +178,14 @@ K = TypeVar("K")
 V = TypeVar("V")
 
 
-def _merge_ordered_dicts(d1: dict[K, V], d2: dict[K, V]) -> dict[K, V]:
-    merged = d1.copy()
-    for k, v in d2.items():
-        merged[k] = v
+def _merge_ordered_dicts(d: list[dict[K, V]]) -> dict[K, V]:
+    d = d if len(d) > 0 else [{}]
+    merged = d[0].copy()
+
+    for di in d[1:]:
+        for k, v in di.items():
+            merged[k] = v
+
     return merged
 
 
@@ -205,12 +209,6 @@ class Overrides:
             else {None: cast(TextOverrides, self.texts)}
         )
 
-    def get_texts_for_context(self, context: str | None) -> TextOverrides:
-        """Return text overrides for given context."""
-        return _merge_ordered_dicts(
-            self.get_texts().get(None, {}), self.get_texts().get(context, {})
-        )
-
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
         self_texts = self.get_texts()
@@ -220,7 +218,7 @@ class Overrides:
             Overrides(
                 texts={
                     ctx: _merge_ordered_dicts(
-                        self_texts.get(ctx, {}), other_texts.get(ctx, {})
+                        [self_texts.get(ctx, {}), other_texts.get(ctx, {})]
                     )
                     for ctx in set(self_texts.keys()).union(other_texts.keys())
                 },
@@ -419,8 +417,8 @@ class Localization:
     def __apply_template(
         self,
         tmpl: str,
-        text: str,
-        extra_args: tuple,
+        non_intl_args: Iterable,
+        intl_args: Iterable,
         locale: Locale | None,
         context: str | None,
     ) -> str:
@@ -428,10 +426,10 @@ class Localization:
             self.text(a, locale=locale, context=context)
             if isinstance(a, str)
             else self.value(a, locale=locale)
-            for a in extra_args
+            for a in intl_args
         ]
 
-        return tmpl.format(text, *loc_args)
+        return tmpl.format(*non_intl_args, *loc_args)
 
     def text(
         self,
@@ -468,18 +466,32 @@ class Localization:
         base, translation = self.get_overrides(locale or self.locale)
 
         all_texts = _merge_ordered_dicts(
-            {
-                k: (Locale("en", "US"), v)
-                for k, v in base.get_texts_for_context(context).items()
-            },
-            {
-                k: (locale, v)
-                for k, v in translation.get_texts_for_context(context).items()
-            },
+            [
+                {
+                    k: (Locale("en", "US"), v)
+                    for k, v in base.get_texts().get(None, {}).items()
+                },
+                {
+                    k: (locale, v)
+                    for k, v in translation.get_texts().get(None, {}).items()
+                },
+                {
+                    k: (Locale("en", "US"), v)
+                    for k, v in base.get_texts().get(context, {}).items()
+                },
+                {
+                    k: (locale, v)
+                    for k, v in translation.get_texts().get(context, {}).items()
+                },
+            ]
         )
-        all_texts_grouped = dict(
-            (t, list(g)) for t, g in groupby(all_texts.items(), lambda i: type(i[0]))
-        )
+
+        all_texts_grouped = {str: [], tuple: [], TextMatch: []}
+
+        for t, g in groupby(all_texts.items(), lambda i: type(i[0])):
+            if t in all_texts_grouped:
+                all_texts_grouped[t] += list(g)
+
         all_texts_sorted = [
             *all_texts_grouped.get(str, []),
             *all_texts_grouped.get(tuple, []),
@@ -508,9 +520,11 @@ class Localization:
                     replace
                     if loc == locale
                     else self.__machine_translate(replace, locale),
-                    rendered
-                    if translated
-                    else self.__machine_translate(rendered, locale),
+                    [
+                        rendered
+                        if translated
+                        else self.__machine_translate(rendered, locale)
+                    ],
                     extra_args,
                     locale,
                     context,
@@ -518,7 +532,17 @@ class Localization:
                 if loc == locale:
                     translated = True
 
-        return rendered if translated else self.__machine_translate(rendered, locale)
+        return (
+            rendered
+            if translated
+            else self.__apply_template(
+                self.__machine_translate(rendered, locale),
+                [],
+                extra_args,
+                locale,
+                context,
+            )
+        )
 
     def value(
         self,
