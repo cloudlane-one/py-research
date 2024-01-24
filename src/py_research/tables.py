@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from functools import reduce
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import imgkit
 import pandas as pd
@@ -292,6 +292,16 @@ class ResultTable:
             else desc
         )
 
+    def _get_cols_by_second_level(
+        self, cols: list[str | tuple[str, str]]
+    ) -> list[tuple[str, str]]:
+        return [
+            cast(tuple[str, str], cc)
+            for c in cols
+            for cc in self.data.columns
+            if (isinstance(c, str) and cc[1] == c) or cc == c
+        ]
+
     def _to_styler_col(self, col: str | tuple[str, str]) -> str | tuple[str, str]:
         return (
             col
@@ -303,7 +313,10 @@ class ResultTable:
 
     def _default_str_format(self, col: str) -> str:
         all_col_data = (
-            self.data.loc[:, (slice(None), col)]  # type: ignore
+            self.data.loc[
+                :,
+                self._get_cols_by_second_level([col]),
+            ]
             if self.data.columns.nlevels > 1
             else self.data[[col]]
         )
@@ -320,9 +333,12 @@ class ResultTable:
         else:
             return "{}"
 
-    def _default_alignment(self, col: str | int) -> str:
+    def _default_alignment(self, col: str) -> str:
         all_col_data = (
-            self.data.loc[:, (slice(None), col)]  # type: ignore
+            self.data.loc[
+                :,
+                self._get_cols_by_second_level([col]),
+            ]
             if self.data.columns.nlevels > 1
             else self.data[[col]]
         )
@@ -376,10 +392,7 @@ class ResultTable:
 
             if isinstance(cols, list) and self.data.columns.nlevels > 1:
                 cols = [
-                    self._to_styler_col(cc)
-                    for c in cols
-                    for cc in self.data.columns
-                    if (isinstance(c, str) and cc[1] == c) or cc == c
+                    self._to_styler_col(c) for c in self._get_cols_by_second_level(cols)
                 ]
 
             subset = (rows, cols)
