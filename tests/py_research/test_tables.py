@@ -1,8 +1,7 @@
 """Test tables module."""
 
 import pandas as pd
-
-from py_research.tables import ResultTable, TableStyle, to_html
+from py_research.tables import ResultTable, TableColors, TableStyle, to_html
 
 
 def test_result_table():
@@ -51,6 +50,16 @@ def test_result_table():
     table.title = "Test Table"
     rendered = to_html(table.to_styled_df())
     assert "Test Table" in rendered
+
+    # Test the table_colors attribute
+    table.table_colors = TableColors(header_even="#123456")
+    rendered = to_html(table.to_styled_df())
+    assert "background-color: #123456;" in rendered
+
+    # Test the table_styles attribute
+    table.table_styles = {"th": {"color": "#654321"}}
+    rendered = to_html(table.to_styled_df())
+    assert "color: #654321 !important;" in rendered
 
 
 def test_result_table_multi_df():

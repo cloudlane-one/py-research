@@ -13,45 +13,6 @@ from pandas.api.types import is_float_dtype, is_integer_dtype, is_numeric_dtype
 from pandas.io.formats.style import Styler
 
 
-def _prettify_df(table: pd.DataFrame | Styler, font_size: float = 1.0) -> Styler:
-    """Apply styles to a DataFrame or Styler and make it pretty."""
-    table = table.style if isinstance(table, pd.DataFrame) else table
-    return table.set_table_styles(
-        [
-            {
-                "selector": "",
-                "props": "font-family: Arial, Helvetica, sans-serif;"
-                "border-collapse: collapse; width: 100%;"
-                "color: black; text-align: left;",
-            },
-            {
-                "selector": "caption",
-                "props": f"margin-bottom: 1rem; "
-                f"font-size: {(font_size*1.5):.3g}rem;",
-            },
-            {
-                "selector": "td, th",
-                "props": f"font-size: {font_size:.3g}rem;"
-                "border: 1px solid #ddd; padding: 8px;",
-            },
-            {
-                "selector": "tr:nth-child(even)",
-                "props": "background-color: #f2f2f2;",
-            },
-            {
-                "selector": "tr:nth-child(odd)",
-                "props": "background-color: #fff;",
-            },
-            {
-                "selector": "th",
-                "props": "padding: 12px 8px 12px;"
-                "background-color: #677a96; color: black;"
-                "text-align: left",
-            },
-        ]
-    ).format(na_rep="")
-
-
 @dataclass
 class TableStyle:
     """Define a pretty table column format."""
@@ -87,6 +48,23 @@ class TableStyle:
 
     filter_exclusive: bool | None = None
     """Whether to only show cols/rows if matched by this selection."""
+
+
+@dataclass
+class TableColors:
+    """Define colors for a pretty table."""
+
+    row_even: str = "#f2f2f2"
+    """Background color for even rows."""
+
+    row_odd: str = "#fff"
+    """Background color for odd rows."""
+
+    header_even: str = "#677a96"
+    """Background color for even headers."""
+
+    header_odd: str = "#677a96"
+    """Background color for odd headers."""
 
 
 @dataclass
@@ -132,6 +110,15 @@ class ResultTable:
     """Format string to use for flatteting multi-index column labels.
     Leave as None to keep multi-index column labels as tuples.
     Format string must take two positional arguments, e.g. "{0}_{1}".
+    """
+
+    table_colors: TableColors = field(default_factory=TableColors)
+    """Colors to use for this table."""
+
+    table_styles: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Additional styles to apply to the table.
+    Dictionary keys must be CSS selectors and
+    values must be dictionaries of CSS properties.
     """
 
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
@@ -371,6 +358,72 @@ class ResultTable:
             else "left"
         )
 
+    def _prettify_df(self, table: pd.DataFrame, font_size: float = 1.0) -> Styler:
+        """Apply styles to a DataFrame or Styler and make it pretty."""
+        return table.style.set_table_styles(
+            [
+                {
+                    "selector": "",
+                    "props": (
+                        "font-family: Arial, Helvetica, sans-serif;"
+                        "border-collapse: collapse; width: 100%;"
+                        "color: black; text-align: left;"
+                    ),
+                },
+                {
+                    "selector": "caption",
+                    "props": (
+                        f"margin-bottom: 1rem;" f"font-size: {(font_size*1.5):.3g}rem;"
+                    ),
+                },
+                {
+                    "selector": "td, th",
+                    "props": (
+                        f"font-size: {font_size:.3g}rem;"
+                        "border: 1px solid #ddd;"
+                        "padding: 8px;"
+                    ),
+                },
+                {
+                    "selector": "tr:nth-child(even)",
+                    "props": f"background-color: {self.table_colors.row_even};",
+                },
+                {
+                    "selector": "tr:nth-child(odd)",
+                    "props": f"background-color: {self.table_colors.row_odd};",
+                },
+                {
+                    "selector": "th",
+                    "props": (
+                        "padding: 12px 8px 12px;" "text-align: left;" "color: black;"
+                    ),
+                },
+                {
+                    "selector": "th:nth-child(even)",
+                    "props": f"background-color: {self.table_colors.header_even};",
+                },
+                {
+                    "selector": "th:nth-child(odd)",
+                    "props": f"background-color: {self.table_colors.header_odd};",
+                },
+                *(
+                    {
+                        "selector": selector,
+                        "props": " ".join(
+                            [
+                                prop_name
+                                + ": "
+                                + prop_value.rstrip(" ").rstrip(";")
+                                + " !important;"
+                                for prop_name, prop_value in props.items()
+                            ]
+                        ),
+                    }
+                    for selector, props in self.table_styles.items()
+                ),
+            ]
+        ).format(na_rep="")
+
     def _apply_default_style(self, styled: Styler) -> Styler:
         if isinstance(self.default_style.css, dict):
             styled = styled.set_properties(
@@ -526,7 +579,7 @@ class ResultTable:
         if len(excl_filters) > 0:
             data = data.loc[reduce(lambda x, y: x & y, excl_filters)]
 
-        styled = _prettify_df(data.iloc[: self.max_row_cutoff].style, self.font_size)
+        styled = self._prettify_df(data.iloc[: self.max_row_cutoff], self.font_size)
         styled = self._apply_default_style(styled)
         styled = self._apply_col_defaults(styled)
         styled = self.__apply_widths(styled)
