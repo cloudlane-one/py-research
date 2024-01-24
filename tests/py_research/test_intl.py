@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 import pytest
 from py_research.intl import DtUnit, Format, Overrides, TextMatch, iter_locales
 
@@ -95,6 +96,10 @@ def test_localize_text(
         ("de_DE", Format(decimal_min_digits=2), 1.5, "1,50"),
         ("de_DE", Format(decimal_max_digits=3), 1.56789, "1,568"),
         ("de_DE", Format(), "Hello", "Hallo"),
+        ("de_DE", Format(), None, ""),
+        ("de_DE", Format(na_representation="N/A"), None, "N/A"),
+        ("de_DE", Format(), pd.NA, ""),
+        ("de_DE", Format(na_representation="N/A"), pd.NA, "N/A"),
     ],
 )
 def test_localize_value(
