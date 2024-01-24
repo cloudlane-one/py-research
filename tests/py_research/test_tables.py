@@ -51,3 +51,62 @@ def test_result_table():
     table.title = "Test Table"
     rendered = to_html(table.to_styled_df())
     assert "Test Table" in rendered
+
+
+def test_result_table_multi_df():
+    """Test ResultTable."""
+    # Create a DataFrame
+    df = pd.DataFrame({"A": [1, 2, 3], "B": [4, 5, 6], "C": [7, 8, 9]}, index=[1, 2, 3])
+
+    # Create a different DataFrame
+    df2 = pd.DataFrame(
+        {"A": [10, 20, 30], "B": [40, 50, 60], "C": [70, 80, 90]}, index=[2, 3, 4]
+    )
+
+    # Merge the two DataFrames
+    merge_df = pd.concat({"df1": df, "df2": df2}, axis="columns")
+
+    # Create a ResultTable
+    table = ResultTable(merge_df, show_index=True)
+
+    # Test the render method
+    rendered = to_html(table.to_styled_df())
+    assert isinstance(rendered, str)
+    assert "df1" in rendered
+    assert "df2" in rendered
+    assert "A" in rendered
+    assert "B" in rendered
+    assert "C" in rendered
+
+    # Test the styles attribute
+    style = TableStyle(cols=["A"], css={"font-weight": "bold"})
+    table.styles.append(style)
+    rendered = to_html(table.to_styled_df())
+    assert "font-weight: bold;" in rendered
+
+    # Test the styles attribute with an exact col
+    style = TableStyle(cols=[("df1", "A")], css={"color": "red"})
+    table.styles.append(style)
+    rendered = to_html(table.to_styled_df())
+    assert "color: red;" in rendered
+
+    # Test the labels attribute
+    table.labels = {"A": "Alpha", "B": "Beta", "C": "Gamma"}
+    rendered = to_html(table.to_styled_df())
+    assert "df1" in rendered
+    assert "df2" in rendered
+    assert "Alpha" in rendered
+    assert "Beta" in rendered
+    assert "Gamma" in rendered
+
+    # Test widths attribute
+    table.widths = {"A": "10rem", "B": "100px", "C": "auto"}
+    rendered = to_html(table.to_styled_df())
+    assert "width: 10rem;" in rendered
+    assert "width: 100px;" in rendered
+    assert "width: auto;" in rendered
+
+    # Test the title attribute
+    table.title = "Test Table"
+    rendered = to_html(table.to_styled_df())
+    assert "Test Table" in rendered

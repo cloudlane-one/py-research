@@ -56,7 +56,7 @@ def _prettify_df(table: pd.DataFrame | Styler, font_size: float = 1.0) -> Styler
 class TableStyle:
     """Define a pretty table column format."""
 
-    cols: str | list[str] | None = None
+    cols: str | tuple[str, str] | list[str | tuple[str, str]] | None = None
     """Column(s) to apply this style to. If None, apply to all columns."""
 
     rows: pd.Series | None = None
@@ -126,8 +126,14 @@ class ResultTable:
     default_style: TableStyle = field(default_factory=TableStyle)
     """Default style to apply to the table."""
 
+    multi_df_label_format: str = "{0}: {1}"
+    """Format string to use for flatteting multi-index column labels."""
+
+    show_index: bool = False
+    """Whether to show the index as columns."""
+
     @property
-    def __hidden_headers(self) -> set[str]:
+    def __hidden_headers(self) -> set[str | tuple[str, str]]:
         hide_styles = [
             set([style.cols] if isinstance(style.cols, str) else style.cols)
             for style in self.styles
@@ -278,11 +284,18 @@ class ResultTable:
         )
 
     def _default_str_format(self, col: str) -> str:
-        col_data = self.df[col]
-        if is_integer_dtype(col_data):
+        all_col_data = (
+            self.df.loc[:, (slice(None), col)]  # type: ignore
+            if self.df.columns.nlevels > 1
+            else self.df[[col]]
+        )
+        if all(is_integer_dtype(col_data) for _, col_data in all_col_data.items()):
             return "{:d}"
-        elif is_float_dtype(col_data):
-            if col_data.map(float.is_integer).all():
+        elif all(is_float_dtype(col_data) for _, col_data in all_col_data.items()):
+            if all(
+                col_data.map(float.is_integer).all()
+                for _, col_data in all_col_data.items()
+            ):
                 return "{:.0f}"
             else:
                 return "{:.3f}"
@@ -290,7 +303,16 @@ class ResultTable:
             return "{}"
 
     def _default_alignment(self, col: str | int) -> str:
-        return "right" if is_numeric_dtype(self.df[col]) else "left"
+        all_col_data = (
+            self.df.loc[:, (slice(None), col)]  # type: ignore
+            if self.df.columns.nlevels > 1
+            else self.df[[col]]
+        )
+        return (
+            "right"
+            if all(is_numeric_dtype(col_data) for _, col_data in all_col_data.items())
+            else "left"
+        )
 
     def _apply_default_style(self, styled: Styler) -> Styler:
         if isinstance(self.default_style.css, dict):
@@ -305,9 +327,9 @@ class ResultTable:
 
         return styled
 
-    def _apply_col_defaults(self, styled: Styler) -> Styler:
+    def _apply_col_defaults(self, styled: Styler, df: pd.DataFrame) -> Styler:
         res = styled
-        for col in self.df.columns:
+        for col in df.columns:
             res = res.set_properties(
                 subset=[col],
                 **{
@@ -323,9 +345,9 @@ class ResultTable:
 
         return res
 
-    def _apply_styles(self, styled: Styler) -> Styler:
+    def _apply_styles(self, styled: Styler, df: pd.DataFrame) -> Styler:
         for style in self.styles:
-            subset = (
+            rows, cols = (
                 style.rows if style.rows is not None else slice(None),
                 style.cols
                 if isinstance(style.cols, list)
@@ -333,6 +355,16 @@ class ResultTable:
                 if style.cols is not None
                 else slice(None),
             )
+
+            if isinstance(cols, list) and df.columns.nlevels > 1:
+                cols = [
+                    cc
+                    for c in cols
+                    for cc in df.columns
+                    if (isinstance(c, str) and cc[1] == c) or cc == c
+                ]
+
+            subset = (rows, cols)
 
             if style.hide_rows is not None:
                 styled = styled.hide(
@@ -368,15 +400,15 @@ class ResultTable:
 
         return styled
 
-    def __apply_widths(self, styled: Styler) -> Styler:
+    def __apply_widths(self, styled: Styler, df: pd.DataFrame) -> Styler:
         widths = {
-            c: (self.widths[c] if c in self.widths else 1) for c in self.df.columns
+            c: (self.widths.get(c if self.df.columns.nlevels == 1 else c[1]) or 1)
+            for c in df.columns
         }
         width_sum = sum(w for w in widths.values() if isinstance(w, int | float))
-
-        for col, width in self.widths.items():
+        for col, width in widths.items():
             styled = styled.set_properties(
-                subset=[col],
+                subset=(slice(None), [col]),  # type: ignore
                 width=(
                     f"{(width / width_sum * 100):.1f}%"
                     if isinstance(width, int | float)
@@ -386,33 +418,36 @@ class ResultTable:
 
         return styled
 
-    def __apply_labels(self, styled: Styler) -> Styler:
-        labels = (
-            {
-                c: (self.labels[c] if c in self.labels else str(c))
-                for c in self.df.columns
-            }
-            if isinstance(self.labels, dict)
-            else {c: self.labels(c) for c in self.df.columns}
-        )
-
-        hidden_headers = self.__hidden_headers
-
-        return styled.relabel_index(
-            [
-                ""
-                if c in hidden_headers
-                else label
-                if isinstance(label, str)
-                else label(c)
-                for c, label in labels.items()
-            ],
-            axis="columns",
+    def __apply_labels(self, styled: Styler, df: pd.DataFrame) -> Styler:
+        label_func = self.labels.get if isinstance(self.labels, dict) else self.labels
+        return (
+            styled.relabel_index(
+                [
+                    "" if c in self.__hidden_headers else label_func(c) or c
+                    for c in df.columns
+                ],
+                axis="columns",
+            )
+            if df.columns.nlevels == 1
+            else styled.relabel_index(
+                [
+                    ("", "")
+                    if c in self.__hidden_headers
+                    else (c[0], label_func(c[1]) or c[1])
+                    if c[1]
+                    else ("", label_func(c[0]) or c[0])
+                    for c in df.columns
+                ],  # type: ignore
+                axis="columns",
+            )
         )
 
     def to_styled_df(self) -> Styler:
         """Render table to styled pandas dataframe."""
         data = self.df.copy()
+
+        if self.show_index:
+            data = data.reset_index()
 
         incl_filters = [
             style.rows
@@ -432,10 +467,10 @@ class ResultTable:
 
         styled = _prettify_df(data.iloc[: self.max_row_cutoff].style, self.font_size)
         styled = self._apply_default_style(styled)
-        styled = self._apply_col_defaults(styled)
-        styled = self.__apply_widths(styled)
-        styled = self.__apply_labels(styled)
-        styled = self._apply_styles(styled)
+        styled = self._apply_col_defaults(styled, data)
+        styled = self.__apply_widths(styled, data)
+        styled = self.__apply_labels(styled, data)
+        styled = self._apply_styles(styled, data)
 
         if self.title is not None:
             styled = styled.set_caption(self.title)
