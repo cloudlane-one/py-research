@@ -110,3 +110,10 @@ def test_result_table_multi_df():
     table.title = "Test Table"
     rendered = to_html(table.to_styled_df())
     assert "Test Table" in rendered
+
+    # Test column flatteting
+    table.column_flatten_format = "{0}: {1}"
+    rendered = to_html(table.to_styled_df())
+    assert "df1: Alpha" in rendered
+    assert "df1: Beta" in rendered
+    assert "df2: Gamma" in rendered
