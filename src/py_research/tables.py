@@ -13,45 +13,6 @@ from pandas.api.types import is_float_dtype, is_integer_dtype, is_numeric_dtype
 from pandas.io.formats.style import Styler
 
 
-def _prettify_df(table: pd.DataFrame | Styler, font_size: float = 1.0) -> Styler:
-    """Apply styles to a DataFrame or Styler and make it pretty."""
-    table = table.style if isinstance(table, pd.DataFrame) else table
-    return table.set_table_styles(
-        [
-            {
-                "selector": "",
-                "props": "font-family: Arial, Helvetica, sans-serif;"
-                "border-collapse: collapse; width: 100%;"
-                "color: black; text-align: left;",
-            },
-            {
-                "selector": "caption",
-                "props": f"margin-bottom: 1rem; "
-                f"font-size: {(font_size*1.5):.3g}rem;",
-            },
-            {
-                "selector": "td, th",
-                "props": f"font-size: {font_size:.3g}rem;"
-                "border: 1px solid #ddd; padding: 8px;",
-            },
-            {
-                "selector": "tr:nth-child(even)",
-                "props": "background-color: #f2f2f2;",
-            },
-            {
-                "selector": "tr:nth-child(odd)",
-                "props": "background-color: #fff;",
-            },
-            {
-                "selector": "th",
-                "props": "padding: 12px 8px 12px;"
-                "background-color: #677a96; color: black;"
-                "text-align: left",
-            },
-        ]
-    ).format(na_rep="")
-
-
 @dataclass
 class TableStyle:
     """Define a pretty table column format."""
@@ -90,6 +51,23 @@ class TableStyle:
 
 
 @dataclass
+class TableColors:
+    """Define colors for a pretty table."""
+
+    row_even: str = "#f2f2f2"
+    """Background color for even rows."""
+
+    row_odd: str = "#fff"
+    """Background color for odd rows."""
+
+    header_even: str = "#677a96"
+    """Background color for even headers."""
+
+    header_odd: str = "#677a96"
+    """Background color for odd headers."""
+
+
+@dataclass
 class ResultTable:
     """Define and render a pretty result table with custom formatting and highlights."""
 
@@ -116,7 +94,7 @@ class ResultTable:
     title: str | None = None
     """Title of the table."""
 
-    hide_index: bool = True
+    hide_index: bool | list[str] = True
     """Whether to hide the index columns."""
 
     max_row_cutoff: int = 100
@@ -134,8 +112,20 @@ class ResultTable:
     Format string must take two positional arguments, e.g. "{0}_{1}".
     """
 
+    table_colors: TableColors = field(default_factory=TableColors)
+    """Colors to use for this table."""
+
+    table_styles: dict[str, dict[str, str]] = field(default_factory=dict)
+    """Additional styles to apply to the table.
+    Dictionary keys must be CSS selectors and
+    values must be dictionaries of CSS properties.
+    """
+
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
-        if not self.hide_index:
+        if self.hide_index is not True:
+            hidden_indexes = (
+                self.hide_index if isinstance(self.hide_index, list) else []
+            )
             index_names = (
                 df.index.names
                 if all(df.index.names)
@@ -144,17 +134,19 @@ class ResultTable:
 
             df = df.rename_axis(index=index_names)
 
+            index_col_names = [
+                name for name in index_names if name not in hidden_indexes
+            ]
             if df.index.nlevels > 1:
-                index_names = [("", name) for name in index_names]
+                index_col_names = [("", name) for name in index_col_names]
 
             df = df.copy()
-            for name in index_names:
-                df[name] = df.index.get_level_values(
-                    name if isinstance(name, str) else name[1]
-                )
+            for col_name in index_col_names:
+                index_name = col_name if isinstance(col_name, str) else col_name[1]
+                df[col_name] = df.index.get_level_values(index_name)
 
             self.data = df[
-                [*index_names, *[c for c in df.columns if c not in index_names]]
+                [*index_col_names, *[c for c in df.columns if c not in index_col_names]]
             ]
         else:
             self.data = df
@@ -366,6 +358,72 @@ class ResultTable:
             else "left"
         )
 
+    def _prettify_df(self, table: pd.DataFrame, font_size: float = 1.0) -> Styler:
+        """Apply styles to a DataFrame or Styler and make it pretty."""
+        return table.style.set_table_styles(
+            [
+                {
+                    "selector": "",
+                    "props": (
+                        "font-family: Arial, Helvetica, sans-serif;"
+                        "border-collapse: collapse; width: 100%;"
+                        "color: black; text-align: left;"
+                    ),
+                },
+                {
+                    "selector": "caption",
+                    "props": (
+                        f"margin-bottom: 1rem;" f"font-size: {(font_size*1.5):.3g}rem;"
+                    ),
+                },
+                {
+                    "selector": "td, th",
+                    "props": (
+                        f"font-size: {font_size:.3g}rem;"
+                        "border: 1px solid #ddd;"
+                        "padding: 8px;"
+                    ),
+                },
+                {
+                    "selector": "tr:nth-child(even)",
+                    "props": f"background-color: {self.table_colors.row_even};",
+                },
+                {
+                    "selector": "tr:nth-child(odd)",
+                    "props": f"background-color: {self.table_colors.row_odd};",
+                },
+                {
+                    "selector": "th",
+                    "props": (
+                        "padding: 12px 8px 12px;" "text-align: left;" "color: black;"
+                    ),
+                },
+                {
+                    "selector": "th:nth-child(even)",
+                    "props": f"background-color: {self.table_colors.header_even};",
+                },
+                {
+                    "selector": "th:nth-child(odd)",
+                    "props": f"background-color: {self.table_colors.header_odd};",
+                },
+                *(
+                    {
+                        "selector": selector,
+                        "props": " ".join(
+                            [
+                                prop_name
+                                + ": "
+                                + prop_value.rstrip(" ").rstrip(";")
+                                + " !important;"
+                                for prop_name, prop_value in props.items()
+                            ]
+                        ),
+                    }
+                    for selector, props in self.table_styles.items()
+                ),
+            ]
+        ).format(na_rep="")
+
     def _apply_default_style(self, styled: Styler) -> Styler:
         if isinstance(self.default_style.css, dict):
             styled = styled.set_properties(
@@ -521,7 +579,7 @@ class ResultTable:
         if len(excl_filters) > 0:
             data = data.loc[reduce(lambda x, y: x & y, excl_filters)]
 
-        styled = _prettify_df(data.iloc[: self.max_row_cutoff].style, self.font_size)
+        styled = self._prettify_df(data.iloc[: self.max_row_cutoff], self.font_size)
         styled = self._apply_default_style(styled)
         styled = self._apply_col_defaults(styled)
         styled = self.__apply_widths(styled)

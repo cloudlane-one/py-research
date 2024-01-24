@@ -99,6 +99,9 @@ class Format:
     fallback_to_translation: bool = True
     """Whether to fallback to text translation if no other formatting method matches."""
 
+    na_representation: str = ""
+    """String to use for NaN or None values."""
+
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
         return cast(
@@ -656,6 +659,9 @@ class Localization:
                 else:
                     return str(v.to(options.country_format))
             case _:
+                if v is None or pd.isna(v):
+                    return options.na_representation
+
                 return (
                     self.text(str(v), context=context, locale=locale)
                     if options.fallback_to_translation
