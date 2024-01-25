@@ -137,7 +137,7 @@ class ResultTable:
             index_col_names = [
                 name for name in index_names if name not in hidden_indexes
             ]
-            if df.index.nlevels > 1:
+            if df.columns.nlevels > 1:
                 index_col_names = [("", name) for name in index_col_names]
 
             df = df.copy()
