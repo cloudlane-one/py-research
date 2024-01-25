@@ -5,7 +5,8 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from py_research.intl import DtUnit, Format, Overrides, TextMatch, iter_locales
+
+from py_research.intl import Args, DtUnit, Format, Overrides, iter_locales
 
 
 @pytest.fixture
@@ -18,11 +19,12 @@ def locales() -> list[str]:
 def base_overrides() -> Overrides:
     """Return sample translation overrides."""
     return Overrides(
-        {
-            None: {
-                "house": "mouse",
-            },
-            "headers": {("bike", "car"): "Vehicle: {0}"},
+        vocabulary={
+            "house": "mouse",
+        },
+        templates={
+            "vehicles": {("bike", "car"): "Vehicle: {0}"},
+            "buildings": {Args({"house", "bridge"}): "Building: {0}"},
         },
     )
 
@@ -33,15 +35,7 @@ def translations() -> dict[str, Overrides]:
     return {
         "en_US": Overrides(
             {
-                None: {
-                    "car": "automobile",
-                },
-                "starting_letters": {
-                    TextMatch(r"^b.*$"): "{0} (label starts with b)",
-                    TextMatch(
-                        r"K.*", match_current=True
-                    ): "{0} (rendered text starts with K)",
-                },
+                "car": "automobile",
             },
         ),
         "de_DE": Overrides({"car": "Karren", "house": "Haus"}),
@@ -51,21 +45,19 @@ def translations() -> dict[str, Overrides]:
 @pytest.mark.parametrize(
     "locale, ctx, label, expected",
     [
-        ("en_US", "headers", "car", "Vehicle: automobile"),
-        ("en_US", "starting_letters", "bike", "bike (label starts with b)"),
+        ("en_US", "vehicles", "car", "Vehicle: automobile"),
         ("en_US", None, "bike", "bike"),
         ("en_US", None, "house", "mouse"),
-        ("en_US", "starting_letters", "book", "book (label starts with b)"),
-        ("en_US", "starting_letters", "Karl", "Karl (rendered text starts with K)"),
-        ("de_DE", "headers", "car", "Fahrzeug: Karren"),
+        ("de_DE", "vehicles", "car", "Fahrzeug: Karren"),
         ("de_DE", None, "car", "Karren"),
-        ("de_DE", "headers", "bike", "Fahrzeug: Fahrrad"),
+        ("de_DE", "vehicles", "bike", "Fahrzeug: Fahrrad"),
         ("de_DE", None, "bike", "Fahrrad"),
         ("de_DE", None, "house", "Haus"),
         ("de_DE", None, "box", "Kasten"),
+        ("de_DE", "buildings", "house", "Gebäude: Haus"),
     ],
 )
-def test_localize_text(
+def test_localize_label(
     locales: list[str],
     base_overrides: Overrides,
     translations: dict[str, Overrides],
@@ -75,9 +67,13 @@ def test_localize_text(
     expected: str,
 ):
     """Test localization of text."""
-    for loc in iter_locales(locales, translations, base_overrides):
+    for loc in iter_locales(
+        locales,
+        translations,
+        base_overrides,
+    ):
         if str(loc.locale) == locale:
-            assert loc.text(label, context=ctx) == expected
+            assert loc.label(label, context=ctx) == expected
 
 
 @pytest.mark.parametrize(

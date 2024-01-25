@@ -34,6 +34,8 @@ def gen_int_hash(obj: Any) -> int:
             return _hash_sequence(obj)
         case dict():
             return sum(_hash_sequence(item) for item in obj.items())
+        case set():
+            return sum(gen_int_hash(item) for item in obj)
         case None:
             return 0
         case _:
