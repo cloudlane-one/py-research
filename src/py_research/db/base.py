@@ -791,9 +791,7 @@ class DB:
             update_df = pd.read_excel(path, sheet_name="_updates", index_col=0).drop(
                 columns=["comment"]
             )
-            update_df.index = pd.to_datetime(
-                update_df.index, infer_datetime_format=True
-            )
+            update_df.index = pd.to_datetime(update_df.index)
             updates = {
                 cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()
             }
