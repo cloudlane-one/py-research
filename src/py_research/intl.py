@@ -573,6 +573,8 @@ class Localization:
         options = base.merge(translation).format.merge(options)
 
         match (v):
+            case _ if v is None or pd.isna(v):
+                return options.na_representation
             case float() | Decimal() | int():
                 fixed_digits = options.decimal_digits or options.decimal_min_digits or 0
                 max_digits = options.decimal_digits or options.decimal_max_digits or 6
@@ -659,9 +661,6 @@ class Localization:
                 else:
                     return str(v.to(options.country_format))
             case _:
-                if v is None or pd.isna(v):
-                    return options.na_representation
-
                 return (
                     self.text(str(v), context=context, locale=locale)
                     if options.fallback_to_translation
