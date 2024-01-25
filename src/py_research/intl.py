@@ -520,7 +520,7 @@ class Localization:
 
     def text(
         self,
-        name: str,
+        context: str,
         content: str | None,
         *args: Any,
         locale: Locale | None = None,
@@ -528,7 +528,7 @@ class Localization:
         """Localize given text.
 
         Args:
-            name: Name of the text to localize.
+            context: Label indentifying the context of the text to localize.
             content: Text to localize.
             args: Extra args to pass, if given text content is a template string.
             locale:
@@ -540,7 +540,7 @@ class Localization:
         """
         if self.show_raw:
             arg_str = (", " + ", ".join(args)) if len(args) > 0 else ""
-            return f"text('{content}'" + arg_str + f", name={name})"
+            return f"text('{content}'" + arg_str + f", context={context})"
 
         base = self.get_overrides(Locale("en", "US"))
         translation = self.get_overrides(locale or self.locale)
@@ -550,8 +550,8 @@ class Localization:
         )
         tmpl_args = [self.value(a, locale=locale) for a in args]
 
-        transl_template = self._get_template(translation, name, args)
-        base_template = self._get_template(base, name, args)
+        transl_template = self._get_template(translation, context, args)
+        base_template = self._get_template(base, context, args)
 
         if transl_template.replace is not None:
             tmpl = transl_template.replace
@@ -603,7 +603,7 @@ class Localization:
             Localized label.
         """
         if self.show_raw:
-            return f"label('{label}', context='{context}')"
+            return f"label('{label}', context={context})"
 
         return (
             self.text(context, None, label, locale=locale)
