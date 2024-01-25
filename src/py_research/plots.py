@@ -140,28 +140,17 @@ def with_dropdown(
                         "active": 0,
                         "buttons": [
                             {
-                                "label": "All",
+                                "label": group,
                                 "method": "update",
                                 "args": [
                                     {
-                                        "visible": [True] * len(trace_sources),
+                                        "visible": (
+                                            trace_sources == str(group)
+                                        ).to_list(),
                                     },
                                 ],
-                            },
-                            *(
-                                {
-                                    "label": group,
-                                    "method": "update",
-                                    "args": [
-                                        {
-                                            "visible": (
-                                                trace_sources == str(group)
-                                            ).to_list(),
-                                        },
-                                    ],
-                                }
-                                for group in figs.keys()
-                            ),
+                            }
+                            for group in figs.keys()
                         ],
                         "direction": "up",
                         "pad": {"r": 10, "t": 70},
