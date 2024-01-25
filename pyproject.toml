@@ -26,6 +26,8 @@ dependencies = [
     "beautifulsoup4>=4.12.2",
     "importlib-metadata>=6.11.0",
     "pandas-stubs>=2.1.4.231227",
+    "packaging>=23.2",
+    "requests>=2.31.0",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
