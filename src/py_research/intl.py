@@ -374,7 +374,7 @@ def _cached_translate(lang: str, text: str, translator: GoogleTranslator | None)
 class Localization:
     """Locale config, which can be used as a context manager to activate the locale."""
 
-    loc: Locale | None = None
+    loc: Locale | str | None = None
     """Locale to use for this localization. If None, use parent context's locale."""
 
     overrides: Overrides | dict[Locale, Overrides] | None = None
@@ -394,7 +394,7 @@ class Localization:
     def locale(self) -> Locale:
         """Return first locale found up the parent tree or default locale."""
         if self.loc is not None:
-            return self.loc
+            return self.loc if isinstance(self.loc, Locale) else Locale.parse(self.loc)
         elif self.__parent is not None and self.__parent is not self:
             return self.__parent.locale
 
