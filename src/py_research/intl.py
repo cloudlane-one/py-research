@@ -242,13 +242,13 @@ class Template:
 class Overrides:
     """Custom, language-dependent text overrides."""
 
-    vocabulary: dict[str, str] = field(default_factory=dict)
-    """Term overrides."""
-
     templates: Mapping[
         str, str | Template | dict[str | tuple | Args, str | Template]
     ] = field(default_factory=dict)
     """Template overrides by name."""
+
+    vocabulary: dict[str, str] = field(default_factory=dict)
+    """Term overrides."""
 
     format: Format = field(default_factory=Format)
     """Overrides for formatting."""

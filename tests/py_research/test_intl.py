@@ -5,6 +5,7 @@ from typing import Any
 
 import pandas as pd
 import pytest
+
 from py_research.intl import Args, DtUnit, Format, Overrides, iter_locales
 
 
@@ -19,7 +20,7 @@ def overrides() -> dict[str, Overrides]:
     """Return sample translation overrides."""
     return {
         "en_US": Overrides(
-            {
+            vocabulary={
                 "car": "automobile",
                 "house": "mouse",
             },
@@ -28,7 +29,7 @@ def overrides() -> dict[str, Overrides]:
                 "buildings": {Args({"house", "bridge"}): "Building: {0}"},
             },
         ),
-        "de_DE": Overrides({"car": "Karren", "house": "Haus"}),
+        "de_DE": Overrides(vocabulary={"car": "Karren", "house": "Haus"}),
     }
 
 
