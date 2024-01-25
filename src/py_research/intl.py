@@ -374,10 +374,7 @@ class Localization:
     loc: Locale | None = None
     """Locale to use for this localization. If None, use parent context's locale."""
 
-    base: Overrides | None = None
-    """Base overrides in English."""
-
-    translations: Overrides | dict[Locale, Overrides] | None = None
+    overrides: Overrides | dict[Locale, Overrides] | None = None
     """Optional translation overrides for the current or other locales."""
 
     show_raw: bool = False
@@ -401,42 +398,32 @@ class Localization:
         return _get_default_locale()
 
     @staticmethod
-    def _get_file_overrides(loc: Locale) -> tuple[Overrides, Overrides]:
+    def _get_file_overrides(loc: Locale) -> Overrides:
         if file_overrides is None:
-            return Overrides(), Overrides()
+            return Overrides()
 
-        base = file_overrides.get("base") or Overrides()
-        translated = (
+        return (
             file_overrides.get(str(loc))
             or file_overrides.get(str(loc.language))
             or Overrides()
         )
-        return base, translated
 
-    def get_overrides(self, locale: Locale) -> tuple[Overrides, Overrides]:
+    def get_overrides(self, locale: Locale) -> Overrides:
         """Return merger of all the parents' and self's overrides for given locale."""
-        parent_base, parent_transl = (
+        parent_overrd = (
             self.__parent.get_overrides(locale)
             if self.__parent is not None and self.__parent is not self
             else self._get_file_overrides(locale)
         )
-        self_transl = (
-            (self.translations.get(locale) or Overrides())
-            if isinstance(self.translations, dict)
-            else self.translations
-            if self.translations is not None and self.locale == locale
+        self_overrd = (
+            (self.overrides.get(locale) or Overrides())
+            if isinstance(self.overrides, dict)
+            else self.overrides
+            if self.overrides is not None and self.locale == locale
             else Overrides()
         )
 
-        return parent_base.merge(self.base or Overrides()), parent_transl.merge(
-            self_transl
-        )
-
-    @property
-    def overrides(self) -> Overrides:
-        """Return merger of all the parents' overrides and self's overrides."""
-        base, transl = self.get_overrides(self.locale)
-        return base.merge(transl)
+        return parent_overrd.merge(self_overrd)
 
     def __post_init__(self):  # noqa: D105
         self.__parent = None
@@ -467,7 +454,7 @@ class Localization:
     def __deepcopy__(self, memo: dict) -> Self:  # noqa: D105
         c = Localization(
             loc=self.loc,
-            translations=self.translations,
+            overrides=self.overrides,
             show_raw=self.show_raw,
         )
         memo[id(self)] = c
@@ -492,7 +479,8 @@ class Localization:
         if self.show_raw:
             return f"term('{term}')"
 
-        base, translation = self.get_overrides(locale or self.locale)
+        base = self.get_overrides(Locale("en", "US"))
+        translation = self.get_overrides(locale or self.locale)
 
         if term in translation.vocabulary:
             return translation.vocabulary[term]
@@ -534,12 +522,12 @@ class Localization:
         *args: Any,
         locale: Locale | None = None,
     ) -> str:
-        """Localize given label.
+        """Localize given text.
 
         Args:
             name: Name of the text to localize.
             content: Text to localize.
-            args: Extra args to pass, if given label is a template string.
+            args: Extra args to pass, if given text content is a template string.
             locale:
                 Locale to use for localization.
                 Defaults to the currently activated locale.
@@ -551,7 +539,8 @@ class Localization:
             arg_str = (", " + ", ".join(args)) if len(args) > 0 else ""
             return f"text('{content}'" + arg_str + f", name={name})"
 
-        base, translation = self.get_overrides(locale or self.locale)
+        base = self.get_overrides(Locale("en", "US"))
+        translation = self.get_overrides(locale or self.locale)
 
         tmpl = (
             self._machine_translate(content, locale) if content is not None else "{0}"
@@ -606,6 +595,9 @@ class Localization:
             locale:
                 Locale to use for localization.
                 Defaults to the currently activated locale.
+
+        Returns:
+            Localized label.
         """
         if self.show_raw:
             return f"label('{label}', context='{context}')"
@@ -637,7 +629,10 @@ class Localization:
             return f"value({v})"
 
         locale = locale or self.locale
-        base, translation = self.get_overrides(locale)
+
+        base = self.get_overrides(Locale("en", "US"))
+        translation = self.get_overrides(locale or self.locale)
+
         options = base.merge(translation).format.merge(options)
 
         match (v):
@@ -744,7 +739,7 @@ class Localization:
             locale: Locale to use for localization.
 
         Returns:
-            Formatting function.
+            Formatting function for generating localized values.
         """
         return partial(self.value, options=options, locale=locale)
 
@@ -759,7 +754,10 @@ class Localization:
             locale: Locale to use for localization.
         """
         locale = locale or self.locale
-        base, translation = self.get_overrides(locale)
+
+        base = self.get_overrides(Locale("en", "US"))
+        translation = self.get_overrides(locale or self.locale)
+
         options = base.merge(translation).format.merge(options)
 
         if issubclass(typ, int):
@@ -814,15 +812,13 @@ def get_localization() -> Localization:
 
 def iter_locales(
     locales: list[str],
-    translations: dict[str, Overrides] | None = None,
-    base: Overrides = Overrides(),
+    overrides: dict[str, Overrides] | None = None,
 ) -> Generator[Localization, None, None]:
     """Iterate over localizations for given locales w/ optional overrides.
 
     Args:
         locales: Locales to iterate over.
-        translations: Optional translation overrides for the localizations.
-        base: Optional base overrides in English.
+        overrides: Optional text overrides for the localizations.
 
     Returns:
         Generator of localizations.
@@ -830,12 +826,11 @@ def iter_locales(
     for loc in locales:
         locz = Localization(
             loc=Locale.parse(loc, sep=("_" if "_" in loc else "-")),
-            base=base,
-            translations={
+            overrides={
                 Locale.parse(k, sep=("_" if "_" in k else "-")): v
-                for k, v in translations.items()
+                for k, v in overrides.items()
             }
-            if translations is not None
+            if overrides is not None
             else None,
         )
         with locz:

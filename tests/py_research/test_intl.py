@@ -5,7 +5,6 @@ from typing import Any
 
 import pandas as pd
 import pytest
-
 from py_research.intl import Args, DtUnit, Format, Overrides, iter_locales
 
 
@@ -16,26 +15,17 @@ def locales() -> list[str]:
 
 
 @pytest.fixture
-def base_overrides() -> Overrides:
-    """Return sample translation overrides."""
-    return Overrides(
-        vocabulary={
-            "house": "mouse",
-        },
-        templates={
-            "vehicles": {("bike", "car"): "Vehicle: {0}"},
-            "buildings": {Args({"house", "bridge"}): "Building: {0}"},
-        },
-    )
-
-
-@pytest.fixture
-def translations() -> dict[str, Overrides]:
+def overrides() -> dict[str, Overrides]:
     """Return sample translation overrides."""
     return {
         "en_US": Overrides(
             {
                 "car": "automobile",
+                "house": "mouse",
+            },
+            templates={
+                "vehicles": {("bike", "car"): "Vehicle: {0}"},
+                "buildings": {Args({"house", "bridge"}): "Building: {0}"},
             },
         ),
         "de_DE": Overrides({"car": "Karren", "house": "Haus"}),
@@ -59,19 +49,14 @@ def translations() -> dict[str, Overrides]:
 )
 def test_localize_label(
     locales: list[str],
-    base_overrides: Overrides,
-    translations: dict[str, Overrides],
+    overrides: dict[str, Overrides],
     locale: str,
     ctx: str | None,
     label: str,
     expected: str,
 ):
     """Test localization of text."""
-    for loc in iter_locales(
-        locales,
-        translations,
-        base_overrides,
-    ):
+    for loc in iter_locales(locales, overrides):
         if str(loc.locale) == locale:
             assert loc.label(label, context=ctx) == expected
 
