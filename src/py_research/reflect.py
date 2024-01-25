@@ -13,7 +13,12 @@ from typing import Any, Generic, TypeVar
 from urllib.parse import urlparse
 
 import importlib_metadata as meta
+import numpy as np
+import requests
 from git import Repo
+from packaging.requirements import Requirement
+from packaging.specifiers import Specifier
+from packaging.version import InvalidVersion, Version
 
 T = TypeVar("T")
 T2 = TypeVar("T2")
@@ -328,3 +333,105 @@ def stref(obj: Any) -> str:
     """Get string representation of given object reference."""
     obj_ref = PyObjectRef.reference(obj)
     return f"{obj_ref.module}.{obj_ref.object}"
+
+
+def get_dist_requirements(dist: meta.Distribution) -> list[Requirement] | None:
+    """Get a list of declared packages via pdm."""
+    return (
+        [Requirement(dep) for dep in dist.requires]
+        if dist.requires is not None
+        else None
+    )
+
+
+def get_versions_on_pypi(package: meta.Distribution | str) -> set[Version]:
+    """Get all available versions of given distribution."""
+    if isinstance(package, meta.Distribution):
+        if package.origin is not None:
+            return set()
+        package = package.name
+
+    url = f"https://pypi.org/pypi/{package}/json"
+
+    response = requests.get(url)
+    if response.status_code == 404:
+        return set()
+
+    data = response.json()
+
+    versions = set()
+    for v in data["releases"].keys():
+        try:
+            versions.add(Version(v))
+        except InvalidVersion:
+            pass
+
+    return versions
+
+
+def version_diff(v1: Version, v2: Version) -> Version | None:
+    """Get the difference between two versions (v1 - v2).
+
+    if v1 is smaller than v2, returns None.
+    """
+    if v1 < v2:
+        return None
+
+    v1_arr = np.array((v1.major, v1.minor, v1.micro))
+    v2_arr = np.array((v2.major, v2.minor, v2.micro))
+
+    diff = v1_arr - v2_arr
+
+    if diff[0] > 0:
+        diff[1:] = v1_arr[1:]
+    elif diff[1] > 0:
+        diff[2] = v1_arr[2]
+
+    return Version(".".join(str(v) for v in diff))
+
+
+def get_outdated_deps(
+    dist: meta.Distribution,
+    allowed_diff: Specifier = Specifier("<=1.1.1"),
+) -> dict[str, tuple[Version, Version]]:
+    """Get a list of outdated dependencies of a distribution.
+
+    Args:
+        dist: Distribution to inspect.
+        allowed_diff: Allowed difference between current and latest version.
+
+    Returns:
+        Dictionary of outdated package names with current and latest version.
+    """
+    deps = get_dist_requirements(dist)
+
+    if deps is None:
+        return {}
+
+    outdated = {}
+    for dep in deps:
+        try:
+            dep_dist = meta.distribution(dep.name)
+        except meta.PackageNotFoundError:
+            dep_dist = dep.name
+
+        versions = get_versions_on_pypi(dep_dist)
+        versions = {
+            v
+            for v in versions
+            if not v.is_prerelease and not v.is_postrelease and not v.is_devrelease
+        }
+
+        matching_req = set(dep.specifier.filter(versions))
+        newest_matching = max(matching_req)
+
+        newer = versions - matching_req
+        if len(newer) == 0:
+            continue
+
+        newest = max(newer)
+        diff = version_diff(newest, newest_matching)
+        if diff is not None and diff not in allowed_diff:
+            outdated[dep.name] = (newest_matching, newest)
+
+    return outdated
