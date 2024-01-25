@@ -186,10 +186,13 @@ class Args:
 
     def match(self, args: tuple) -> float:
         """Check whether given args match this match."""
+        if self.all:
+            return 1
+
         values = self.values if isinstance(self.values, tuple | list) else [self.values]
 
         if len(args) != len(values):
-            return False
+            return 0
 
         matchers = [v if isinstance(v, set) else {v} for v in values]
 
