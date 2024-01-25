@@ -21,6 +21,7 @@ from typing import (
 import pandas as pd
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
+import sqlalchemy.sql.roles as sqla_roles
 from pandas.api.types import (
     is_datetime64_dtype,
     is_integer_dtype,
@@ -108,6 +109,10 @@ col = _wrap_mapped_col(orm.mapped_column)
 Relation = sqla.ForeignKey
 
 
+class ColumnClause(sqla_roles.ColumnsClauseRole, sqla_roles.ExpressionElementRole):
+    """Mix sqlalchemy classes to mitigate typing mishabs."""
+
+
 class Data(Protocol[S_cov]):
     """SQL table-shaped data."""
 
@@ -116,7 +121,7 @@ class Data(Protocol[S_cov]):
         """Return all columns within this data."""
         ...
 
-    def __clause_element__(self) -> sqla.FromClause:  # noqa: D105
+    def __clause_element__(self) -> ColumnClause:  # noqa: D105
         ...
 
     def __getitem__(  # noqa: D105
@@ -138,13 +143,13 @@ class Table(Data[S_cov]):
 
     @property
     def columns(self) -> dict[str, sqla.Column]:  # noqa: D102
-        return dict(self.__clause_element__().columns)
+        return dict(self.sqla_table.columns)
 
     def __getitem__(self, ref: str | ColRef[V, S_cov]) -> sqla.Column[V]:  # noqa: D105
         return self.columns[ref if isinstance(ref, str) else ref.key]
 
-    def __clause_element__(self) -> sqla.Table:  # noqa: D105
-        return self.sqla_table
+    def __clause_element__(self) -> ColumnClause:  # noqa: D105
+        return cast(ColumnClause, self.sqla_table)
 
     @property
     def name(self) -> str:  # noqa: D102
@@ -213,13 +218,13 @@ class Query(Data[S_cov]):
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
-        return dict(self.__clause_element__().columns)
+        return dict(self.sel.columns)
 
-    def __clause_element__(self) -> sqla.Subquery:  # noqa: D105
+    def __clause_element__(self) -> ColumnClause:  # noqa: D105
         if self._subquery is None:
             self._subquery = self.sel.subquery()
 
-        return self._subquery
+        return cast(ColumnClause, self._subquery)
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
@@ -245,14 +250,19 @@ class DeferredQuery(Data[S_cov]):
 
     @property
     def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
-        return dict(self.__clause_element__().columns)
+        return dict(self.subquery.columns)
 
-    def __clause_element__(self) -> sqla.Subquery | sqla.Table:  # noqa: D105
+    @property
+    def subquery(self) -> sqla.Subquery | sqla.Table:
+        """Return subquery or table defined by this query."""
         if self._subquery is None:
             res = self.func()
             self._subquery = res.subquery() if isinstance(res, sqla.Select) else res
 
         return self._subquery
+
+    def __clause_element__(self) -> ColumnClause:  # noqa: D105
+        return cast(ColumnClause, self.subquery)
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
@@ -261,7 +271,7 @@ class DeferredQuery(Data[S_cov]):
 
     @property
     def name(self) -> str | None:  # noqa: D102
-        return self.__clause_element__().name or (
+        return self.subquery.name or (
             self.func.func.__name__
             if isinstance(self.func, partial)
             else self.func.__name__
@@ -604,7 +614,7 @@ class DB(Generic[S_cov, DS]):
                 )
             )
         else:
-            sel_res = q.__clause_element__()
+            sel_res = cast(sqla.Subquery | sqla.Table, q.__clause_element__())
 
             sqla_table = (
                 q.schema.__table__.to_metadata(
