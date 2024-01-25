@@ -139,7 +139,7 @@ def parse_dtype(  # noqa: C901
                         result = pd.to_numeric(s)
                     except (ValueError, TypeError):
                         try:
-                            result = pd.to_datetime(s, infer_datetime_format=True)
+                            result = pd.to_datetime(s)
                         except (ParserError, ValueError, TypeError):
                             if s.nunique() < len(s) / 5:
                                 result = s.astype("category")
