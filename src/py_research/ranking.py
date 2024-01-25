@@ -108,6 +108,7 @@ def create_ranking_filter(
         )
 
     desc = loc.text(
+        "filter_explanation",
         _filter_explanation(
             cutoff_rank,
             str(rank_by.name),
@@ -121,7 +122,7 @@ def create_ranking_filter(
             show_always=str(show_always.name)
             if show_always is not None and show_always.name is not None
             else None,
-        )
+        ),
     )
 
     rank_by_filter = np.full(len(rank_by), True)
