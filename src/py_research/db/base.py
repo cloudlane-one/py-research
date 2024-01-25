@@ -1303,10 +1303,10 @@ class DB:
         for t, table in self.items():
             f = pd.Series(False, index=table.df.index)
 
+            # Include all rows with any valid outgoing reference.
             try:
-                # Include all rows with any valid outgoing reference.
                 outgoing = valid_refs.loc[(t, slice(None), slice(None)), :]
-                assert isinstance(outgoing, pd.DataFrame)
+
                 for _, refs in outgoing.groupby("target_table"):
                     f |= (
                         refs.droplevel(["src_table", "target_table"])
@@ -1316,10 +1316,10 @@ class DB:
             except KeyError:
                 pass
 
+            # Include all rows with any valid incoming reference.
             try:
-                # Include all rows with any valid incoming reference.
                 incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
-                assert isinstance(incoming, pd.DataFrame)
+
                 for _, refs in incoming.groupby("src_table"):
                     for _, col in refs.items():
                         f |= pd.Series(True, index=col.unique())
@@ -1370,24 +1370,54 @@ class DB:
 
                 visited |= set([t])
 
+                # Include all rows with any valid outgoing reference.
                 try:
-                    # Include all rows with any valid outgoing reference.
                     outgoing = valid_refs.loc[(t, slice(None), idx_sel), :]
-                    assert isinstance(outgoing, pd.DataFrame)
+
                     for tt, refs in outgoing.groupby("target_table"):
-                        for _, col in refs.items():
-                            next_stage[str(tt)] |= set(col.dropna().unique())
+                        tt = str(tt)
+                        for col_name, col in refs.items():
+                            ref_vals = col.dropna().unique()
+                            target_df = self[tt].df
+                            target_col = self.relations[(t, str(col_name))][1]
+                            target_idx = (
+                                ref_vals
+                                if target_col in target_df.index.names
+                                else target_df.loc[
+                                    target_df[target_col].isin(ref_vals)
+                                ].index.unique()
+                            )
+                            next_stage[tt] |= set(target_idx)
                 except KeyError:
                     pass
 
+                # Include all rows with any valid incoming reference.
                 try:
-                    # Include all rows with any valid incoming reference.
                     incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
-                    assert isinstance(incoming, pd.DataFrame)
+
                     for st, refs in incoming.groupby("src_table"):
+                        refs = refs.dropna(axis="columns", how="all")
+                        target_df = self[t].df
+                        target_cols = {
+                            c: self.relations[(str(st), str(c))][1]
+                            for c in refs.columns
+                        }
+                        target_values = {
+                            c: target_df.loc[idx_sel][tc].dropna().unique()
+                            if tc in target_df.columns
+                            else idx_sel
+                            for c, tc in target_cols.items()
+                        }
                         next_stage[str(st)] |= set(
-                            refs.droplevel(["src_table", "target_table"])
-                            .isin(idx_sel)
+                            pd.concat(
+                                [
+                                    col.isin(target_values[str(c)])
+                                    for c, col in refs.droplevel(
+                                        ["src_table", "target_table"]
+                                    ).items()
+                                ],
+                                axis="columns",
+                            )
                             .any(axis="columns")
                             .replace(False, pd.NA)
                             .dropna()
