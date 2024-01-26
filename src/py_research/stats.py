@@ -82,9 +82,7 @@ def dist_table(
                             fill_value=0,
                         )
                         .rename_axis(index=col)
-                        .reset_index()
                     )
-                    .droplevel(1)
                     .reset_index()
                 )
 
