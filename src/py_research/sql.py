@@ -17,6 +17,7 @@ from typing import (
     cast,
     overload,
 )
+from warnings import warn
 
 import pandas as pd
 import sqlalchemy as sqla
@@ -32,6 +33,13 @@ from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
 from py_research.reflect import get_all_subclasses
+
+# Deprecate this module in favor of SQL-enabled `py_research.db` package.
+warn(
+    f"The module {__name__} is deprecated. " "Use `py_research.db` instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 def _hash_df(df: pd.DataFrame | pd.Series) -> str:
