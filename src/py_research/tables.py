@@ -635,6 +635,34 @@ class ResultTable:
             f.write(self.to_html(full_html=True))
 
 
+@deprecated("Use `ResultTable.to_html` instead.")
+def to_html(styled: Styler, full_doc: bool = True) -> str:
+    """Return HTML representation of a pretty table.
+
+    Args:
+        styled: Styled dataframe to render.
+        full_doc: Whether to wrap the table in a full HTML document.
+
+    Returns:
+        HTML code for the table.
+    """
+    return (
+        f"""
+        <!doctype html>
+        <html>
+            <head>
+                <title>{getattr(styled, "caption") or ""}</title>
+            </head>
+            <body>
+                {styled.to_html(escape=False)}
+            </body>
+        </html>
+        """
+        if full_doc
+        else styled.to_html(escape=False)
+    )
+
+
 @deprecated("Use the `render` module instead.")
 def html_to_pdf(doc: str, file: Path):
     """Render and save HTML ``doc`` as PDF document.
