@@ -4,13 +4,14 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from functools import reduce
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, TextIO, cast
 
 import imgkit
 import pandas as pd
 import pdfkit
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_numeric_dtype
 from pandas.io.formats.style import Styler
+from typing_extensions import deprecated
 
 
 @dataclass
@@ -593,34 +594,48 @@ class ResultTable:
 
         return styled
 
+    def to_html(self, full_html: bool = True) -> str:
+        """Return HTML representation.
 
-def to_html(styled: Styler, full_doc: bool = True) -> str:
-    """Return HTML representation of a pretty table.
+        Args:
+            styled: Styled dataframe to render.
+            full_html: Whether to wrap the table in a full HTML document.
 
-    Args:
-        styled: Styled dataframe to render.
-        full_doc: Whether to wrap the table in a full HTML document.
-
-    Returns:
-        HTML code for the table.
-    """
-    return (
-        f"""
-        <!doctype html>
-        <html>
-            <head>
-                <title>{getattr(styled, "caption") or ""}</title>
-            </head>
-            <body>
-                {styled.to_html(escape=False)}
-            </body>
-        </html>
+        Returns:
+            HTML code for the table.
         """
-        if full_doc
-        else styled.to_html(escape=False)
-    )
+        styled = self.to_styled_df()
+        return (
+            f"""
+            <!doctype html>
+            <html>
+                <head>
+                    <title>{getattr(styled, "caption") or ""}</title>
+                </head>
+                <body>
+                    {styled.to_html(escape=False)}
+                </body>
+            </html>
+            """
+            if full_html
+            else styled.to_html(escape=False)
+        )
+
+    def _repr_html_(self) -> str:
+        return self.to_html(full_html=False)
+
+    def write_html(self, file: Path | str | TextIO) -> None:
+        """Write HTML representation to file.
+
+        Args:
+            styled: Styled dataframe to render.
+            file: File to write the HTML code to.
+        """
+        with open(file, "w") if isinstance(file, Path | str) else file as f:
+            f.write(self.to_html(full_html=True))
 
 
+@deprecated("Use the `render` module instead.")
 def html_to_pdf(doc: str, file: Path):
     """Render and save HTML ``doc`` as PDF document.
 
@@ -631,6 +646,7 @@ def html_to_pdf(doc: str, file: Path):
     pdfkit.from_string(doc, file)
 
 
+@deprecated("Use the `render` module instead.")
 def html_to_image(doc: str, file: Path):
     """Render and save HTML ``doc`` as PNG image.
 
