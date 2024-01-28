@@ -70,13 +70,14 @@ def plotly_to_html(
     fig: go.Figure,
     write_to: Path | str | TextIO | None = None,
     responsive: bool = True,
-    min_width: int = 540,
-    max_width: int = 1080,
-    max_height: int = 540,
+    min_width: int = 500,
+    max_width: int = 1500,
+    max_height: int = 600,
     download_format: ImageFormat = "svg",
     download_scale: float = 3,
     full_html: bool = True,
-    plotly_js_url: str = "https://cdn.jsdelivr.net/npm/plotly.js@2/dist/plotly.min.js",
+    plotly_js_url: str
+    | None = "https://cdn.jsdelivr.net/npm/plotly.js@2/dist/plotly.min.js",
 ) -> str:
     """Convert plotly figure to interactive (and responsive) html.
 
@@ -92,7 +93,8 @@ def plotly_to_html(
         full_html: Whether to wrap the figure in a full html document.
         plotly_js_url:
             URL to load plotly.js library from.
-            Must resolve to an ES module.
+            Defaults to the latest version on jsdelivr.
+            Set to None to leave out the plotly.js script tag.
 
     Returns:
         HTML string.
@@ -132,6 +134,7 @@ def plotly_to_html(
 
     res_html = fig_html
     if responsive:
+        # Define attributes to pass to the script tag.
         script_attrs = {
             "plotly-js-url": plotly_js_url,
             "fig-id": fig_id,
@@ -146,10 +149,22 @@ def plotly_to_html(
             f'{attr}="{value}"' for attr, value in script_attrs.items()
         )
 
+        plotly_js_script = (
+            dedent(
+                f"""
+            <script src="{plotly_js_url}"></script>
+            """
+            )
+            if plotly_js_url is not None
+            else ""
+        )
+
+        # Combine the figure html with a script tag that makes it responsive,
+        # and optionally with the plotly.js script tag.
         res_html = dedent(
             f"""
             <div class="plotly-responsive-container" style="width: 100%;">
-                <script src="{plotly_js_url}"></script>
+                {_ind(plotly_js_script, 16)}
                 {_ind(fig_html, 16)}
                 <script
                     id="{script_id}"
@@ -162,6 +177,7 @@ def plotly_to_html(
             """
         )
 
+    # Wrap the figure in a full html document if requested.
     html = dedent(
         f"""
         <!doctype html>
@@ -178,6 +194,7 @@ def plotly_to_html(
         else res_html
     )
 
+    # Write the html to a file if requested.
     if write_to is not None:
         with open(write_to, "w") if isinstance(write_to, Path | str) else write_to as f:
             f.write(html)
