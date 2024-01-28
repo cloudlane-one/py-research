@@ -254,8 +254,8 @@ class PyObjectRef(Generic[T]):
     def reference(
         obj: T2,
         version: str | None = None,
-        pkg_version_strategy: Literal["exact", "minor", "major"] = "major",
-        obj_version_strategy: Literal["exact", "minor", "major"] = "major",
+        pkg_version_strategy: VersionStrategy = "major",
+        obj_version_strategy: VersionStrategy = "major",
     ) -> "PyObjectRef[T2]":
         """Create a reference to given object."""
         object_version = None
