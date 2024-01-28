@@ -1,7 +1,20 @@
 """Test reflect module."""
 
 import py_research
-from py_research.reflect import env_info, get_outdated_deps
+from py_research.reflect import PyObjectRef, env_info, get_outdated_deps
+
+
+class StaticObject:
+    """Static object for test."""
+
+
+def test_py_obj_ref():
+    """Test Python object referencing."""
+    ref = PyObjectRef.reference(StaticObject)
+    assert ref.package == "py-research"
+
+    obj = ref.resolve()
+    assert obj is StaticObject
 
 
 def test_get_outdated_deps():

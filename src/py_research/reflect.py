@@ -212,13 +212,13 @@ def _semver_range_to_spec(semver_range: str) -> SpecifierSet:
     op = semver_range[0] if semver_range[0] in "~^>=<" else None
     version = Version(semver_range.lstrip("^~>=<"))
     return SpecifierSet(
-        (f">={version.major}" f",<{version.major + 1}")
+        (f">={version.public}" f",<{version.major + 1}")
         if op == "^"
-        else (f">={version},<{version.major}" f".{version.minor + 1}")
+        else (f">={version.public},<{version.major}" f".{version.minor + 1}")
         if op == "~"
-        else f"{op}{version}"
+        else f"{op}{version.public}"
         if op in list(">=<")
-        else f"=={version}"
+        else f"=={version.public}"
     )
 
 
@@ -360,14 +360,17 @@ class PyObjectRef(Generic[T]):
     def resolve(self) -> T:
         """Resolve object reference."""
         dist = _get_distributions().get(self.package)
-        if dist is None or (
-            self.package_version is not None
-            and Version(dist.version) not in _semver_range_to_spec(self.package_version)
-        ):
+        if dist is None:
             raise ImportError(
-                f"Please install package '{self.package}' "
-                f"with version '{self.package_version}'"
-                f"from '{self.repo}' to resolve this object reference."
+                f"Package '{self.package}' "
+                f"with version '{self.package_version or '*'}' is not installed."
+            )
+        elif self.package_version is not None and Version(
+            dist.version
+        ) not in _semver_range_to_spec(self.package_version):
+            raise ImportError(
+                f"Please install correct version of package '{self.package}': "
+                f"'{self.package_version}'"
             )
 
         try:
@@ -539,10 +542,15 @@ def env_info() -> dict[str, Any]:
         repo = get_module_repo(mod)
 
         if repo is not None:
+            try:
+                branch = repo.active_branch.name
+            except TypeError:
+                branch = None
+
             repo_info = {
                 "url": repo.remote().url,
                 "revision": repo.head.commit.hexsha,
-                "branch": repo.active_branch.name,
+                "branch": branch,
                 "tag": repo.tags[0].name if len(repo.tags) > 0 else None,
                 **({"dirty": True} if repo.is_dirty() else {}),
             }
