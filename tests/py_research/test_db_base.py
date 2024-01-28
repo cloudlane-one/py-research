@@ -161,6 +161,14 @@ def test_create_db_from_tables(db_from_tables: DB):
     assert len(db_from_tables) == 5
 
 
+def test_describe_db(db_from_tables: DB):
+    """Test the description of a DB instance."""
+    db_from_tables.schema = DBSchema  # Use base class as empty schema.
+    desc = db_from_tables.describe()
+    assert isinstance(desc, dict)
+    assert "schema" in desc
+
+
 def test_trim_db_anisotropic(db_from_tables: DB):
     """Test the trimming of a DB instance."""
     db = db_from_tables.trim()
