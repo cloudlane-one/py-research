@@ -67,17 +67,8 @@ class ColorTheme:
             active_theme.reset(self.__token)
 
 
-color_file_path = Path(environ.get("COLOR_FILE_PATH") or (Path.cwd() / "colors.yaml"))
-
-
-def _get_colors_from_file() -> ColorTheme | None:
-    if color_file_path.is_file():
-        with open(color_file_path, encoding="utf-8") as f:
-            return ColorTheme(**load(f, Loader=CLoader))
-
-
 active_theme: ContextVar[ColorTheme] = ContextVar(
-    "active_color_theme", default=(_get_colors_from_file() or ColorTheme())
+    "active_color_theme", default=ColorTheme()
 )
 
 
@@ -115,3 +106,25 @@ def get_theme() -> ColorTheme:
 def to_bg_color(color: str, lightness: float = 0.8) -> str:
     """Turn a highlight color into a background color."""
     return rgb_to_hex(_adjust_lightness(_parse_css_color(color), lightness))
+
+
+default_file_path = Path(environ.get("COLOR_FILE_PATH") or (Path.cwd() / "colors.yaml"))
+"""Default path to color theme file."""
+
+
+def load_from_file(path: Path | str | None = None) -> Path | None:
+    """Load color theme from file.
+
+    Args:
+        path: Path to file. If None, the default file path is used.
+
+    Returns:
+        Path to the loaded file, if not given as argument.
+    """
+    res_path = path or default_file_path
+
+    with open(default_file_path, encoding="utf-8") as f:
+        active_theme.set(ColorTheme(**load(f, Loader=CLoader)))
+
+    if path is None:
+        return Path(res_path)

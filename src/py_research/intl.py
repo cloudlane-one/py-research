@@ -22,7 +22,6 @@ from babel.dates import (
 )
 from babel.numbers import format_decimal
 from deep_translator import GoogleTranslator
-from pydantic import parse_obj_as
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import Self
 from yaml import CLoader, load
@@ -116,12 +115,11 @@ class Format:
         """Merge and override ``self`` with ``other``."""
         return cast(
             Self,
-            parse_obj_as(
-                Format,
-                {
+            Format(
+                **{
                     **asdict(self),
                     **{k: v for k, v in asdict(other).items() if v is not None},
-                },
+                }
             ),
         )
 
@@ -289,14 +287,6 @@ class Overrides:
         )
 
 
-texts_file_path = Path(environ.get("TEXTS_FILE_PATH") or (Path.cwd() / "texts.yaml"))
-
-file_overrides = None
-if texts_file_path.is_file():
-    with open(texts_file_path, encoding="utf-8") as f:
-        file_overrides = parse_obj_as(dict[str, Overrides], load(f, Loader=CLoader))
-
-
 def _get_default_locale() -> Locale:
     """Get default locale, falling back to English."""
     try:
@@ -377,7 +367,7 @@ class Localization:
     loc: Locale | str | None = None
     """Locale to use for this localization. If None, use parent context's locale."""
 
-    overrides: Overrides | dict[Locale, Overrides] | None = None
+    overrides: Overrides | dict[Locale, Overrides] | dict[str, Overrides] | None = None
     """Optional translation overrides for the current or other locales."""
 
     show_raw: bool = False
@@ -400,15 +390,20 @@ class Localization:
 
         return _get_default_locale()
 
-    @staticmethod
-    def _get_file_overrides(loc: Locale) -> Overrides:
-        if file_overrides is None:
-            return Overrides()
-
+    @property
+    def override_dict(self) -> dict[Locale, Overrides]:
+        """Return dict of all overrides, keyed by locale string."""
         return (
-            file_overrides.get(str(loc))
-            or file_overrides.get(str(loc.language))
-            or Overrides()
+            {
+                (
+                    Locale.parse(k, sep=("_" if "_" in k else "-"))
+                    if isinstance(k, str)
+                    else k
+                ): v
+                for k, v in self.overrides.items()
+            }
+            if isinstance(self.overrides, Mapping)
+            else {self.locale: self.overrides or Overrides()}
         )
 
     def get_overrides(self, locale: Locale) -> Overrides:
@@ -416,15 +411,9 @@ class Localization:
         parent_overrd = (
             self.__parent.get_overrides(locale)
             if self.__parent is not None and self.__parent is not self
-            else self._get_file_overrides(locale)
-        )
-        self_overrd = (
-            (self.overrides.get(locale) or Overrides())
-            if isinstance(self.overrides, dict)
-            else self.overrides
-            if self.overrides is not None and self.locale == locale
             else Overrides()
         )
+        self_overrd = self.override_dict.get(locale, Overrides())
 
         return parent_overrd.merge(self_overrd)
 
@@ -827,14 +816,33 @@ def iter_locales(
         Generator of localizations.
     """
     for loc in locales:
-        locz = Localization(
-            loc=Locale.parse(loc, sep=("_" if "_" in loc else "-")),
-            overrides={
-                Locale.parse(k, sep=("_" if "_" in k else "-")): v
-                for k, v in overrides.items()
-            }
-            if overrides is not None
-            else None,
-        )
+        locz = Localization(loc=loc, overrides=overrides)
         with locz:
             yield locz
+
+
+default_file_path = Path(environ.get("TEXTS_FILE_PATH") or (Path.cwd() / "texts.yaml"))
+"""Default path to text overrides file."""
+
+
+def load_from_file(path: Path | str | None = None) -> Path | None:
+    """Load text overrides from file.
+
+    Args:
+        path: Path to file. If None, the default file path is used.
+
+    Returns:
+        Path to the loaded file, if not given as argument.
+    """
+    res_path = path or default_file_path
+
+    with open(default_file_path, encoding="utf-8") as f:
+        override_dict = load(f, Loader=CLoader)
+        assert isinstance(override_dict, dict)
+        overrides = {
+            str(loc): Overrides(**overrides) for loc, overrides in override_dict.items()
+        }
+        active_localization.set(Localization(overrides=overrides))
+
+    if path is None:
+        return Path(res_path)
