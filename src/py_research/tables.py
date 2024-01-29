@@ -594,18 +594,21 @@ class ResultTable:
 
         return styled
 
-    def to_html(self, full_html: bool = True) -> str:
-        """Return HTML representation.
+    def to_html(
+        self, write_to: Path | str | TextIO | None = None, full_html: bool = True
+    ) -> str:
+        """Return HTML representation and optionally write it to a file.
 
         Args:
             styled: Styled dataframe to render.
+            write_to: File to write the HTML code to.
             full_html: Whether to wrap the table in a full HTML document.
 
         Returns:
             HTML code for the table.
         """
         styled = self.to_styled_df()
-        return (
+        html = (
             f"""
             <!doctype html>
             <html>
@@ -621,18 +624,16 @@ class ResultTable:
             else styled.to_html(escape=False)
         )
 
+        if write_to is not None:
+            with open(write_to, "w") if isinstance(
+                write_to, Path | str
+            ) else write_to as f:
+                f.write(html)
+
+        return html
+
     def _repr_html_(self) -> str:
         return self.to_html(full_html=False)
-
-    def write_html(self, file: Path | str | TextIO) -> None:
-        """Write HTML representation to file.
-
-        Args:
-            styled: Styled dataframe to render.
-            file: File to write the HTML code to.
-        """
-        with open(file, "w") if isinstance(file, Path | str) else file as f:
-            f.write(self.to_html(full_html=True))
 
 
 @deprecated("Use `ResultTable.to_html` instead.")
