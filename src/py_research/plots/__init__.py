@@ -315,6 +315,11 @@ def with_dropdown(
                 ]
             )
 
+            first_group = list(figs.keys())[0]
+            split_fig.for_each_trace(
+                lambda trace: trace.update(visible=trace.name == first_group)
+            )
+
             return split_fig
 
         return wrapper
