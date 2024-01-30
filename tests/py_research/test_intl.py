@@ -106,3 +106,12 @@ def test_auto_digits():
     f2 = Format().auto_digits([1.5, 1.56789, 1.56789, 1.56789, 1.56789], fixed=False)
     assert f2.decimal_min_digits == 2
     assert f2.decimal_max_digits is None
+
+
+def test_iter_locz_default(
+    locales: list[str],
+    overrides: dict[str, Overrides],
+):
+    """Test default locale iteration."""
+    locz = [str(loc.locale) for loc in iter_locales(overrides=overrides)]
+    assert set(locz) == set(locales)

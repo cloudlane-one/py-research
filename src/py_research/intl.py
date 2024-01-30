@@ -803,18 +803,27 @@ def get_localization() -> Localization:
 
 
 def iter_locales(
-    locales: list[str],
+    locales: list[str] | None = None,
     overrides: dict[str, Overrides] | None = None,
 ) -> Generator[Localization, None, None]:
     """Iterate over localizations for given locales w/ optional overrides.
 
     Args:
-        locales: Locales to iterate over.
+        locales:
+            Locales to iterate over.
+            If None, iterates over all locales, for which overrides are defined.
         overrides: Optional text overrides for the localizations.
 
     Returns:
         Generator of localizations.
     """
+    if locales is None:
+        current_loc = get_localization()
+        locales = [str(k) for k in current_loc.override_dict.keys()]
+        if overrides is not None:
+            ovrd_locz = [str(k) for k in overrides.keys()]
+            locales = list(set(locales).union(ovrd_locz))
+
     for loc in locales:
         locz = Localization(loc=loc, overrides=overrides)
         with locz:
