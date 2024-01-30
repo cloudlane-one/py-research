@@ -28,6 +28,7 @@ dependencies = [
     "pandas-stubs>=2.1.4.231227",
     "packaging>=23.2",
     "requests>=2.31.0",
+    "pydantic-core>=2.14.6",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
