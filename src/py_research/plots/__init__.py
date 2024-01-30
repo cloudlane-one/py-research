@@ -315,10 +315,14 @@ def with_dropdown(
                 ]
             )
 
+            # Show only the first group.
             first_group = list(figs.keys())[0]
-            split_fig.for_each_trace(
-                lambda trace: trace.update(visible=trace.name == first_group)
-            )
+            first_group_trace_count = trace_sources[trace_sources == first_group].size
+            for i, trace in enumerate(split_fig.select_traces()):
+                if i < first_group_trace_count:
+                    trace.visible = True
+                else:
+                    trace.visible = False
 
             return split_fig
 
