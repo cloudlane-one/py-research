@@ -3,6 +3,7 @@
 import country_converter as coco
 import pandas as pd
 import pytest
+from pydantic import TypeAdapter
 
 from py_research.geo import (
     CountryScheme,
@@ -14,6 +15,22 @@ from py_research.geo import (
     match_to_geo_region,
     merge_geo_regions,
 )
+
+
+def test_geo_regions_from_dict():
+    """Test the GeoRegion instantiation from dict representation."""
+    geo_region_list = [
+        {"label": "DEU", "scheme": "cc_iso3"},
+        "USA",
+        {"label": "Africa", "scheme": "continent"},
+        {"label": "EU", "scheme": "alliance"},
+        GeoRegion("Asia", GeoScheme.continent),
+    ]
+
+    adapter = TypeAdapter(list[GeoRegion])
+    geo_regions = adapter.validate_python(geo_region_list)
+    for gr in geo_regions:
+        assert isinstance(gr, GeoRegion)
 
 
 @pytest.mark.parametrize(
