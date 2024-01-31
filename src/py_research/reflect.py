@@ -2,7 +2,6 @@
 
 import inspect
 import platform
-import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache, reduce
@@ -15,7 +14,8 @@ from urllib.parse import urlparse
 import importlib_metadata as meta
 import numpy as np
 import requests
-from git import Repo
+from git import GitError, Repo
+from IPython.core.getipython import get_ipython
 from packaging.requirements import Requirement
 from packaging.specifiers import Specifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
@@ -24,17 +24,16 @@ T = TypeVar("T")
 T2 = TypeVar("T2")
 
 
-def _get_calling_frame(offset=0):
+def _get_calling_frame(offset: int = 0):
     stack = inspect.stack()
     if len(stack) < offset + 3:
         raise RuntimeError("No caller!")
     return stack[offset + 2]
 
 
-def get_calling_module_name() -> str | None:
+def get_calling_module(offset: int = 0) -> ModuleType | None:
     """Return the name of the module calling the current function."""
-    mod = inspect.getmodule(_get_calling_frame(offset=1).frame)
-    return mod.__name__ if mod is not None else None
+    return inspect.getmodule(_get_calling_frame(offset + 1).frame)
 
 
 def get_full_args_dict(
@@ -186,13 +185,21 @@ def get_all_module_dependencies(
         return _ext_deps, _int_deps
 
 
+def get_file_repo(path: Path) -> Repo | None:
+    """Get the Git repository of given file, if any."""
+    try:
+        return Repo(path, search_parent_directories=True)
+    except GitError:
+        return None
+
+
 def get_module_repo(module: ModuleType) -> Repo | None:
     """Get the Git repository of given module, if any."""
     mod_file = _get_module_file(module)
     if mod_file is None:
         return None
 
-    return Repo(mod_file, search_parent_directories=True)
+    return get_file_repo(mod_file)
 
 
 VersionStrategy: TypeAlias = Literal["exact", "minor", "major"]
@@ -533,47 +540,41 @@ def get_outdated_deps(
 
 def env_info() -> dict[str, Any]:
     """Return information about the current Python environment."""
-    mod_name = get_calling_module_name()
+    mod = get_calling_module()
 
     repo_dict = {}
     req_dict = {}
-    if mod_name is not None:
-        mod = import_module(mod_name)
-        repo = get_module_repo(mod)
 
-        if repo is not None:
-            try:
-                branch = repo.active_branch.name
-            except TypeError:
-                branch = None
+    repo = (
+        get_module_repo(mod)
+        if mod is not None and mod.__name__ is not None
+        else get_file_repo(Path.cwd())
+        if is_in_jupyter()
+        else None
+    )
 
-            repo_info = {
-                "url": repo.remote().url,
-                "revision": repo.head.commit.hexsha,
-                "branch": branch,
-                "tag": repo.tags[0].name if len(repo.tags) > 0 else None,
-                **({"dirty": True} if repo.is_dirty() else {}),
-            }
-            repo_dict = {"repo": {k: v for k, v in repo_info.items() if v is not None}}
+    if repo is not None:
+        try:
+            branch = repo.active_branch.name
+        except TypeError:
+            branch = None
 
-            repo_root = repo.working_tree_dir
-            if repo_root is not None:
-                root_path = Path(repo_root)
-                matching_files = [
-                    f
-                    for f in ["pyproject.toml", "requirements.txt"]
-                    if (root_path / f).is_file()
-                ]
+        repo_info = {
+            "url": repo.remote().url,
+            "branch": branch,
+        }
 
-                if len(matching_files) > 0:
-                    req_dict = {"requirements": matching_files[0]}
+        current_commit = repo.head.commit
+        latest_tag = repo.tags[-1] if len(repo.tags) > 0 else None
+        if latest_tag is not None and current_commit == latest_tag.commit:
+            repo_info["tag"] = latest_tag.name
+        else:
+            repo_info["commit"] = current_commit.hexsha
 
-    if len(req_dict) == 0:
-        mods = sys.modules.copy()
-        dists = {name: get_module_distribution(mod) for name, mod in mods.items()}
-        dists = {name: dist for name, dist in dists.items() if dist is not None}
-        reqs = {name: f"{dist.name}=={dist.version}" for name, dist in dists.items()}
-        req_dict = {"requirements": reqs}
+        if repo.is_dirty():
+            repo_info["dirty"] = True
+
+        repo_dict = {"repo": {k: v for k, v in repo_info.items() if v is not None}}
 
     return {
         **repo_dict,
@@ -582,3 +583,16 @@ def env_info() -> dict[str, Any]:
         "os": platform.system(),
         "os_version": platform.version(),
     }
+
+
+def is_in_jupyter() -> bool:
+    """Return whether the runtime is a Jupyter environment.
+
+    Returns:
+        True if the runtime is a Jupyter environment, False otherwise.
+    """
+    shell = get_ipython()
+    if shell is not None and shell.__class__.__name__ == "ZMQInteractiveShell":
+        return True  # Jupyter notebook or qtconsole
+
+    return False
