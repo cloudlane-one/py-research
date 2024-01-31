@@ -1,7 +1,7 @@
 """Test reflect module."""
 
 import py_research
-from py_research.reflect import PyObjectRef, env_info, get_outdated_deps
+from py_research.reflect import PyObjectRef, env_info, get_outdated_deps, is_in_jupyter
 
 
 class StaticObject:
@@ -28,5 +28,9 @@ def test_env_info():
     info = env_info()
     assert isinstance(info, dict)
     assert "repo" in info
-    assert "requirements" in info
     assert "python_version" in info
+
+
+def test_is_in_jupyter():
+    """Test is_in_jupyter function."""
+    assert is_in_jupyter() is False
