@@ -163,7 +163,11 @@ class GeoRegion:
         from_dict_schema = core_schema.chain_schema(
             [
                 core_schema.dict_schema(),
-                core_schema.no_info_plain_validator_function(GeoRegion),
+                core_schema.no_info_plain_validator_function(
+                    lambda x: GeoRegion(
+                        label=x["label"], scheme=GeoScheme.parse(x["scheme"])
+                    )
+                ),
             ]
         )
 
