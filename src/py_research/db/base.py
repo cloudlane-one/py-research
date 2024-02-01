@@ -1380,17 +1380,20 @@ class DB:
                     for tt, refs in outgoing.groupby("target_table"):
                         tt = str(tt)
                         for col_name, col in refs.items():
-                            ref_vals = col.dropna().unique()
-                            target_df = self[tt].df
-                            target_col = self.relations[(t, str(col_name))][1]
-                            target_idx = (
-                                ref_vals
-                                if target_col in target_df.index.names
-                                else target_df.loc[
-                                    target_df[target_col].isin(ref_vals)
-                                ].index.unique()
-                            )
-                            next_stage[tt] |= set(target_idx)
+                            try:
+                                ref_vals = col.dropna().unique()
+                                target_df = self[tt].df
+                                target_col = self.relations[(t, str(col_name))][1]
+                                target_idx = (
+                                    ref_vals
+                                    if target_col in target_df.index.names
+                                    else target_df.loc[
+                                        target_df[target_col].isin(ref_vals)
+                                    ].index.unique()
+                                )
+                                next_stage[tt] |= set(target_idx)
+                            except KeyError:
+                                pass
                 except KeyError:
                     pass
 
