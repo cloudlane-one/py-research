@@ -76,8 +76,9 @@ def plotly_to_html(
     download_format: ImageFormat = "svg",
     download_scale: float = 3,
     full_html: bool = True,
-    plotly_js_url: str
-    | None = "https://cdn.jsdelivr.net/npm/plotly.js@2/dist/plotly.min.js",
+    plotly_js_url: (
+        str | None
+    ) = "https://cdn.jsdelivr.net/npm/plotly.js@2/dist/plotly.min.js",
 ) -> str:
     """Convert plotly figure to interactive (and responsive) html.
 

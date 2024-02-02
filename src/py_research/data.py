@@ -117,11 +117,11 @@ def parse_dtype(  # noqa: C901
         result = (
             to_boolean(s)
             if is_bool_dtype(dtype)
-            else to_integer(s)
-            if is_integer_dtype(dtype)
-            else to_float(s)
-            if is_float_dtype(dtype)
-            else s
+            else (
+                to_integer(s)
+                if is_integer_dtype(dtype)
+                else to_float(s) if is_float_dtype(dtype) else s
+            )
         ).astype(
             dtype  # type: ignore
         )

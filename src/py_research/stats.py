@@ -34,9 +34,7 @@ def dist_table(
     id_cols = (
         [id_cols]
         if isinstance(id_cols, str)
-        else id_cols
-        if id_cols is not None
-        else [n or "index" for n in df.index.names]
+        else id_cols if id_cols is not None else [n or "index" for n in df.index.names]
     )
     category_cols = [
         *([category_cols] if isinstance(category_cols, str) else category_cols)
@@ -48,9 +46,11 @@ def dist_table(
         ]
         .groupby(by=category_cols, group_keys=True)
         .apply(
-            lambda df: len(df.drop_duplicates())
-            if value_col is None
-            else df.drop_duplicates(subset=id_cols)[value_col].sum()
+            lambda df: (
+                len(df.drop_duplicates())
+                if value_col is None
+                else df.drop_duplicates(subset=id_cols)[value_col].sum()
+            )
         )
         .rename("value")
     )
