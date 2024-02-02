@@ -19,11 +19,15 @@ def _auto_interval_format(
     date_prefix = (
         ""
         if max_bin < min_bin + pd.offsets.DateOffset(days=1)
-        else "%d "
-        if max_bin < min_bin + pd.offsets.DateOffset(months=1)
-        else "%m-%d "
-        if max_bin < min_bin + pd.offsets.DateOffset(years=1)
-        else "%Y-%m-%d "
+        else (
+            "%d "
+            if max_bin < min_bin + pd.offsets.DateOffset(months=1)
+            else (
+                "%m-%d "
+                if max_bin < min_bin + pd.offsets.DateOffset(years=1)
+                else "%Y-%m-%d "
+            )
+        )
     )
 
     match (time_interval):

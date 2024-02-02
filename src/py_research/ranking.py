@@ -1,4 +1,5 @@
 """Functions for ranking entities by multiple criteria."""
+
 from typing import Literal
 
 import numpy as np
@@ -113,15 +114,21 @@ def create_ranking_filter(
             cutoff_rank,
             str(rank_by.name),
             sort_order,
-            rank_only=str(rank_only.name)
-            if rank_only is not None and rank_only.name is not None
-            else None,
-            show_only=str(show_only.name)
-            if show_only is not None and show_only.name is not None
-            else None,
-            show_always=str(show_always.name)
-            if show_always is not None and show_always.name is not None
-            else None,
+            rank_only=(
+                str(rank_only.name)
+                if rank_only is not None and rank_only.name is not None
+                else None
+            ),
+            show_only=(
+                str(show_only.name)
+                if show_only is not None and show_only.name is not None
+                else None
+            ),
+            show_always=(
+                str(show_always.name)
+                if show_always is not None and show_always.name is not None
+                else None
+            ),
         ),
     )
 

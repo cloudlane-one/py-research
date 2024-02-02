@@ -95,9 +95,11 @@ class Table:
             .rename("value")
             .to_frame(),
             "_source_tables": pd.DataFrame.from_dict(
-                {k: [v] for k, v in self.source_map.items()}
-                if isinstance(self.source_map, dict)
-                else {self.source_map: [None]},
+                (
+                    {k: [v] for k, v in self.source_map.items()}
+                    if isinstance(self.source_map, dict)
+                    else {self.source_map: [None]}
+                ),
                 orient="index",
                 columns=["table"],
             ).rename_axis(index="col_prefix"),
@@ -139,8 +141,7 @@ class Table:
         link_to_left: str | None = None,
         link_table: "SingleTable | None" = None,
         naming: Literal["source", "path"] = ...,
-    ) -> "Table":
-        ...
+    ) -> "Table": ...
 
     @overload
     def merge(
@@ -150,8 +151,7 @@ class Table:
         link_to_left: str | None = None,
         link_table: "SingleTable | None" = None,
         naming: Literal["source", "path"] = ...,
-    ) -> "Table":
-        ...
+    ) -> "Table": ...
 
     @overload
     def merge(
@@ -161,8 +161,7 @@ class Table:
         link_to_left: str | None = None,
         link_table: "SingleTable" = ...,
         naming: Literal["source", "path"] = ...,
-    ) -> "Table":
-        ...
+    ) -> "Table": ...
 
     def merge(  # noqa: C901
         self,
@@ -249,29 +248,39 @@ class Table:
             merges += [
                 (
                     (sp, sc),
-                    tt
-                    if naming == "source"
-                    else f"{sp}->{sc}=>{tc}<-{tt}"
-                    if tc != (self.db[tt].df.index.name or "id")
-                    else f"{sp}->{sc}",
+                    (
+                        tt
+                        if naming == "source"
+                        else (
+                            f"{sp}->{sc}=>{tc}<-{tt}"
+                            if tc != (self.db[tt].df.index.name or "id")
+                            else f"{sp}->{sc}"
+                        )
+                    ),
                     (right or self.db[tt], tc),
                 )
                 for (sp, sc), (tt, tc) in rels
             ]
         elif right is None and link_table is None:
             outgoing = self.db._get_rels(
-                sources=list(self.source_map.values())
-                if isinstance(self.source_map, dict)
-                else [self.source_map]
+                sources=(
+                    list(self.source_map.values())
+                    if isinstance(self.source_map, dict)
+                    else [self.source_map]
+                )
             )
             merges += [
                 (
                     (sp, sc),
-                    tt
-                    if naming == "source"
-                    else f"{sp}->{sc}=>{tc}<-{tt}"
-                    if tc != (self.db[tt].df.index.name or "id")
-                    else f"{sp}->{sc}",
+                    (
+                        tt
+                        if naming == "source"
+                        else (
+                            f"{sp}->{sc}=>{tc}<-{tt}"
+                            if tc != (self.db[tt].df.index.name or "id")
+                            else f"{sp}->{sc}"
+                        )
+                    ),
                     (self.db[tt], tc),
                 )
                 for st, sc, tt, tc in outgoing.itertuples(index=False)
@@ -281,9 +290,11 @@ class Table:
 
         # Get all incoming relations.
         incoming = self.db._get_rels(
-            targets=list(self.source_map.values())
-            if isinstance(self.source_map, dict)
-            else [self.source_map]
+            targets=(
+                list(self.source_map.values())
+                if isinstance(self.source_map, dict)
+                else [self.source_map]
+            )
         )
 
         # Get a list of all applicable backward merges with their parameters.
@@ -311,11 +322,15 @@ class Table:
                 merges += [
                     (
                         (tp, tc),
-                        tt
-                        if naming == "source"
-                        else f"{tp}->{tc}<={right.name}"
-                        if tc != (self.db[tt].df.index.name or "id")
-                        else f"{tp}<={right.name}",
+                        (
+                            tt
+                            if naming == "source"
+                            else (
+                                f"{tp}->{tc}<={right.name}"
+                                if tc != (self.db[tt].df.index.name or "id")
+                                else f"{tp}<={right.name}"
+                            )
+                        ),
                         (right, link_to_left),
                     )
                     for tp in inv_src_map[tt]
@@ -324,11 +339,15 @@ class Table:
                 merges += [
                     (
                         (tp, tc),
-                        tt
-                        if naming == "source"
-                        else f"{tp}->{tc}<={sc}<-{st}"
-                        if tc != (self.db[tt].df.index.name or "id")
-                        else f"{tp}<={sc}<-{st}",
+                        (
+                            tt
+                            if naming == "source"
+                            else (
+                                f"{tp}->{tc}<={sc}<-{st}"
+                                if tc != (self.db[tt].df.index.name or "id")
+                                else f"{tp}<={sc}<-{st}"
+                            )
+                        ),
                         (self.db[st], sc),
                     )
                     for st, sc, tt, tp, tc in from_right
@@ -349,9 +368,11 @@ class Table:
         if len(merges) == 0:
             for jt in link_tables:
                 jt_links = self.db._get_rels(
-                    sources=list(jt.source_map.values())
-                    if isinstance(jt.source_map, dict)
-                    else [jt.source_map]
+                    sources=(
+                        list(jt.source_map.values())
+                        if isinstance(jt.source_map, dict)
+                        else [jt.source_map]
+                    )
                 )
                 backlinks = jt_links.loc[jt_links["target_table"].isin(sources)]
                 other_links = jt_links.loc[~jt_links["target_table"].isin(sources)]
@@ -395,15 +416,18 @@ class Table:
                         merges += [
                             (
                                 (jt_prefix, osc),
-                                ott
-                                if naming == "source"
-                                else (
-                                    (jt_prefix if len(link_tables) > 1 else btp)
-                                    + "->"
-                                    + (
-                                        f"{osc}<={otc}<-{ott}"
-                                        if otc != (self.db[ott].df.index.name or "id")
-                                        else osc
+                                (
+                                    ott
+                                    if naming == "source"
+                                    else (
+                                        (jt_prefix if len(link_tables) > 1 else btp)
+                                        + "->"
+                                        + (
+                                            f"{osc}<={otc}<-{ott}"
+                                            if otc
+                                            != (self.db[ott].df.index.name or "id")
+                                            else osc
+                                        )
                                     )
                                 ),
                                 (right or self.db[ott], otc),
@@ -474,15 +498,19 @@ class Table:
 
         res_df = self.df.copy()
         res_df.columns = [
-            c[0]
-            if len(c) == 1
-            else c[1]
-            if (
-                len(c) > 1
-                and prefix_strategy == "on_conflict"
-                and level_counts[c[1]] == 1
+            (
+                c[0]
+                if len(c) == 1
+                else (
+                    c[1]
+                    if (
+                        len(c) > 1
+                        and prefix_strategy == "on_conflict"
+                        and level_counts[c[1]] == 1
+                    )
+                    else sep.join(c)
+                )
             )
-            else sep.join(c)
             for c in self.df.columns.to_frame().itertuples(index=False)
         ]
 
@@ -906,8 +934,10 @@ class DB:
     def extend(
         self,
         other: "DB | dict[str, pd.DataFrame] | Table",
-        conflict_policy: DataConflictPolicy
-        | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]] = "raise",
+        conflict_policy: (
+            DataConflictPolicy
+            | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]]
+        ) = "raise",
     ) -> "DB":
         """Extend this database with data from another, returning a new database.
 
@@ -925,9 +955,7 @@ class DB:
         other = (
             other
             if isinstance(other, DB)
-            else DB(other)
-            if isinstance(other, dict)
-            else other.extract()
+            else DB(other) if isinstance(other, dict) else other.extract()
         )
 
         # Get the union of all table (names) in both databases.
@@ -1057,18 +1085,20 @@ class DB:
         nodes = [self[n] if isinstance(n, str) else n for n in nodes]
         # Concat all node tables into one.
         node_dfs = [
-            n.df.reset_index().assign(table=n.source_map)
-            if isinstance(n.source_map, str)
-            else pd.concat(
-                [
-                    cast(pd.DataFrame, n.df[p])
-                    .drop_duplicates()
-                    .reset_index()
-                    .assign(table=s)
-                    for p, s in n.source_map.items()
-                    if s not in self.join_tables
-                ],
-                ignore_index=True,
+            (
+                n.df.reset_index().assign(table=n.source_map)
+                if isinstance(n.source_map, str)
+                else pd.concat(
+                    [
+                        cast(pd.DataFrame, n.df[p])
+                        .drop_duplicates()
+                        .reset_index()
+                        .assign(table=s)
+                        for p, s in n.source_map.items()
+                        if s not in self.join_tables
+                    ],
+                    ignore_index=True,
+                )
             )
             for n in nodes
         ]
@@ -1246,9 +1276,11 @@ class DB:
                             .reset_index()
                             .merge(
                                 self[str(tt)].df.pipe(
-                                    lambda df: df.rename_axis("id", axis="index")
-                                    if not df.index.name
-                                    else df
+                                    lambda df: (
+                                        df.rename_axis("id", axis="index")
+                                        if not df.index.name
+                                        else df
+                                    )
                                 ),
                                 left_on=c,
                                 right_on=tc,
@@ -1409,9 +1441,11 @@ class DB:
                             for c in refs.columns
                         }
                         target_values = {
-                            c: target_df.loc[idx_sel][tc].dropna().unique()
-                            if tc in target_df.columns
-                            else idx_sel
+                            c: (
+                                target_df.loc[idx_sel][tc].dropna().unique()
+                                if tc in target_df.columns
+                                else idx_sel
+                            )
                             for c, tc in target_cols.items()
                         }
                         next_stage[str(st)] |= set(

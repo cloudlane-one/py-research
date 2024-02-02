@@ -167,9 +167,11 @@ def configure_logging(purpose: Literal["status", "report", "log"] = "status") ->
                             structlog.processors.CallsiteParameter.LINENO,
                         }
                     ),
-                    structlog.dev.ConsoleRenderer()
-                    if purpose != "log"
-                    else structlog.processors.JSONRenderer(),
+                    (
+                        structlog.dev.ConsoleRenderer()
+                        if purpose != "log"
+                        else structlog.processors.JSONRenderer()
+                    ),
                 ]
                 if purpose != "status"
                 else [structlog.dev.ConsoleRenderer(colors=False)]
@@ -191,9 +193,11 @@ def configure_logging(purpose: Literal["status", "report", "log"] = "status") ->
     logging.basicConfig(
         format="%(message)s",
         handlers=[
-            TqdmHandler(sys.stdout)
-            if purpose == "status"
-            else StreamHandler(sys.stdout)
+            (
+                TqdmHandler(sys.stdout)
+                if purpose == "status"
+                else StreamHandler(sys.stdout)
+            )
         ],
         level=logging.DEBUG if purpose == "status" else logging.INFO,
         force=True,
