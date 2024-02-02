@@ -180,11 +180,15 @@ class ResultTable:
         highlights = [
             (
                 h,
-                "; ".join(f"{prop}: {val}" for prop, val in h.css.items())
-                if isinstance(h.css, dict)
-                else str(getattr(h.css, "__name__"))
-                if hasattr(h.css, "__name__")
-                else None,
+                (
+                    "; ".join(f"{prop}: {val}" for prop, val in h.css.items())
+                    if isinstance(h.css, dict)
+                    else (
+                        str(getattr(h.css, "__name__"))
+                        if hasattr(h.css, "__name__")
+                        else None
+                    )
+                ),
             )
             for h in self.styles
         ]
@@ -210,7 +214,8 @@ class ResultTable:
 
         desc = "\n".join(
             [
-                f"""<h2>Show rows where all of:</h2>
+                (
+                    f"""<h2>Show rows where all of:</h2>
             <ul>
                 {
                     ''.join(
@@ -227,9 +232,11 @@ class ResultTable:
                 }
             </ul>
             """
-                if len(exclusive_h) > 0
-                else "",
-                f"""<h2>Show rows where any of:</h2>
+                    if len(exclusive_h) > 0
+                    else ""
+                ),
+                (
+                    f"""<h2>Show rows where any of:</h2>
             <ul>
                 {
                     ''.join(
@@ -246,9 +253,11 @@ class ResultTable:
                 }
             </ul>
             """
-                if len(inclusive_h) > 0
-                else "",
-                f"""<h2>Highlight rows where:</h2>
+                    if len(inclusive_h) > 0
+                    else ""
+                ),
+                (
+                    f"""<h2>Highlight rows where:</h2>
             <ul>
                 {
                     ''.join(
@@ -265,9 +274,11 @@ class ResultTable:
                 }
             </ul>
             """
-                if len(highlight_h) > 0
-                else "",
-                f"""<h2>Hide rows where any of:</h2>
+                    if len(highlight_h) > 0
+                    else ""
+                ),
+                (
+                    f"""<h2>Hide rows where any of:</h2>
             <ul>
                 {
                     ''.join(
@@ -281,8 +292,9 @@ class ResultTable:
                 }
             </ul>
             """
-                if len(hide_h) > 0
-                else "",
+                    if len(hide_h) > 0
+                    else ""
+                ),
             ]
         )
 
@@ -460,11 +472,11 @@ class ResultTable:
         for style in self.styles:
             rows, cols = (
                 style.rows if style.rows is not None else slice(None),
-                style.cols
-                if isinstance(style.cols, list)
-                else [style.cols]
-                if style.cols is not None
-                else slice(None),
+                (
+                    style.cols
+                    if isinstance(style.cols, list)
+                    else [style.cols] if style.cols is not None else slice(None)
+                ),
             )
 
             if isinstance(cols, list) and self.data.columns.nlevels > 1:
@@ -501,9 +513,11 @@ class ResultTable:
             if style.str_format is not None:
                 styled = styled.format(
                     subset=subset,  # type: ignore
-                    formatter=f"{{:{style.str_format}}}"
-                    if isinstance(style.str_format, str)
-                    else style.str_format,
+                    formatter=(
+                        f"{{:{style.str_format}}}"
+                        if isinstance(style.str_format, str)
+                        else style.str_format
+                    ),
                 )
 
         return styled
@@ -535,20 +549,26 @@ class ResultTable:
             }
             if self.data.columns.nlevels == 1
             else {
-                c: ("", "")
-                if c in self.__hidden_headers
-                else (c[0], label_func(c[1]) or c[1])
-                if c[1]
-                else ("", label_func(c[0]) or c[0])
+                c: (
+                    ("", "")
+                    if c[1] in self.__hidden_headers
+                    else (
+                        (c[0], label_func(c[1]) or c[1])
+                        if c[1]
+                        else ("", label_func(c[0]) or c[0])
+                    )
+                )
                 for c in self.data.columns
             }
         )
 
         if self.column_flatten_format is not None and self.data.columns.nlevels > 1:
             labels = {
-                c: self.column_flatten_format.format(*label)
-                if c[1] not in self.data.index.names
-                else label[1]
+                c: (
+                    self.column_flatten_format.format(*label)
+                    if c[1] not in self.data.index.names
+                    else label[1]
+                )
                 for c, label in labels.items()
             }
 
@@ -625,9 +645,9 @@ class ResultTable:
         )
 
         if write_to is not None:
-            with open(write_to, "w") if isinstance(
-                write_to, Path | str
-            ) else write_to as f:
+            with (
+                open(write_to, "w") if isinstance(write_to, Path | str) else write_to
+            ) as f:
                 f.write(html)
 
         return html
