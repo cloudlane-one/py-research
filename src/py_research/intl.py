@@ -92,14 +92,14 @@ class Format:
     .. _ldml pattern: https://www.unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table
     """
 
-    timedelta_auto_format: Literal[
-        "narrow", "short", "medium", "long", "raw"
-    ] | None = None
+    timedelta_auto_format: (
+        Literal["narrow", "short", "medium", "long", "raw"] | None
+    ) = None
     """How to auto-format timedeltas."""
 
-    timedelta_resolution: Literal[
-        "year", "month", "week", "day", "hour", "minute", "second"
-    ] | None = None
+    timedelta_resolution: (
+        Literal["year", "month", "week", "day", "hour", "minute", "second"] | None
+    ) = None
     """Unit to use for formatting timedeltas. Has no effect for auto-format 'raw'."""
 
     country_format: CountryScheme | None = None
@@ -218,9 +218,7 @@ class Template:
         return (
             self.wrap.format(tmpl)
             if self.wrap is not None
-            else self.replace
-            if self.replace is not None
-            else None
+            else self.replace if self.replace is not None else None
         )
 
     def apply_args(self, args: tuple) -> tuple | None:
@@ -228,11 +226,11 @@ class Template:
         return (
             self.args
             if isinstance(self.args, tuple)
-            else tuple(
-                self.args[i] if i in self.args else a for i, a in enumerate(args)
+            else (
+                tuple(self.args[i] if i in self.args else a for i, a in enumerate(args))
+                if isinstance(self.args, dict)
+                else None
             )
-            if isinstance(self.args, dict)
-            else None
         )
 
 
@@ -260,20 +258,28 @@ class Overrides:
 
             texts[name] = _merge_ordered_dicts(
                 [
-                    self_texts
-                    if isinstance(self_texts, dict)
-                    else {
-                        Args(all=True): Template(self_texts)
-                        if isinstance(self_texts, str)
-                        else self_texts
-                    },
-                    other_texts
-                    if isinstance(other_texts, dict)
-                    else {
-                        Args(all=True): Template(other_texts)
-                        if isinstance(other_texts, str)
-                        else other_texts
-                    },
+                    (
+                        self_texts
+                        if isinstance(self_texts, dict)
+                        else {
+                            Args(all=True): (
+                                Template(self_texts)
+                                if isinstance(self_texts, str)
+                                else self_texts
+                            )
+                        }
+                    ),
+                    (
+                        other_texts
+                        if isinstance(other_texts, dict)
+                        else {
+                            Args(all=True): (
+                                Template(other_texts)
+                                if isinstance(other_texts, str)
+                                else other_texts
+                            )
+                        }
+                    ),
                 ]
             )
 
@@ -502,9 +508,7 @@ class Localization:
         return (
             template
             if isinstance(template, Template)
-            else Template(template)
-            if template is not None
-            else Template()
+            else Template(template) if template is not None else Template()
         )
 
     def text(
@@ -565,9 +569,11 @@ class Localization:
                 tmpl_args = [self.value(a, locale=locale) for a in base_template.args]
             elif isinstance(base_template.args, dict):
                 tmpl_args = {
-                    i: self.value(base_template.args[i], locale=locale)
-                    if i in base_template.args
-                    else a
+                    i: (
+                        self.value(base_template.args[i], locale=locale)
+                        if i in base_template.args
+                        else a
+                    )
                     for i, a in enumerate(tmpl_args)
                 }
 
