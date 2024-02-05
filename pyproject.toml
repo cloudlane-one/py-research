@@ -37,6 +37,9 @@ name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
 readme = "README.md"
 
+[project.urls]
+Documentation = "https://cloudlane-one.github.io/py-research/"
+
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
