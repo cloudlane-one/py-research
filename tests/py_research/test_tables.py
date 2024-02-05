@@ -58,7 +58,7 @@ def test_result_table():
     assert "background-color: #123456;" in rendered
 
     # Test the table_styles attribute
-    table.table_styles = {"th": {"color": "#654321"}}
+    table.table_css = {"th": {"color": "#654321"}}
     rendered = table.to_html()
     assert "color: #654321 !important;" in rendered
 
@@ -91,7 +91,8 @@ def test_result_table_multi_df():
     merge_df = pd.concat({"df1": df, "df2": df2}, axis="columns")
 
     # Create a ResultTable
-    table = ResultTable(merge_df, hide_index=["E"])
+    table = ResultTable(merge_df, show_index=True)
+    table.styles.append(TableStyle(cols=["E"], hide="cols"))
 
     # Test the render method
     rendered = table.to_html()
@@ -117,7 +118,7 @@ def test_result_table_multi_df():
     assert "color: blue;" in rendered
 
     # Test the styles attribute with an exact col
-    style = TableStyle(cols=[("df1", "A")], css={"color": "red"})
+    style = TableStyle(dfs="df1", cols="A", css={"color": "red"})
     table.styles.append(style)
     rendered = table.to_html()
     assert "color: red;" in rendered
