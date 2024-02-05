@@ -1,7 +1,10 @@
 """Test reflect module."""
 
 import py_research
-from py_research.reflect import PyObjectRef, env_info, get_outdated_deps, is_in_jupyter
+from py_research.reflect.deps import get_outdated_deps
+from py_research.reflect.dist import get_module_distribution, get_project_urls
+from py_research.reflect.env import env_info, is_in_jupyter
+from py_research.reflect.ref import PyObjectRef
 
 
 class StaticObject:
@@ -15,6 +18,14 @@ def test_py_obj_ref():
 
     obj = ref.resolve()
     assert obj is StaticObject
+
+    assert ref.docs_url is not None
+
+    dist = get_module_distribution(py_research)
+    assert dist is not None
+    docs_urls = get_project_urls(dist, "Documentation")
+    assert len(docs_urls) > 0
+    assert ref.docs_url.startswith(docs_urls[0])
 
 
 def test_get_outdated_deps():

@@ -1,7 +1,8 @@
 """Use pip to find outdated dependencies with major version upgrades."""
 
 import py_research
-from py_research.reflect import get_module_distribution, get_outdated_deps
+from py_research.reflect.deps import get_outdated_deps
+from py_research.reflect.dist import get_module_distribution
 
 if __name__ == "__main__":
     dist = get_module_distribution(py_research)
