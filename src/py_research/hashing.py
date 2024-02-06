@@ -26,7 +26,7 @@ def _hash_sequence(s: Sequence) -> int:
 def gen_int_hash(obj: Any) -> int:
     """Generate stable hash for obj (must be known, hashable or composed of such)."""
     match obj:
-        case (Number() | str() | bytes() | date() | time() | datetime() | timedelta()):
+        case Number() | str() | bytes() | date() | time() | datetime() | timedelta():
             return _stable_hash(obj)
         case pd.DataFrame() | pd.Series() | pd.Index():
             return sum(hash_pandas_object(obj))

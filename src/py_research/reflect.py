@@ -209,9 +209,7 @@ def _version_to_range(version: Version, strategy: VersionStrategy = "major") -> 
     return (
         f"=={version}"
         if strategy == "exact"
-        else f"~{version}"
-        if strategy == "minor"
-        else f"^{version}"
+        else f"~{version}" if strategy == "minor" else f"^{version}"
     )
 
 
@@ -221,11 +219,11 @@ def _semver_range_to_spec(semver_range: str) -> SpecifierSet:
     return SpecifierSet(
         (f">={version.public}" f",<{version.major + 1}")
         if op == "^"
-        else (f">={version.public},<{version.major}" f".{version.minor + 1}")
-        if op == "~"
-        else f"{op}{version.public}"
-        if op in list(">=<")
-        else f"=={version.public}"
+        else (
+            (f">={version.public},<{version.major}" f".{version.minor + 1}")
+            if op == "~"
+            else f"{op}{version.public}" if op in list(">=<") else f"=={version.public}"
+        )
     )
 
 
@@ -272,9 +270,11 @@ class PyObjectRef(Generic[T]):
                     Version(
                         version
                         if version is not None
-                        else getattr(obj, "__version__")
-                        if hasattr(obj, "__version__")
-                        else "*"
+                        else (
+                            getattr(obj, "__version__")
+                            if hasattr(obj, "__version__")
+                            else "*"
+                        )
                     )
                 )
                 if version is not None
@@ -548,9 +548,7 @@ def env_info() -> dict[str, Any]:
     repo = (
         get_module_repo(mod)
         if mod is not None and mod.__name__ is not None
-        else get_file_repo(Path.cwd())
-        if is_in_jupyter()
-        else None
+        else get_file_repo(Path.cwd()) if is_in_jupyter() else None
     )
 
     if repo is not None:

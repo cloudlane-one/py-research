@@ -1,5 +1,6 @@
 """Utilities for working with geographical data, esp. data associated with countries."""
 
+from collections import UserString
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import auto
@@ -163,7 +164,11 @@ class GeoRegion:
         from_dict_schema = core_schema.chain_schema(
             [
                 core_schema.dict_schema(),
-                core_schema.no_info_plain_validator_function(GeoRegion),
+                core_schema.no_info_plain_validator_function(
+                    lambda x: GeoRegion(
+                        label=x["label"], scheme=GeoScheme.parse(x["scheme"])
+                    )
+                ),
             ]
         )
 
@@ -183,9 +188,9 @@ class GeoRegion:
                 ]
             ),
             serialization=core_schema.plain_serializer_function_ser_schema(
-                lambda instance: instance.label
-                if instance.schema == GeoScheme.cc_iso3
-                else instance
+                lambda instance: (
+                    instance.label if instance.schema == GeoScheme.cc_iso3 else instance
+                )
             ),
         )
 
@@ -224,7 +229,7 @@ CountryScheme: TypeAlias = Literal[
 
 
 @dataclass(frozen=True)
-class Country:
+class Country(UserString):
     """A country represented by ISO2 code, ISO3 code or name."""
 
     label: str
@@ -237,20 +242,24 @@ class Country:
         """Convert to other scheme."""
         return cast(
             Self,
-            Country(
-                cast(
-                    str,
-                    coco.convert(
-                        self.label, to=scheme.to_coco_scheme(), src=self.scheme
+            (
+                Country(
+                    cast(
+                        str,
+                        coco.convert(
+                            self.label, to=scheme.to_coco_scheme(), src=self.scheme
+                        ),
                     ),
-                ),
-                scheme,
-            )
-            if scheme != self.scheme
-            else self,
+                    scheme,
+                )
+                if scheme != self.scheme
+                else self
+            ),
         )
 
-    def __str__(self) -> str:  # noqa: D105
+    @property
+    def data(self):  # type: ignore
+        """Return the country's label."""
         return self.label
 
     def __format__(self, spec: str) -> str:  # noqa: D105

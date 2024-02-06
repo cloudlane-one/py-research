@@ -30,9 +30,12 @@ class TableMap:
     table: str
     """Name of the table to map to attributes in ``map`` to."""
 
-    map: _RelationalMap | set[str] | str | Callable[
-        [dict | str], _RelationalMap | set[str] | str
-    ]
+    map: (
+        _RelationalMap
+        | set[str]
+        | str
+        | Callable[[dict | str], _RelationalMap | set[str] | str]
+    )
     """Mapping of hierarchical attributes to table columns or other tables."""
 
     ext_maps: "list[TableMap] | None" = None
@@ -331,13 +334,19 @@ def _tree_to_db(  # noqa: C901
     row.name = (
         row[mapping.id_attr]
         if mapping.id_type == "attr" and isinstance(mapping.id_attr, str)
-        else _gen_row_hash(
-            row,
-            _path,
-            [mapping.id_attr] if isinstance(mapping.id_attr, str) else mapping.id_attr,
+        else (
+            _gen_row_hash(
+                row,
+                _path,
+                (
+                    [mapping.id_attr]
+                    if isinstance(mapping.id_attr, str)
+                    else mapping.id_attr
+                ),
+            )
+            if mapping.id_type == "hash"
+            else str(uuid4())[-10:]
         )
-        if mapping.id_type == "hash"
-        else str(uuid4())[-10:]
     )
 
     if not isinstance(row.name, str | int):
@@ -422,8 +431,7 @@ def tree_to_db(
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: Literal[True] = ...,
-) -> tuple[DB, DataConflicts]:
-    ...
+) -> tuple[DB, DataConflicts]: ...
 
 
 @overload
@@ -431,8 +439,7 @@ def tree_to_db(
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: Literal[False] = ...,
-) -> DB:
-    ...
+) -> DB: ...
 
 
 def tree_to_db(  # noqa: C901

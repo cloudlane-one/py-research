@@ -85,17 +85,14 @@ class Col(orm.MappedColumn[V]):
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, instance: None, owner: type[S]) -> ColRef[V, S]:
-            ...
+        def __get__(self, instance: None, owner: type[S]) -> ColRef[V, S]: ...
 
         @overload
-        def __get__(self, instance: object, owner: type) -> V:
-            ...
+        def __get__(self, instance: object, owner: type) -> V: ...
 
         def __get__(  # noqa: D105
             self, instance: object | None, owner: type[S]
-        ) -> ColRef[V, S] | V:
-            ...
+        ) -> ColRef[V, S] | V: ...
 
     @classmethod
     def cast_sqla_attr(cls, attr: orm.MappedColumn) -> Self:
@@ -134,8 +131,7 @@ class Data(Protocol[S_cov]):
 
     def __getitem__(  # noqa: D105
         self, ref: str | ColRef[V, S_cov]
-    ) -> sqla.ColumnElement[V]:
-        ...
+    ) -> sqla.ColumnElement[V]: ...
 
     @property
     def name(self) -> str | None:
@@ -282,9 +278,7 @@ class DeferredQuery(Data[S_cov]):
         return self.subquery.name or (
             self.func.func.__name__
             if isinstance(self.func, partial)
-            else self.func.__name__
-            if isinstance(self.func, Callable)
-            else None
+            else self.func.__name__ if isinstance(self.func, Callable) else None
         )
 
 
@@ -518,12 +512,10 @@ class DB(Generic[S_cov, DS]):
                     assert any(all(m) for m in matches)
 
     @overload
-    def __getitem__(self, key: Schema[S2, DS]) -> Schema[S2, DS]:
-        ...
+    def __getitem__(self, key: Schema[S2, DS]) -> Schema[S2, DS]: ...
 
     @overload
-    def __getitem__(self, key: None) -> Schema[S_cov, DS]:
-        ...
+    def __getitem__(self, key: None) -> Schema[S_cov, DS]: ...
 
     def __getitem__(  # noqa: D105
         self, key: Schema[S2, DS] | None
@@ -704,36 +696,31 @@ DefQueryFunc: TypeAlias = Callable[Params, DeferredQuery[S_cov]]
 
 
 @overload
-def query(func: SelFunc[Params]) -> QueryFunc[Params, S]:
-    ...
+def query(func: SelFunc[Params]) -> QueryFunc[Params, S]: ...
 
 
 @overload
 def query(
     *, defer: Literal[True] = ..., schema: type[S] = ...  # type: ignore
-) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, S]]:
-    ...
+) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, S]]: ...
 
 
 @overload
 def query(
     *, defer: Literal[True] = ..., schema: None = ...
-) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, Any]]:
-    ...
+) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, Any]]: ...
 
 
 @overload
 def query(
     *, defer: Literal[False] = ..., schema: type[S] = ...  # type: ignore
-) -> Callable[[SelFunc[Params]], QueryFunc[Params, S]]:
-    ...
+) -> Callable[[SelFunc[Params]], QueryFunc[Params, S]]: ...
 
 
 @overload
 def query(
     *, defer: Literal[False] = ..., schema: None = ...
-) -> Callable[[SelFunc[Params]], QueryFunc[Params, Any]]:
-    ...
+) -> Callable[[SelFunc[Params]], QueryFunc[Params, Any]]: ...
 
 
 def query(
