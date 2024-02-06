@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["cross_platform"]
 lock_version = "4.4.1"
-content_hash = "sha256:ac1722958860c532c861533ccbfc0eb0ce3f3dee929055b737e8f8a5e0168452"
+content_hash = "sha256:e22678cc04b9c85bf69f5fd7e4efb8181d5ea8569f840ca3141c3f1042c6d73d"
 
 [[package]]
 name = "accessible-pygments"
@@ -800,8 +800,8 @@ files = [
 
 [[package]]
 name = "ipython"
-version = "8.18.1"
-requires_python = ">=3.9"
+version = "8.21.0"
+requires_python = ">=3.10"
 summary = "IPython: Productive Interactive Computing"
 dependencies = [
     "colorama; sys_platform == \"win32\"",
@@ -816,8 +816,8 @@ dependencies = [
     "traitlets>=5",
 ]
 files = [
-    {file = "ipython-8.18.1-py3-none-any.whl", hash = "sha256:e8267419d72d81955ec1177f8a29aaa90ac80ad647499201119e2f05e99aa397"},
-    {file = "ipython-8.18.1.tar.gz", hash = "sha256:ca6f079bb33457c66e233e4580ebfc4128855b4cf6370dddd73842a9563e8a27"},
+    {file = "ipython-8.21.0-py3-none-any.whl", hash = "sha256:1050a3ab8473488d7eee163796b02e511d0735cf43a04ba2a8348bd0f2eaf8a5"},
+    {file = "ipython-8.21.0.tar.gz", hash = "sha256:48fbc236fbe0e138b88773fa0437751f14c3645fb483f1d4c5dee58b37e5ce73"},
 ]
 
 [[package]]

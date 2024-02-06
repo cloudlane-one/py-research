@@ -4,13 +4,14 @@ from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from functools import reduce
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, TextIO, cast
 
 import imgkit
 import pandas as pd
 import pdfkit
 from pandas.api.types import is_float_dtype, is_integer_dtype, is_numeric_dtype
 from pandas.io.formats.style import Styler
+from typing_extensions import deprecated
 
 
 @dataclass
@@ -593,7 +594,49 @@ class ResultTable:
 
         return styled
 
+    def to_html(
+        self, write_to: Path | str | TextIO | None = None, full_html: bool = True
+    ) -> str:
+        """Return HTML representation and optionally write it to a file.
 
+        Args:
+            styled: Styled dataframe to render.
+            write_to: File to write the HTML code to.
+            full_html: Whether to wrap the table in a full HTML document.
+
+        Returns:
+            HTML code for the table.
+        """
+        styled = self.to_styled_df()
+        html = (
+            f"""
+            <!doctype html>
+            <html>
+                <head>
+                    <title>{getattr(styled, "caption") or ""}</title>
+                </head>
+                <body>
+                    {styled.to_html(escape=False)}
+                </body>
+            </html>
+            """
+            if full_html
+            else styled.to_html(escape=False)
+        )
+
+        if write_to is not None:
+            with open(write_to, "w") if isinstance(
+                write_to, Path | str
+            ) else write_to as f:
+                f.write(html)
+
+        return html
+
+    def _repr_html_(self) -> str:
+        return self.to_html(full_html=False)
+
+
+@deprecated("Use `ResultTable.to_html` instead.")
 def to_html(styled: Styler, full_doc: bool = True) -> str:
     """Return HTML representation of a pretty table.
 
@@ -621,6 +664,7 @@ def to_html(styled: Styler, full_doc: bool = True) -> str:
     )
 
 
+@deprecated("Use the `render` module instead.")
 def html_to_pdf(doc: str, file: Path):
     """Render and save HTML ``doc`` as PDF document.
 
@@ -631,6 +675,7 @@ def html_to_pdf(doc: str, file: Path):
     pdfkit.from_string(doc, file)
 
 
+@deprecated("Use the `render` module instead.")
 def html_to_image(doc: str, file: Path):
     """Render and save HTML ``doc`` as PNG image.
 

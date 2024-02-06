@@ -777,10 +777,8 @@ class DB:
         schema = None
         if "_schema" in pd.ExcelFile(path).sheet_names:
             schema_df = pd.read_excel(path, sheet_name="_schema", index_col=0)
-            schema_ref = PyObjectRef(**schema_df["value"].to_dict())
-            schema_ref.type = type
-            if pd.isna(schema_ref.version):
-                schema_ref.version = None
+            schema_ref = PyObjectRef(**schema_df["value"].dropna().to_dict())
+            schema_ref.object_type = type
 
             schema = schema_ref.resolve()
             if not issubclass(schema, DBSchema):
@@ -852,7 +850,7 @@ class DB:
             for name, sheet in sheets.items():
                 sheet.to_excel(writer, sheet_name=name, index=True)
 
-    def describe(self) -> dict[str, dict[str, str]]:
+    def describe(self) -> dict[str, str | dict[str, str]]:
         """Return a description of this database.
 
         Returns:
@@ -868,7 +866,14 @@ class DB:
             for name in self.join_tables
         }
 
+        schema_desc = (
+            {"schema": PyObjectRef.reference(self.schema).to_url()}
+            if self.schema is not None
+            else {}
+        )
+
         return {
+            **schema_desc,
             "tables": {
                 name: f"{len(df)} objects x {len(df.columns)} attributes"
                 for name, df in self.items()
@@ -1375,17 +1380,20 @@ class DB:
                     for tt, refs in outgoing.groupby("target_table"):
                         tt = str(tt)
                         for col_name, col in refs.items():
-                            ref_vals = col.dropna().unique()
-                            target_df = self[tt].df
-                            target_col = self.relations[(t, str(col_name))][1]
-                            target_idx = (
-                                ref_vals
-                                if target_col in target_df.index.names
-                                else target_df.loc[
-                                    target_df[target_col].isin(ref_vals)
-                                ].index.unique()
-                            )
-                            next_stage[tt] |= set(target_idx)
+                            try:
+                                ref_vals = col.dropna().unique()
+                                target_df = self[tt].df
+                                target_col = self.relations[(t, str(col_name))][1]
+                                target_idx = (
+                                    ref_vals
+                                    if target_col in target_df.index.names
+                                    else target_df.loc[
+                                        target_df[target_col].isin(ref_vals)
+                                    ].index.unique()
+                                )
+                                next_stage[tt] |= set(target_idx)
+                            except KeyError:
+                                pass
                 except KeyError:
                     pass
 

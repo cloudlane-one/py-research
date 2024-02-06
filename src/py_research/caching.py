@@ -16,11 +16,7 @@ from bs4 import BeautifulSoup, Tag
 
 from py_research.data import gen_id
 from py_research.files import ensure_dir_exists
-from py_research.reflect import (
-    get_calling_module_name,
-    get_full_args_dict,
-    get_return_type,
-)
+from py_research.reflect import get_calling_module, get_full_args_dict, get_return_type
 from py_research.telemetry import get_logger
 
 log = get_logger()
@@ -238,9 +234,10 @@ def get_cache(
         A cache instance.
     """
     root_path = root_path or default_root_path
-    calling_module = get_calling_module_name() or "root"
+    calling_module = get_calling_module()
+    module_name = calling_module.__name__ if calling_module is not None else None
 
     return FileCache(
-        ensure_dir_exists(root_path / calling_module / (name or "")),
+        ensure_dir_exists(root_path / (module_name or "root") / (name or "")),
         max_cache_time,
     )

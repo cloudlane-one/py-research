@@ -20,7 +20,7 @@ jobs:
       - run: source .venv/bin/activate
       - run: echo "$PWD/.venv/bin" >> $GITHUB_PATH
       - name: Check Black formatting
-        uses: psf/black@stable
+        run: black src --check
       - name: Check for dependency issues with deptry
         run: deptry ./
       - name: Check for outdated dependencies
