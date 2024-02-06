@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast, overload
 
 import numpy as np
 import pandas as pd
@@ -16,7 +16,11 @@ from bs4 import BeautifulSoup, Tag
 
 from py_research.data import gen_id
 from py_research.files import ensure_dir_exists
-from py_research.reflect import get_calling_module, get_full_args_dict, get_return_type
+from py_research.reflect.runtime import (
+    get_calling_module,
+    get_full_args_dict,
+    get_return_type,
+)
 from py_research.telemetry import get_logger
 
 log = get_logger()
@@ -54,16 +58,32 @@ class FileCache:
             f.unlink()
             return False
 
-    def function(  # noqa: C901
+    @overload
+    def function(self, func: Callable[P, R]) -> Callable[P, R]: ...
+
+    @overload
+    def function(
         self,
+        *,
         id_arg_subset: list[int] | list[str] | None = None,
         use_raw_arg: bool = False,
         id_callback: Callable[P, dict[str, Any] | None] | None = None,
         use_json: bool = True,
-    ) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    ) -> Callable[[Callable[P, R]], Callable[P, R]]: ...
+
+    def function(  # noqa: C901
+        self,
+        func: Callable[P, R] | None = None,
+        *,
+        id_arg_subset: list[int] | list[str] | None = None,
+        use_raw_arg: bool = False,
+        id_callback: Callable[P, dict[str, Any] | None] | None = None,
+        use_json: bool = True,
+    ) -> Callable[P, R] | Callable[[Callable[P, R]], Callable[P, R]]:
         """Decorator to cache wrapped function.
 
         Args:
+            func: Function to cache.
             id_arg_subset:
                 Number or name of the arguments to base hash id of result on.
             use_raw_arg:
@@ -215,7 +235,7 @@ class FileCache:
 
             return inner_inner
 
-        return inner
+        return inner if func is None else inner(func)
 
 
 def get_cache(

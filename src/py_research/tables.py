@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import InitVar, dataclass, field
 from functools import reduce
+from itertools import product
 from pathlib import Path
 from typing import Any, Literal, TextIO, cast
 
@@ -18,8 +19,11 @@ from typing_extensions import deprecated
 class TableStyle:
     """Define a pretty table column format."""
 
-    cols: str | tuple[str, str] | list[str | tuple[str, str]] | None = None
-    """Column(s) to apply this style to. If None, apply to all columns.
+    dfs: str | list[str] | None = None
+    """Dataframe names to apply this style to. If None, apply to all dataframes."""
+
+    cols: str | list[str] | None = None
+    """Column name(s) to apply this style to. If None, apply to all columns.
     Index levels can be styled via their names as if they were columns.
     """
 
@@ -29,26 +33,27 @@ class TableStyle:
     name: str | None = None
     """Name of this style"""
 
-    str_format: str | Callable[[Any], str] | None = None
-    """Format string or callback function to use for formatting numerical values"""
-
-    alignment: Literal["left", "center", "right"] | None = None
-    """How to align the columns' text"""
+    format: str | Callable[[Any], str] | None = None
+    """Format string or callback function to use for formatting data values"""
 
     css: dict[str, str] | Callable[[Any], str] | None = None
-    """Custom CSS styles to apply to matched cells"""
+    """Custom CSS styles to apply to matched cells.
+    Supplied as a mapping from CSS property to value.
+    """
 
-    hide_headers: bool | None = None
-    """Whether to hide headers of given ``cols``."""
+    header_css: dict[str, str] | None = None
+    """Custom CSS styles applied to the headers of matched cells.
+    Supplied as a mapping from CSS property to value.
+    """
 
-    hide_rows: bool | None = None
-    """Whether to hide cols/rows if matched by this selection."""
+    hide: Literal["headers", "rows", "cols", "cells"] | None = None
+    """Whether to hide headers, rows, columns or cells matched by this style"""
 
-    filter_inclusive: bool | None = None
-    """Whether to show cols/rows if matched by this selection."""
+    include: bool | None = None
+    """Whether to show rows if matched by this selection."""
 
-    filter_exclusive: bool | None = None
-    """Whether to only show cols/rows if matched by this selection."""
+    require: bool | None = None
+    """Whether to only show rows if matched by this selection."""
 
 
 @dataclass
@@ -95,9 +100,6 @@ class ResultTable:
     title: str | None = None
     """Title of the table."""
 
-    hide_index: bool | list[str] = True
-    """Whether to hide the index columns."""
-
     max_row_cutoff: int = 100
     """Maximum number of rows to render."""
 
@@ -109,56 +111,61 @@ class ResultTable:
 
     column_flatten_format: str | None = None
     """Format string to use for flatteting multi-index column labels.
-    Leave as None to keep multi-index column labels as tuples.
+    Leave as None to keep a multi-level column header.
     Format string must take two positional arguments, e.g. "{0}_{1}".
     """
+
+    show_index: bool = False
+    """Whether to show the index as the first columns of the styled table."""
 
     table_colors: TableColors = field(default_factory=TableColors)
     """Colors to use for this table."""
 
-    table_styles: dict[str, dict[str, str]] = field(default_factory=dict)
+    table_css: dict[str, dict[str, str]] = field(default_factory=dict)
     """Additional styles to apply to the table.
     Dictionary keys must be CSS selectors and
     values must be dictionaries of CSS properties.
     """
 
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
-        if self.hide_index is not True:
-            hidden_indexes = (
-                self.hide_index if isinstance(self.hide_index, list) else []
-            )
-            index_names = (
-                df.index.names
-                if all(df.index.names)
-                else [f"index_{i}" for i in range(df.index.nlevels)]
-            )
-
-            df = df.rename_axis(index=index_names)
-
-            index_col_names = [
-                name for name in index_names if name not in hidden_indexes
-            ]
-            if df.columns.nlevels > 1:
-                index_col_names = [("", name) for name in index_col_names]
-
-            df = df.copy()
-            for col_name in index_col_names:
-                index_name = col_name if isinstance(col_name, str) else col_name[1]
-                df[col_name] = df.index.get_level_values(index_name)
-
-            self.data = df[
-                [*index_col_names, *[c for c in df.columns if c not in index_col_names]]
-            ]
-        else:
+        if not self.show_index:
             self.data = df
+            return
+
+        index_names = (
+            df.index.names
+            if all(df.index.names)
+            else [f"index_{i}" for i in range(df.index.nlevels)]
+        )
+
+        df = df.rename_axis(index=index_names)
+
+        index_col_names = [name for name in index_names]
+        if df.columns.nlevels > 1:
+            index_col_names = [("", name) for name in index_col_names]
+
+        df = df.copy()
+        for col_name in index_col_names:
+            index_name = col_name if isinstance(col_name, str) else col_name[1]
+            df[col_name] = df.index.get_level_values(index_name)
+
+        self.data = df[
+            [*index_col_names, *[c for c in df.columns if c not in index_col_names]]
+        ]
 
     @property
-    def __hidden_headers(self) -> set[str | tuple[str, str]]:
+    def _hidden_headers(self) -> set[tuple[str | None, str]]:
         hide_styles = [
-            set([style.cols] if isinstance(style.cols, str) else style.cols)
+            set(
+                product(
+                    style.dfs if isinstance(style.dfs, list) else [style.dfs],
+                    style.cols if isinstance(style.cols, list) else [style.cols],
+                )
+            )
             for style in self.styles
-            if style.cols is not None and style.hide_headers is True
+            if style.cols is not None and style.hide == "headers"
         ]
+
         return (
             reduce(
                 lambda x, y: x | y,
@@ -196,21 +203,21 @@ class ResultTable:
         exclusive_h = [
             (h, css)
             for h, css in highlights
-            if h.name is not None and css is not None and h.filter_exclusive
+            if h.name is not None and css is not None and h.require
         ]
         inclusive_h = [
             (h, css)
             for h, css in highlights
-            if h.name is not None and css is not None and h.filter_inclusive
+            if h.name is not None and css is not None and h.include
         ]
         highlight_h = [
             (h, css)
             for h, css in highlights
             if h.name is not None
             and css is not None
-            and not any([h.filter_exclusive, h.filter_inclusive, h.hide_rows])
+            and not any([h.require, h.include, h.hide in ["rows", "cells"]])
         ]
-        hide_h = [h for h, _ in highlights if h.name is not None and h.hide_rows]
+        hide_h = [h for h, _ in highlights if h.name is not None and h.hide is not None]
 
         desc = "\n".join(
             [
@@ -278,13 +285,13 @@ class ResultTable:
                     else ""
                 ),
                 (
-                    f"""<h2>Hide rows where any of:</h2>
+                    f"""<h2>Hide:</h2>
             <ul>
                 {
                     ''.join(
                         [
                             '<li style="margin-bottom: 0.5rem;">'
-                            + f'{h.name}'
+                            + f'{h.hide} where {h.name}'
                             + '</li>'
                             for h in hide_h
                         ]
@@ -315,9 +322,7 @@ class ResultTable:
             else desc
         )
 
-    def _get_cols_by_second_level(
-        self, cols: list[str | tuple[str, str]]
-    ) -> list[tuple[str, str]]:
+    def _get_cols_by_second_level(self, cols: list[str]) -> list[tuple[str, str]]:
         return [
             cast(tuple[str, str], cc)
             for c in cols
@@ -432,7 +437,7 @@ class ResultTable:
                             ]
                         ),
                     }
-                    for selector, props in self.table_styles.items()
+                    for selector, props in self.table_css.items()
                 ),
             ]
         ).format(na_rep="")
@@ -455,16 +460,22 @@ class ResultTable:
         for col in self.data.columns:
             res = res.set_properties(
                 subset=[self._to_styler_col(col)],
-                **{
-                    "text-align": self.default_style.alignment
-                    or self._default_alignment(col)
-                },
+                **{"text-align": self._default_alignment(col)},
             )
+
             res = res.format(
                 subset=[self._to_styler_col(col)],
-                formatter=self.default_style.str_format
-                or self._default_str_format(col),
+                formatter=self.default_style.format or self._default_str_format(col),
             )
+
+            if isinstance(self.default_style.css, dict):
+                res = res.set_properties(
+                    subset=[self._to_styler_col(col)], **self.default_style.css
+                )
+            elif isinstance(self.default_style.css, Callable):
+                res = res.applymap(
+                    self.default_style.css, subset=[self._to_styler_col(col)]
+                )
 
         return res
 
@@ -486,18 +497,18 @@ class ResultTable:
 
             subset = (rows, cols)
 
-            if style.hide_rows is not None:
-                styled = styled.hide(
-                    subset[0],  # type: ignore
-                    axis="index",
-                )
+            if style.hide is not None:
+                if style.hide in ["rows", "cells"]:
+                    styled = styled.hide(
+                        subset[0],  # type: ignore
+                        axis="index",
+                    )
+                if style.hide in ["cols", "cells"]:
+                    styled = styled.hide(
+                        subset[1],  # type: ignore
+                        axis="columns",
+                    )
                 continue
-
-            if style.alignment is not None:
-                styled = styled.set_properties(
-                    subset=subset,  # type: ignore
-                    **{"text-align": style.alignment},
-                )
 
             if isinstance(style.css, dict):
                 styled = styled.set_properties(
@@ -510,21 +521,21 @@ class ResultTable:
                     func=style.css,
                 )
 
-            if style.str_format is not None:
+            if style.format is not None:
                 styled = styled.format(
                     subset=subset,  # type: ignore
                     formatter=(
-                        f"{{:{style.str_format}}}"
-                        if isinstance(style.str_format, str)
-                        else style.str_format
+                        f"{{:{style.format}}}"
+                        if isinstance(style.format, str)
+                        else style.format
                     ),
                 )
 
         return styled
 
-    def __apply_widths(self, styled: Styler) -> Styler:
+    def _apply_widths(self, styled: Styler) -> Styler:
         widths = {
-            c: (self.widths.get(c if self.data.columns.nlevels == 1 else c[1]) or 1)
+            c: (self.widths.get(c if isinstance(c, str) else c[1]) or 1)
             for c in self.data.columns
         }
         width_sum = sum(w for w in widths.values() if isinstance(w, int | float))
@@ -540,18 +551,18 @@ class ResultTable:
 
         return styled
 
-    def __apply_labels(self, styled: Styler) -> Styler:
+    def _apply_labels(self, styled: Styler) -> Styler:
         label_func = self.labels.get if isinstance(self.labels, dict) else self.labels
         labels = (
             {
-                c: "" if c in self.__hidden_headers else label_func(c) or c
+                c: "" if (None, c) in self._hidden_headers else label_func(c) or c
                 for c in self.data.columns
             }
             if self.data.columns.nlevels == 1
             else {
                 c: (
                     ("", "")
-                    if c[1] in self.__hidden_headers
+                    if c in self._hidden_headers or (None, c[1]) in self._hidden_headers
                     else (
                         (c[0], label_func(c[1]) or c[1])
                         if c[1]
@@ -587,7 +598,7 @@ class ResultTable:
         incl_filters = [
             style.rows
             for style in self.styles
-            if style.filter_inclusive is True and style.rows is not None
+            if style.include is True and style.rows is not None
         ]
         if len(incl_filters) > 0:
             data = data.loc[reduce(lambda x, y: x | y, incl_filters)]
@@ -595,7 +606,7 @@ class ResultTable:
         excl_filters = [
             style.rows
             for style in self.styles
-            if style.filter_exclusive is True and style.rows is not None
+            if style.require is True and style.rows is not None
         ]
         if len(excl_filters) > 0:
             data = data.loc[reduce(lambda x, y: x & y, excl_filters)]
@@ -603,8 +614,8 @@ class ResultTable:
         styled = self._prettify_df(data.iloc[: self.max_row_cutoff], self.font_size)
         styled = self._apply_default_style(styled)
         styled = self._apply_col_defaults(styled)
-        styled = self.__apply_widths(styled)
-        styled = self.__apply_labels(styled)
+        styled = self._apply_widths(styled)
+        styled = self._apply_labels(styled)
         styled = self._apply_styles(styled)
 
         if self.title is not None:

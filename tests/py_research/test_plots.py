@@ -6,7 +6,6 @@ from tempfile import gettempdir
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-
 from py_research.plots import export_html, plotly_to_html, with_dropdown
 
 
@@ -49,7 +48,7 @@ def test_plotly_to_html():
 
 
 def test_with_dropdown():
-    """Test ``with_dropdown`` decorator.""" ""
+    """Test ``with_dropdown`` decorator."""
     df = px.data.gapminder()
     plot_func_wd = with_dropdown("continent")(plot_func)
 

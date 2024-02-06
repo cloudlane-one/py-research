@@ -9,7 +9,7 @@ from typing import Any, Literal, cast, overload
 import pandas as pd
 
 from py_research.data import parse_dtype
-from py_research.reflect import PyObjectRef
+from py_research.reflect.ref import PyObjectRef
 
 from .conflicts import DataConflictError, DataConflictPolicy
 
@@ -894,11 +894,28 @@ class DB:
             for name in self.join_tables
         }
 
-        schema_desc = (
-            {"schema": PyObjectRef.reference(self.schema).to_url()}
-            if self.schema is not None
-            else {}
-        )
+        schema_desc = {}
+        if self.schema is not None:
+            schema_ref = PyObjectRef.reference(self.schema)
+
+            schema_desc = {
+                "schema": {
+                    "repo": schema_ref.repo,
+                    "package": schema_ref.package,
+                    "class": f"{schema_ref.module}.{schema_ref.object}",
+                }
+            }
+
+            if schema_ref.object_version is not None:
+                schema_desc["schema"]["version"] = schema_ref.object_version
+            elif schema_ref.package_version is not None:
+                schema_desc["schema"]["version"] = schema_ref.package_version
+
+            if schema_ref.repo_revision is not None:
+                schema_desc["schema"]["revision"] = schema_ref.repo_revision
+
+            if schema_ref.docs_url is not None:
+                schema_desc["schema"]["docs"] = schema_ref.docs_url
 
         return {
             **schema_desc,

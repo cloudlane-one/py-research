@@ -32,7 +32,7 @@ from pandas.api.types import (
 from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
-from py_research.reflect import get_all_subclasses
+from py_research.reflect.runtime import get_all_subclasses
 
 # Deprecate this module in favor of SQL-enabled `py_research.db` package.
 warn(

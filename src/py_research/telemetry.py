@@ -29,7 +29,7 @@ class TqdmHandler(StreamHandler):
             msg = self.format(record)
 
             if self.tqdm is not None:
-                self.tqdm.set_postfix_str(msg)
+                self.tqdm.set_postfix_str(f"{msg[:50]}..." if len(msg) > 50 else msg)
         except Exception:  # pylint: disable=broad-except
             self.handleError(record)
 
