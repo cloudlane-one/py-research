@@ -11,8 +11,8 @@ import pandas as pd
 
 from py_research.hashing import gen_str_hash
 
-from .base import DB
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
+from .old_db import DB
 
 Scalar = str | int | float | datetime
 

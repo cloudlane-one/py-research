@@ -1,22 +1,23 @@
 """Universal relational data tables."""
 
-from abc import ABC
 from collections.abc import Iterable
 from dataclasses import dataclass
 from types import NoneType
-from typing import Any, Generic, TypeAlias, TypeVar, cast
+from typing import Any, Generic, TypeAlias, TypeVar, cast, overload
 
 import pandas as pd
 import sqlalchemy as sqla
 import sqlalchemy.sql.elements as sqla_elements
 
-from .schema import Attribute, DatabaseSchema, Relation, TableSchema
+from py_research.reflect.types import is_subtype
 
-T = TypeVar("T", bound=TableSchema)
-T2 = TypeVar("T2", bound=TableSchema)
+from .schema import Attr, AttrSet, DatabaseSchema, Rel, Schema
 
-T_cov = TypeVar("T_cov", covariant=True, bound=TableSchema)
-T2_cov = TypeVar("T2_cov", covariant=True, bound=TableSchema)
+T = TypeVar("T", bound=Schema)
+T2 = TypeVar("T2", bound=Schema)
+
+T_cov = TypeVar("T_cov", covariant=True, bound=Schema)
+T2_cov = TypeVar("T2_cov", covariant=True, bound=Schema)
 
 V = TypeVar("V")
 V_cov = TypeVar("V_cov", covariant=True)
@@ -27,10 +28,10 @@ class Link(Generic[T, T2, V]):
 
     def __init__(  # noqa: D107
         self,
-        relation: Relation[T, T2],
+        relation: Rel[T, T2],
         target_table: "Table[T2, Any]",
-        target_attribute: Attribute[T2, V] | None = None,
-        source_attribute: Attribute[T, V] | None = None,
+        target_attribute: Attr[T2, V] | None = None,
+        source_attribute: Attr[T, V] | None = None,
     ) -> None:
         self.relation = relation
         self.target_table = target_table
@@ -41,29 +42,39 @@ class Link(Generic[T, T2, V]):
     def __hash__(self) -> int:  # noqa: D105
         return super().__hash__()
 
-    def source_attribute(self, source_schema: "type[T]") -> Attribute[T, V]:
+    def source_attribute(self, source_schema: "type[T]") -> Attr[T, V]:
         """Get an automatic source attribute definition."""
-        return self.__source_attribute or Attribute(
+        return self.__source_attribute or Attr(
             value_type=self.target_attribute.value_type,
             schema=source_schema,
             name=f"{self.target_table.name}.{self.target_attribute.name}",
         )
 
 
-Index: TypeAlias = Attribute[T, Any] | set[Attribute[T, Any]]
+Index: TypeAlias = Attr[T, Any] | set[Attr[T, Any]]
+
+
+class DatabaseSchema:
+    """Base class for schemas of databases."""
+
+    _namespace: str | None = None
+    """Default namespace for tables in this schema."""
+
+    _ro: bool = False
+    """Whether to default to ro tables."""
 
 
 @dataclass
-class Table(Generic[T_cov, T2_cov], ABC):
+class Table(Generic[T, T2]):
     """Definition of a tabular data in a relational database."""
 
-    schema: type[T_cov]
+    schema: type[T]
     """Schema of this table."""
 
-    partial_schema: type[T2_cov] = cast(type[T2_cov], TableSchema)
+    partial_schema: type[T2] = cast(type[T2], Schema)
     """Partial schema of this table, if any."""
 
-    links: set[Link[T_cov, Any, Any]] = set()
+    links: set[Link[T, Any, Any]] = set()
     """Links to other tables."""
 
     indexes: Index | list[Index] = []
@@ -87,7 +98,7 @@ class Table(Generic[T_cov, T2_cov], ABC):
     """SQL select statement for this table."""
 
     @property
-    def foreign_keys(self) -> dict[Attribute[T_cov | T2_cov, Any], sqla.ForeignKey]:
+    def foreign_keys(self) -> dict[Attr[T | T2, Any], sqla.ForeignKey]:
         """Return the foreign keys of this table."""
         return {
             (link.source_attribute(self.schema)): sqla.ForeignKey(
@@ -97,20 +108,20 @@ class Table(Generic[T_cov, T2_cov], ABC):
         }
 
     @property
-    def primary_key(self) -> Attribute[T_cov, Any]:
+    def primary_key(self) -> Attr[T, Any]:
         """Primary key of this table."""
-        if isinstance(self.indexes, Attribute):
+        if isinstance(self.indexes, Attr):
             return self.indexes
 
         elif isinstance(self.indexes, list):
             for index in self.indexes:
-                if isinstance(index, Attribute):
+                if isinstance(index, Attr):
                     return index
 
         raise AttributeError("Table has no primary key")
 
     @property
-    def columns(self) -> dict[Attribute[T_cov | T2_cov, V], sqla.Column[V]]:
+    def columns(self) -> dict[Attr[T | T2, V], sqla.Column[V]]:
         """Return the columns of this table."""
         fks = self.foreign_keys
         return {
@@ -128,9 +139,7 @@ class Table(Generic[T_cov, T2_cov], ABC):
     def unique_constraints(self) -> list[sqla.UniqueConstraint]:
         """Return the unique constraints of this table."""
         indexes = (
-            [self.indexes]
-            if isinstance(self.indexes, Attribute | set)
-            else self.indexes
+            [self.indexes] if isinstance(self.indexes, Attr | set) else self.indexes
         )
 
         return [
@@ -172,14 +181,75 @@ class Table(Generic[T_cov, T2_cov], ABC):
         """Return the SQL clause element of this table."""
         return self.sql.subquery()
 
-    def __getitem__(self, attr: Attribute[T, V]) -> sqla_elements.KeyedColumnElement[V]:
-        """Get a column of this table."""
-        assert attr.name is not None
-        return self.sql.c[attr.name]
+    @overload
+    def __getitem__(self, key: AttrSet[T_cov, T]) -> "Table[T, Any]": ...
 
-    def __contains__(self, attr: Attribute[T, Any] | str) -> bool:
+    @overload
+    def __getitem__(self, key: AttrSet[T2_cov, T2]) -> "Table[Any, T2]": ...
+
+    @overload
+    def __getitem__(
+        self, key: Iterable[Attr[T_cov, V]]
+    ) -> sqla_elements.KeyedColumnElement[V]: ...
+
+    @overload
+    def __getitem__(
+        self, key: Attr[T_cov, V]
+    ) -> sqla_elements.KeyedColumnElement[V]: ...
+
+    @overload
+    def __getitem__(
+        self, key: Attr[T2_cov, V] | str
+    ) -> sqla_elements.KeyedColumnElement[V] | None: ...
+
+    def __getitem__(
+        self,
+        key: AttrSet[T_cov | T2_cov, Any] | Iterable[Attr[Any, V]] | Attr[Any, V] | str,
+    ) -> "Table | sqla_elements.KeyedColumnElement[V] | None":
+        """Get a column of this table."""
+        if isinstance(key, AttrSet):
+            if is_subtype(key.schema, self.schema):
+                schema = key.schema
+                partial_schema = Any
+                attrs = schema.attrs()
+            elif is_subtype(key.schema, self.partial_schema):
+                schema = Any
+                partial_schema = key.schema
+                attrs = partial_schema.attrs()
+            else:
+                raise TypeError("Schema not found")
+
+            return Table(
+                schema=schema,
+                partial_schema=partial_schema,
+                links={
+                    ln for ln in self.links if ln.source_attribute(self.schema) in attrs
+                },
+                indexes=[
+                    idx
+                    for idx in (
+                        self.indexes
+                        if isinstance(self.indexes, list)
+                        else [self.indexes]
+                    )
+                    if (isinstance(idx, set) and idx & set(attrs)) or idx in attrs
+                ],
+                db_schema=self.db_schema,
+                ro=True,
+                query=self.sql.with_only_columns(*[self[attr] for attr in attrs]),
+            )
+        else:
+            if isinstance(key, Attr):
+                assert key.name is not None
+                name = key.name
+            else:
+                name = key
+
+            return self.sql.c.get(name)
+
+    def __contains__(self, attr: Attr[T, Any] | str) -> bool:
         """Check if a column exists in this table."""
-        if isinstance(attr, Attribute):
+        if isinstance(attr, Attr):
             assert attr.name is not None
             name = attr.name
         else:
@@ -190,38 +260,6 @@ class Table(Generic[T_cov, T2_cov], ABC):
     def keys(self) -> Iterable[str]:
         """Return the column names of this table."""
         return self.sql.c.keys()
-
-    def get(
-        self, attr: Attribute[T | T2, V] | str
-    ) -> sqla_elements.KeyedColumnElement[V] | None:
-        """Get a column of this table."""
-        if isinstance(attr, Attribute):
-            assert attr.name is not None
-            name = attr.name
-        else:
-            name = attr
-
-        return self.sql.c.get(name)
-
-    def select(self, *attrs: Attribute[T_cov, Any]) -> "Table[Any, T_cov]":
-        """Return a table with only the given attributes."""
-        return Table(
-            schema=TableSchema,
-            partial_schema=self.schema,
-            links={
-                ln for ln in self.links if ln.source_attribute(self.schema) in attrs
-            },
-            indexes=[
-                idx
-                for idx in (
-                    self.indexes if isinstance(self.indexes, list) else [self.indexes]
-                )
-                if (isinstance(idx, set) and idx & set(attrs)) or idx in attrs
-            ],
-            db_schema=self.db_schema,
-            ro=True,
-            query=self.sql.with_only_columns(*[self[attr] for attr in attrs]),
-        )
 
     def filter(
         self, *conditions: sqla_elements.ColumnElement[bool]
@@ -238,43 +276,37 @@ class Table(Generic[T_cov, T2_cov], ABC):
         )
 
 
-T3 = TypeVar("T3", bound=TableSchema)
+T3 = TypeVar("T3", bound=Schema)
 
 
 @dataclass
-class JoinSchema(TableSchema, Generic[T, T2, T3]):
+class JoinSchema(Schema, Generic[T, T2]):
     """Default schema of a join table."""
 
-    left: "Relation[JoinSchema[T, T2, T3], T]"
+    left: "Rel[JoinSchema[T, T2], T]"
     """Left table of the join."""
 
-    right: "Relation[JoinSchema[T, T2, T3], T2]"
+    right: "Rel[JoinSchema[T, T2], T2]"
     """Right table of the join."""
 
-    left_index: "Attribute[JoinSchema[T, T2, T3], Any]"
+    left_index: "Attr[JoinSchema[T, T2], Any]"
     """Index of the left table."""
 
-    right_index: "Attribute[JoinSchema[T, T2, T3], Any]"
+    right_index: "Attr[JoinSchema[T, T2], Any]"
     """Index of the right table."""
-
-    link_attrs: "Relation[JoinSchema[T, T2, T3], T3]"
-    """Attributes of the join table."""
 
 
 def join_table(
-    ltr: Link[T, T2, Any], rtl: Link[T2, T, Any], extra_schema: type[T3] = TableSchema
-) -> Table[JoinSchema[T, T2, T3], Any]:
+    ltr: Link[T, T2, Any], rtl: Link[T2, T, Any], extra_schema: type[T3] = Schema
+) -> Table[JoinSchema[T, T2] | T3, Any]:
     """Create a join table from two tables."""
-    schema = cast(
-        type[JoinSchema[T, T2, extra_schema]],
-        type(
-            f"join_{ltr.target_table.schema.__name__}_{rtl.target_table.schema.__name__}",
-            (JoinSchema[T, T2, extra_schema],),
-            {},
-        ),
+    schema = type(
+        f"join_{ltr.target_table.schema.__name__}_{rtl.target_table.schema.__name__}",
+        (JoinSchema[T, T2],),
+        {},
     )
 
-    schema.left = Relation(
+    schema.left = Rel(
         name=rtl.relation.name,
         value_type=rtl.target_table.schema,
         schema=schema,
@@ -283,7 +315,7 @@ def join_table(
         schema.left, rtl.target_table, rtl.target_attribute
     ).source_attribute(schema)
 
-    schema.right = Relation(
+    schema.right = Rel(
         name=ltr.relation.name,
         value_type=ltr.target_table.schema,
         schema=schema,
@@ -313,6 +345,6 @@ class ConnectedTable(Table[T_cov, T2_cov]):
     engine: sqla.engine.Engine
     """Engine to connect to."""
 
-    def df(self) -> pd.DataFrame:
+    def to_df(self) -> pd.DataFrame:
         """Return the table as a pandas DataFrame."""
         return pd.read_sql(self.sql, self.engine)
