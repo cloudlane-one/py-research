@@ -11,7 +11,7 @@ import sqlalchemy.sql.elements as sqla_elements
 
 from py_research.reflect.types import is_subtype
 
-from .schema import Attr, AttrSet, DatabaseSchema, Rel, Schema
+from .spec import Attr, AttrSet, DatabaseSchema, Rel, Schema
 
 T = TypeVar("T", bound=Schema)
 T2 = TypeVar("T2", bound=Schema)
