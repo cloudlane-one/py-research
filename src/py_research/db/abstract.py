@@ -6,10 +6,11 @@ from typing import Any, Generic, TypeVar, overload
 
 from .spec import (
     D2,
+    DI,
     IL,
+    IL2,
     S2,
-    UI,
-    UI2,
+    TI,
     AttrRef,
     AttrSet,
     D,
@@ -19,8 +20,8 @@ from .spec import (
     DataBaseSchema,
     DataNode,
     DataSet,
+    DI_tup,
     EmptySchema,
-    Index,
     IndexSubset,
     IndexValue,
     N,
@@ -28,8 +29,7 @@ from .spec import (
     S2_cov,
     S3_cov,
     S_cov,
-    UI2_cov,
-    UI_cov,
+    TI_tup,
     V,
     V2_cov,
     V_cov,
@@ -41,6 +41,8 @@ Da_cov = TypeVar("Da_cov", covariant=True, bound="Data")
 DBS_cov = TypeVar("DBS_cov", covariant=True, bound="DataBaseSchema")
 DBS2_cov = TypeVar("DBS2_cov", covariant=True, bound="DataBaseSchema")
 
+IV = TypeVar("IV", bound="IndexValue")
+
 
 @dataclass(frozen=True, kw_only=True)
 class Ref(ABC, Generic[N, Da_cov]):
@@ -49,7 +51,7 @@ class Ref(ABC, Generic[N, Da_cov]):
     spec: Da_cov
     """Spec of the referenced data."""
 
-    container: "ArrayRef[N, Any, Any, Any, Any, Any]"
+    container: "ArrayRef[N, Any, Any, Any, Any, Any, Any]"
     """Container of the referenced data."""
 
     @property
@@ -75,59 +77,65 @@ class Var(Ref[N, Da_cov], ABC):
 
 @dataclass(frozen=True, kw_only=True)
 class ArrayRef(
-    Ref[N, DataArray[S_cov, V_cov, V2_cov, UI_cov, UI2_cov]],
+    Ref[N, DataArray[S_cov, V_cov, V2_cov, TI, DI, IL]],
     ABC,
-    Generic[N, S_cov, V_cov, V2_cov, UI_cov, UI2_cov],
+    Generic[N, S_cov, V_cov, V2_cov, TI, DI, IL],
 ):
     """Readable connection to a data array."""
 
     @overload
     def __getitem__(  # type: ignore
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, Index[IL, D, V], UI2_cov]",
-        key: IndexValue[IL, D, V],
-    ) -> V_cov: ...
-
-    @overload
-    def __getitem__(  # type: ignore
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, Index[IL, D, V]]",
-        key: IndexValue[IL, D, V],
-    ) -> V_cov | None: ...
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, tuple[*TI_tup], DI, IL]",
+        key: tuple[*TI_tup],
+    ) -> V2_cov | None: ...
 
     @overload
     def __getitem__(
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, Index[IL, D, V] | UI, UI2_cov]",
-        key: IndexValue[IL, D, V],
-    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, UI, UI2_cov]": ...
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, TI, tuple[*DI_tup], IL]",
+        key: tuple[*TI_tup],
+    ) -> V2_cov: ...
 
     @overload
     def __getitem__(
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, Index[IL, D, V] | UI2]",
-        key: IndexValue[IL, D, V],
-    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, UI2] | None": ...
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, tuple[V, *TI_tup], DI, IL]",
+        key: V,
+    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, tuple[*TI_tup], None, Any]": ...
 
     @overload
     def __getitem__(
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, Index[IL, D, V] | UI, UI2_cov]",
-        key: IndexSubset[IL, D, V, D2],
-    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, Index[IL, D2, V] | UI, UI2_cov]": ...
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, tuple[Any, *TI_tup], tuple[IV, *DI_tup], IL]",  # noqa: E501
+        key: IV,
+    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, tuple[*TI_tup], tuple[*DI_tup], Any]": ...
 
     @overload
     def __getitem__(
-        self: "ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, Index[IL, D, V] | UI2]",
-        key: IndexSubset[IL, D, V, D2],
-    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, Index[IL, D2, V] | UI2] | None": ...
+        self,
+        key: slice,
+    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, TI, None, IL]": ...
+
+    @overload
+    def __getitem__(
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, TI, tuple[IndexValue[IL2, D, V], *DI_tup], IL]",  # noqa: E501
+        key: IndexSubset[IL2, D, V, D2],
+    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, TI, tuple[IndexValue[IL2, D2, V], *DI_tup], IL]": ...  # noqa: E501
+
+    @overload
+    def __getitem__(
+        self: "ArrayRef[N, S_cov, V_cov, V2_cov, TI, DI, IL]",
+        key: "ArrayRef[N, Any, Any, bool, tuple[V], tuple[IV], IL]",
+    ) -> "ArrayRef[N, S_cov, V_cov, V2_cov, TI, None, IL]": ...
 
     def __getitem__(
         self,
-        key: IndexValue | IndexSubset,
-    ) -> "ArrayRef | V_cov | None":
+        key: "V_cov | tuple | slice | IndexValue | IndexSubset | ArrayRef",
+    ) -> "ArrayRef | V2_cov | None":
         """Get an item of this array or a sub-array."""
         ...
 
 
 @dataclass(frozen=True, kw_only=True)
 class ArrayVar(
-    ArrayRef[N, S_cov, V_cov, V2_cov, UI_cov, UI2_cov],
+    ArrayRef[N, S_cov, V_cov, V2_cov, TI, DI, IL],
     ABC,
 ):
     """Writable connection to a data array."""
@@ -178,15 +186,15 @@ class NodeVar(NodeRef[N, S_cov, V_cov, S2_cov, S3_cov], ABC):
 
 @dataclass(frozen=True, kw_only=True)
 class SetRef(
-    Ref[N, DataSet[S_cov, V_cov, V2_cov, UI_cov, UI2_cov, S2_cov, S3_cov]],
+    Ref[N, DataSet[S_cov, V_cov, V2_cov, TI, DI, IL, S2_cov, S3_cov]],
     ABC,
-    Generic[N, S_cov, V_cov, V2_cov, UI_cov, UI2_cov, S2_cov, S3_cov],
+    Generic[N, S_cov, V_cov, V2_cov, TI, DI, IL, S2_cov, S3_cov],
 ):
     """Readable connection to a data set."""
 
 
 @dataclass(frozen=True, kw_only=True)
-class SetVar(SetRef[N, S_cov, V_cov, V2_cov, UI_cov, UI2_cov, S2_cov, S3_cov], ABC):
+class SetVar(SetRef[N, S_cov, V_cov, V2_cov, TI, DI, IL, S2_cov, S3_cov], ABC):
     """Writable connection to a data set."""
 
 
