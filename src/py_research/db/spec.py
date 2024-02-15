@@ -1,6 +1,6 @@
 """Base for universal relational data schemas."""
 
-from collections.abc import Hashable, Iterable
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -11,7 +11,6 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
-    TypeVarTuple,
     cast,
     overload,
 )
@@ -19,6 +18,16 @@ from typing import (
 from yarl import URL
 
 from py_research.reflect.types import is_subtype
+
+IL = TypeVar("IL", bound="LiteralString | Schema")
+IL2 = TypeVar("IL2", bound="LiteralString | Schema")
+IL3 = TypeVar("IL3", bound="LiteralString | Schema")
+IL4 = TypeVar("IL4", bound="LiteralString | Schema")
+
+D = TypeVar("D", bound="Domain")
+D2 = TypeVar("D2", bound="Domain")
+D3 = TypeVar("D3", bound="Domain")
+D4 = TypeVar("D4", bound="Domain")
 
 S = TypeVar("S", bound="Schema")
 S2 = TypeVar("S2", bound="Schema")
@@ -35,17 +44,16 @@ A2_cov = TypeVar("A2_cov", covariant=True, bound="Attribute")
 
 V = TypeVar("V")
 V2 = TypeVar("V2")
+V3 = TypeVar("V3")
+V4 = TypeVar("V4")
 V_cov = TypeVar("V_cov", covariant=True)
 V2_cov = TypeVar("V2_cov", covariant=True)
 V_contrav = TypeVar("V_contrav", contravariant=True)
 
-RI = TypeVar("RI", bound="RangeValue")
-RI_cov = TypeVar("RI_cov", covariant=True, bound="RangeValue")
-
-UI = TypeVar("UI", bound=Hashable)
+UI = TypeVar("UI", bound="Index")
+UI2 = TypeVar("UI2", bound="Index")
 UI_cov = TypeVar("UI_cov", covariant=True)
-
-TI = TypeVarTuple("TI")
+UI2_cov = TypeVar("UI2_cov", covariant=True)
 
 L_cov = TypeVar("L_cov", bound="ArrayLink", covariant=True)
 
@@ -54,38 +62,52 @@ DA_cov = TypeVar("DA_cov", covariant=True, bound="DataArray")
 N = TypeVar("N", bound="LiteralString")
 
 
-class RangeValue(Hashable, Protocol[V_contrav]):
-    """Range value protocol."""
+class Domain(Protocol[V_contrav]):
+    """Domain of values."""
 
-    def __add__(self, other: V_contrav) -> Self:
-        """Add two index values."""
-        ...
-
-    def __ge__(self, other: Self) -> bool:
-        """Check if this value is greater than or equal to another."""
+    def __contains__(self, __key: V_contrav) -> bool:
+        """Check containment of given value representing an element or subset."""
         ...
 
 
 @dataclass(frozen=True)
-class Range(Generic[RI_cov, V_cov]):
-    """Range of values."""
+class Index(Generic[IL, D, V]):
+    """Domain of values."""
 
-    start: RI_cov
-    """Start of the range."""
+    label: IL
+    domain: D
+    value_type: type[V]
 
-    end: RI_cov
-    """End of the range."""
+    @overload
+    def __getitem__(self, v: V) -> "IndexValue[IL, D, V]": ...
 
-    step: V_cov
-    """Step of the range."""
+    @overload
+    def __getitem__(self, v: D2) -> "IndexSubset[IL, D, V, D2]": ...
 
-    def __iter__(self: "Range[RangeValue[V_cov], V_cov]") -> Iterable[RI_cov]:
-        """Iterate over the range."""
-        value = self.start
+    def __getitem__(
+        self, v: V | D2
+    ) -> "IndexValue[IL, D, V] | IndexSubset[IL, D, V, D2]":
+        """Check containment of given value representing an element or subset.
 
-        while value <= self.end:
-            yield cast(RI_cov, value)
-            value += self.step
+        Returns:
+            Special object representing the validated element / subset.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class IndexValue(Generic[IL, D, V]):
+    """Range value protocol."""
+
+    value: V
+
+
+@dataclass(frozen=True)
+class IndexSubset(Generic[IL, D, V, D2]):
+    """Range value protocol."""
+
+    super: Index[IL, D, V]
+    sub: Index[IL, D2, V]
 
 
 class Schema(Generic[S_cov, A_cov, S2_cov]):
@@ -183,20 +205,20 @@ IndexKey: TypeAlias = (
 
 
 @dataclass(kw_only=True, frozen=True)
-class ArrayLink(Generic[S, V, S2, RI, UI]):
+class ArrayLink(Generic[S, V, S2, UI]):
     """Link to a table."""
 
     attr: AttrRef["Data[S, V]", "Data[S, V]", S]
-    target: "DataArray[S2, Any, V, RI, UI, *tuple[Any, ...]] | NestedData"
+    target: "DataArray[S2, Any, V, UI, Any] | NestedData"
     source_key: IndexKey[S, UI] | None = None
 
 
 @dataclass(kw_only=True, frozen=True)
-class SetLink(ArrayLink[S, V, S2, RI, UI], Generic[S, V, S2, S3, S4, RI, UI]):
+class SetLink(ArrayLink[S, V, S2, UI], Generic[S, V, S2, S3, S4, UI]):
     """Link to a table."""
 
     attr: AttrRef["DataNode[S, V, S3, S4]", Any, S]
-    target: "DataSet[S2, Any, V, S3, S4, RI, UI, *tuple[Any, ...]] | NestedData"
+    target: "DataSet[S2, Any, V, UI, Any, S3, S4] | NestedData"
     target_key: IndexKey[S3, UI]
 
 
@@ -209,23 +231,20 @@ class Data(Attribute[S_cov], Generic[S_cov, V_cov]):
 
 
 @dataclass(frozen=True)
-class DataArray(Data[S_cov, V_cov], Generic[S_cov, V_cov, V2_cov, RI_cov, UI_cov, *TI]):
+class DataArray(Data[S_cov, V_cov], Generic[S_cov, V_cov, V2_cov, UI_cov, UI2_cov]):
     """Data array in a relational database."""
 
     item_type: type[V2_cov]
     """Value type of this array's items."""
 
-    full_index_type: type[tuple[*TI]]
+    index: Iterable[UI_cov] = []
     """Type of the index of this array.
     Use ``tuple`` for multi-dimensional arrays."
     Add ``| slice`` to index types to make them sliceable.
     """
 
-    partial_index_type: type[UI_cov] | None = None
+    partial_index: Iterable[UI2_cov] = []
     """Index type union for partial indexing."""
-
-    range_index_type: type[RI_cov] | None = None
-    """Index type for range indexing."""
 
     default: bool = False
     """Whether this is the default array for data of its spec."""
@@ -244,19 +263,19 @@ class DataNode(
     partial_schema: type[S3_cov] = cast(type[S3_cov], Schema)
     """Partial schema of this data node, if any."""
 
-    links: set[ArrayLink[S2_cov | S3_cov, V_cov, S_cov, Any, Any]] = set()
+    links: set[ArrayLink[S2_cov | S3_cov, V_cov, S_cov, Any]] = set()
     """External sources of linked attributes in this node."""
 
 
 @dataclass(frozen=True)
 class DataSet(
-    DataArray[S_cov, V_cov, V2_cov, RI_cov, UI_cov, *TI],
+    DataArray[S_cov, V_cov, V2_cov, UI_cov, UI2_cov],
     DataNode[S_cov, V_cov, S2_cov, S3_cov],
-    Generic[S_cov, V_cov, V2_cov, S2_cov, S3_cov, RI_cov, UI_cov, *TI],
+    Generic[S_cov, V_cov, V2_cov, UI_cov, UI2_cov, S2_cov, S3_cov],
 ):
     """Data set in a relational database."""
 
-    index_keys: Iterable[IndexKey[S_cov, UI_cov]] = set()
+    index_attrs: Iterable[IndexKey[S_cov, UI_cov]] = set()
     """Schema attributes to use as indexes of this dataset."""
 
 
