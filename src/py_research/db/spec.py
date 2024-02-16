@@ -1,11 +1,12 @@
 """Base for universal relational data schemas."""
 
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
     Generic,
+    Literal,
     LiteralString,
     Protocol,
     Self,
@@ -20,8 +21,8 @@ from yarl import URL
 
 from py_research.reflect.types import is_subtype
 
-IL = TypeVar("IL", bound="LiteralString | Schema | None")
-IL2 = TypeVar("IL2", bound="LiteralString | Schema | None")
+IL = TypeVar("IL", bound="LiteralString | Hashable | None")
+IL2 = TypeVar("IL2", bound="LiteralString | Hashable | None")
 
 D = TypeVar("D", bound="Domain")
 D2 = TypeVar("D2", bound="Domain")
@@ -36,9 +37,11 @@ S = TypeVar("S", bound="Schema")
 S2 = TypeVar("S2", bound="Schema")
 S3 = TypeVar("S3", bound="Schema")
 S4 = TypeVar("S4", bound="Schema")
+S5 = TypeVar("S5", bound="Schema")
 S_cov = TypeVar("S_cov", covariant=True, bound="Schema")
 S2_cov = TypeVar("S2_cov", covariant=True, bound="Schema")
 S3_cov = TypeVar("S3_cov", covariant=True, bound="Schema")
+S4_cov = TypeVar("S4_cov", covariant=True, bound="Schema")
 S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
 
 A = TypeVar("A", bound="Attribute")
@@ -68,13 +71,21 @@ class Domain(Protocol[V_contrav]):
         ...
 
 
+class All(Domain):
+    """Domain of all values."""
+
+    def __contains__(self, __key: Any) -> Literal[True]:
+        """Check containment of given value representing an element or subset."""
+        return True
+
+
 @dataclass(frozen=True)
 class Index(Generic[IL, D, V]):
-    """Domain of values."""
+    """Array index."""
 
     value_type: type[V]
-    domain: D | None = None
-    label: IL | None = None
+    domain: D
+    key: IL
 
     @overload
     def __getitem__(self: "Index[IL, D, None]", v: V2) -> "IndexValue[IL, D, V2]": ...
@@ -98,21 +109,29 @@ class Index(Generic[IL, D, V]):
         elif isinstance(v, slice):
             return IndexSubset(self, v)
         else:
-            return IndexSubset(self, Index(self.value_type, v, self.label))
+            return IndexSubset(self, Index(self.value_type, v, self.key))
 
     def __mul__(
         self, __other: "Index[IL2, D2, V2]"
     ) -> "IndexSpec[tuple[V, V2], tuple[IndexValue[IL, D, V], IndexValue[IL2, D2, V2]], IL | IL2]":  # noqa: E501
         """Combine two indexes into a new index spec."""
-        ...
+        return IndexSpec([self, __other])
 
 
-idx = Index(type(None))  # type: ignore
+class IndexFactory:
+    """Factory for index creation."""
+
+    def __getitem__(self, key: type[V]) -> Index[None, All, V]:
+        """Create a new index."""
+        return Index(key, All(), None)
+
+
+idx = IndexFactory()
 
 
 @dataclass(frozen=True)
 class IndexValue(Generic[IL, D, V]):
-    """Range value protocol."""
+    """Single value of an index."""
 
     index: Index[IL, D, V]
     value: V
@@ -120,7 +139,7 @@ class IndexValue(Generic[IL, D, V]):
 
 @dataclass(frozen=True)
 class IndexSubset(Generic[IL, D, V, D2]):
-    """Range value protocol."""
+    """Subset of an index."""
 
     super: Index[IL, D, V]
     sub: Index[IL, D2, V] | slice
@@ -128,9 +147,9 @@ class IndexSubset(Generic[IL, D, V, D2]):
 
 @dataclass(frozen=True)
 class IndexSpec(Generic[TI, DI, IL]):
-    """Type index."""
+    """Full index spec for an array."""
 
-    indexes: list[tuple[type, Domain | None, LiteralString | None]]
+    indexes: list[Index]
 
     def __mul__(
         self: "IndexSpec[tuple[*TI_tup], tuple[*DI_tup], IL]",
@@ -139,7 +158,7 @@ class IndexSpec(Generic[TI, DI, IL]):
         "IndexSpec[tuple[*TI_tup, V], tuple[*DI_tup, IndexValue[IL2, D, V]], IL | IL2]"
     ):
         """At an index at the end of the index spec."""
-        ...
+        return IndexSpec(self.indexes + [__other])
 
 
 class Schema(Generic[S_cov, A_cov, S2_cov]):
@@ -173,6 +192,7 @@ class EmptySchema(Schema):
     """Empty schema."""
 
 
+@dataclass(kw_only=True)
 class Attribute(Generic[S_cov]):
     """Attribute."""
 
@@ -197,7 +217,7 @@ class Attribute(Generic[S_cov]):
             return self
 
         assert instance is None, "Attribute must be accessed from the class"
-        return AttrSet(set([cls]), set([AttrRef(schema=cls, attr_type=type(self))]))
+        return AttrSet(set([cls]), set([AttrRef(schema=cls, attr=self)]))
 
 
 @dataclass(frozen=True)
@@ -207,7 +227,7 @@ class AttrRef(Generic[A_cov, A2_cov, S_cov]):
     schema: type[S_cov]
     """Schema, which this attribute belongs to."""
 
-    attr_type: A_cov | A2_cov
+    attr: A_cov | A2_cov
     """Type of the value of this attribute."""
 
 
@@ -238,7 +258,7 @@ IndexKey: TypeAlias = (
 
 @dataclass(kw_only=True, frozen=True)
 class ArrayLink(Generic[S, V, S2, TI]):
-    """Link to a table."""
+    """Link to a data array."""
 
     attr: AttrRef["Data[S, V]", "Data[S, V]", S]
     target: "DataArray[S2, Any, V, TI, Any, Any] | NestedData"
@@ -247,14 +267,14 @@ class ArrayLink(Generic[S, V, S2, TI]):
 
 @dataclass(kw_only=True, frozen=True)
 class SetLink(ArrayLink[S, V, S2, TI], Generic[S, V, S2, S3, S4, TI]):
-    """Link to a table."""
+    """Link to a dataset."""
 
     attr: AttrRef["DataNode[S, V, S3, S4]", Any, S]
-    target: "DataSet[S2, Any, V, TI, Any, Any, S3, S4] | NestedData"
+    target: "DataSet[S2, Any, V, TI, Any, S3, S4, Any] | NestedData"
     target_key: IndexKey[S3, TI]
 
 
-@dataclass(frozen=True)
+@dataclass
 class Data(Attribute[S_cov], Generic[S_cov, V_cov]):
     """Data point within a relational database."""
 
@@ -262,7 +282,7 @@ class Data(Attribute[S_cov], Generic[S_cov, V_cov]):
     """Type of the value of this attribute."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class DataArray(Data[S_cov, V_cov], Generic[S_cov, V_cov, V2_cov, TI, DI, IL]):
     """Data array in a relational database."""
 
@@ -270,16 +290,13 @@ class DataArray(Data[S_cov, V_cov], Generic[S_cov, V_cov, V2_cov, TI, DI, IL]):
     """Value type of this array's items."""
 
     index: IndexSpec[TI, DI, IL]
-    """Type of the index of this array.
-    Use ``tuple`` for multi-dimensional arrays."
-    Add ``| slice`` to index types to make them sliceable.
-    """
+    """Index spec of this array."""
 
     default: bool = False
     """Whether this is the default array for data of its spec."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class DataNode(
     Data[S_cov, V_cov],
     Generic[S_cov, V_cov, S2_cov, S3_cov],
@@ -296,16 +313,29 @@ class DataNode(
     """External sources of linked attributes in this node."""
 
 
-@dataclass(frozen=True)
-class DataSet(
-    DataArray[S_cov, V_cov, V2_cov, TI, DI, IL],
-    DataNode[S_cov, V_cov, S2_cov, S3_cov],
-    Generic[S_cov, V_cov, V2_cov, TI, DI, IL, S2_cov, S3_cov],
-):
-    """Data set in a relational database."""
+default_index = IndexSpec(
+    [
+        Index(
+            Hashable,
+            All(),
+            AttrRef(Schema, Data(Hashable, name="_id")),
+        )
+    ]
+)
 
-    index_attrs: Iterable[IndexKey[S_cov, TI]] = set()
-    """Schema attributes to use as indexes of this dataset."""
+
+@dataclass
+class DataSet(
+    DataArray[S_cov, V_cov, V2_cov, TI, DI, Any],
+    DataNode[S_cov, V_cov, S2_cov, S3_cov],
+    Generic[S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S4_cov],
+):
+    """Dataset in a relational database."""
+
+    index: IndexSpec[TI, DI, AttrRef[Data[S4_cov, Hashable], Any, S2_cov]] = (
+        default_index
+    )
+    """Index spec of this dataset."""
 
 
 class DataBaseSchema(Schema[S_cov, DA_cov, S2_cov]):
