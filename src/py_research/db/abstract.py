@@ -30,9 +30,9 @@ from .spec import (
     IndexValue,
     N,
     S,
+    S2_contrav,
     S2_cov,
     S3_cov,
-    S4_cov,
     S_cov,
     TI_tup,
     V,
@@ -288,9 +288,9 @@ class NodeVar(NodeRef[N, S, V, S2, S3], ABC):
 
 @dataclass(frozen=True, kw_only=True)
 class SetRef(
-    Ref[N, DataSet[S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S4_cov]],
+    Ref[N, DataSet[S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S2_contrav]],
     ABC,
-    Generic[N, S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S4_cov],
+    Generic[N, S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S2_contrav],
 ):
     """Readable connection to a dataset."""
 

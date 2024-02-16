@@ -43,6 +43,7 @@ S2_cov = TypeVar("S2_cov", covariant=True, bound="Schema")
 S3_cov = TypeVar("S3_cov", covariant=True, bound="Schema")
 S4_cov = TypeVar("S4_cov", covariant=True, bound="Schema")
 S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
+S2_contrav = TypeVar("S2_contrav", contravariant=True, bound="Schema")
 
 A = TypeVar("A", bound="Attribute")
 A_cov = TypeVar("A_cov", covariant=True, bound="Attribute")
@@ -328,11 +329,11 @@ default_index = IndexSpec(
 class DataSet(
     DataArray[S_cov, V_cov, V2_cov, TI, DI, Any],
     DataNode[S_cov, V_cov, S2_cov, S3_cov],
-    Generic[S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S4_cov],
+    Generic[S_cov, V_cov, V2_cov, TI, DI, S2_cov, S3_cov, S2_contrav],
 ):
     """Dataset in a relational database."""
 
-    index: IndexSpec[TI, DI, AttrRef[Data[S4_cov, Hashable], Any, S2_cov]] = (
+    index: IndexSpec[TI, DI, AttrRef[Data[S2_contrav, Hashable], Any, S2_cov]] = (
         default_index
     )
     """Index spec of this dataset."""
