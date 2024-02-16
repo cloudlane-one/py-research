@@ -231,20 +231,26 @@ class NodeRef(
     @overload
     def __getitem__(
         self, key: AttrSet[S2_cov, S, Any]
-    ) -> "NodeRef[N, S_cov, S, Any, Any]": ...
+    ) -> "NodeRef[N, S_cov, S, Any, Any]":
+        # Get single attribute.
+        ...
 
     @overload
     def __getitem__(
         self, key: AttrSet[S3_cov, S2, Any]
-    ) -> "NodeRef[N, S_cov, S2, Any, Any] | None": ...
+    ) -> "NodeRef[N, S_cov, S2, Any, Any] | None":
+        # Get single attribute, which may not exist.
+        ...
 
     @overload
-    def __getitem__(self, key: AttrRef[Data[S2_cov, V], Any, S2_cov]) -> V: ...
+    def __getitem__(self, key: AttrRef[Data[S2_cov, V], Any, S2_cov]) -> V:
+        # Get subset of attributes.
+        ...
 
     @overload
-    def __getitem__(
-        self, key: AttrRef[Data[S3_cov, V], Any, S3_cov] | str
-    ) -> V | None: ...
+    def __getitem__(self, key: AttrRef[Data[S3_cov, V], Any, S3_cov] | str) -> V | None:
+        # Get subset of attributes, which may not exist.
+        ...
 
     def __getitem__(
         self,
@@ -265,17 +271,23 @@ class NodeVar(NodeRef[N, S, V, S2, S3], ABC):
     @overload
     def __setitem__(
         self, key: AttrRef[Data[S2 | S3, V2], Any, S2 | S3], value: V2
-    ) -> None: ...
+    ) -> None:
+        # Set single attribute.
+        ...
 
     @overload
     def __setitem__(
         self, key: AttrSet[S2, S4, Any], value: "NodeRef[N, S, S4, Any, Any]"
-    ) -> None: ...
+    ) -> None:
+        # Set subset of attributes.
+        ...
 
     @overload
     def __setitem__(
         self, key: AttrSet[S3, S4, Any], value: "NodeRef[N, S, S4, Any, Any]"
-    ) -> None: ...
+    ) -> None:
+        # Set subset of attributes.
+        ...
 
     def __setitem__(
         self,
