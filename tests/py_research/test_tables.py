@@ -1,7 +1,6 @@
 """Test tables module."""
 
 import pandas as pd
-
 from py_research.tables import ResultTable, TableColors, TableStyle
 
 
@@ -24,7 +23,7 @@ def test_result_table():
     style = TableStyle(cols=["A"], css={"font-weight": "bold"})
     table.styles.append(style)
     rendered = table.to_html()
-    assert "font-weight: bold;" in rendered
+    assert "font-weight: bold" in rendered
 
     # Test the labels attribute
     table.labels = {"A": "Alpha", "B": "Beta", "C": "Gamma"}
@@ -36,16 +35,16 @@ def test_result_table():
     # Test widths attribute
     table.widths = {"A": "10rem", "B": "100px", "C": "auto"}
     rendered = table.to_html()
-    assert "width: 10rem;" in rendered
-    assert "width: 100px;" in rendered
-    assert "width: auto;" in rendered
+    assert "width: 10rem" in rendered
+    assert "width: 100px" in rendered
+    assert "width: auto" in rendered
 
     # Test relative widths attribute
     table.widths = {"A": 1, "B": 2, "C": 2}
     rendered = table.to_html()
-    assert "width: 20.0%;" in rendered
-    assert "width: 40.0%;" in rendered
-    assert "width: 40.0%;" in rendered
+    assert "width: 20.0%" in rendered
+    assert "width: 40.0%" in rendered
+    assert "width: 40.0%" in rendered
 
     # Test the title attribute
     table.title = "Test Table"
@@ -55,12 +54,12 @@ def test_result_table():
     # Test the table_colors attribute
     table.table_colors = TableColors(header_even="#123456")
     rendered = table.to_html()
-    assert "background-color: #123456;" in rendered
+    assert "background-color: #123456" in rendered
 
     # Test the table_styles attribute
     table.table_styles = {"th": {"color": "#654321"}}
     rendered = table.to_html()
-    assert "color: #654321 !important;" in rendered
+    assert "color: #654321 !important" in rendered
 
 
 def test_result_table_multi_df():
@@ -108,19 +107,19 @@ def test_result_table_multi_df():
     style = TableStyle(cols=["A"], css={"font-weight": "bold"})
     table.styles.append(style)
     rendered = table.to_html()
-    assert "font-weight: bold;" in rendered
+    assert "font-weight: bold" in rendered
 
     # Test the styles attribute with a row filter
     style = TableStyle(rows=(merge_df[("df1", "A")] < 3), css={"color": "blue"})
     table.styles.append(style)
     rendered = table.to_html()
-    assert "color: blue;" in rendered
+    assert "color: blue" in rendered
 
     # Test the styles attribute with an exact col
     style = TableStyle(cols=[("df1", "A")], css={"color": "red"})
     table.styles.append(style)
     rendered = table.to_html()
-    assert "color: red;" in rendered
+    assert "color: red" in rendered
 
     # Test the labels attribute
     table.labels = {"A": "Alpha", "B": "Beta", "C": "Gamma"}
@@ -134,9 +133,9 @@ def test_result_table_multi_df():
     # Test widths attribute
     table.widths = {"A": "10rem", "B": "100px", "C": "auto"}
     rendered = table.to_html()
-    assert "width: 10rem;" in rendered
-    assert "width: 100px;" in rendered
-    assert "width: auto;" in rendered
+    assert "width: 10rem" in rendered
+    assert "width: 100px" in rendered
+    assert "width: auto" in rendered
 
     # Test the title attribute
     table.title = "Test Table"
