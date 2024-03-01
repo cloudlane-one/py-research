@@ -122,6 +122,9 @@ class ResultTable:
     values must be dictionaries of CSS properties.
     """
 
+    index_label: str | None = None
+    """Label to use for multi-index."""
+
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
         if self.hide_index is not True:
             hidden_indexes = (
@@ -139,7 +142,9 @@ class ResultTable:
                 name for name in index_names if name not in hidden_indexes
             ]
             if df.columns.nlevels > 1:
-                index_col_names = [("", name) for name in index_col_names]
+                index_col_names = [
+                    (self.index_label or "", name) for name in index_col_names
+                ]
 
             df = df.copy()
             for col_name in index_col_names:
@@ -580,7 +585,7 @@ class ResultTable:
                     ("", "")
                     if c[1] in self.__hidden_headers
                     else (
-                        (c[0], label_func(c[1]) or c[1])
+                        (label_func(c[0]), label_func(c[1]) or c[1])
                         if c[1]
                         else ("", label_func(c[0]) or c[0])
                     )
