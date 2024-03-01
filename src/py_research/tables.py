@@ -122,6 +122,9 @@ class ResultTable:
     values must be dictionaries of CSS properties.
     """
 
+    index_label: str | None = None
+    """Label to use for multi-index."""
+
     def __post_init__(self, df: pd.DataFrame):  # noqa: D105
         if self.hide_index is not True:
             hidden_indexes = (
@@ -139,7 +142,9 @@ class ResultTable:
                 name for name in index_names if name not in hidden_indexes
             ]
             if df.columns.nlevels > 1:
-                index_col_names = [("", name) for name in index_col_names]
+                index_col_names = [
+                    (self.index_label or "", name) for name in index_col_names
+                ]
 
             df = df.copy()
             for col_name in index_col_names:
@@ -437,15 +442,40 @@ class ResultTable:
             ]
         ).format(na_rep="")
 
+    @staticmethod
+    def _prioritize_css(
+        css: dict[str, str] | Callable[[Any], str] | None
+    ) -> dict[str, str] | Callable[[Any], str] | None:
+        return (
+            {
+                k: v + " !important" if not v.endswith("!important") else v
+                for k, v in css.items()
+            }
+            if isinstance(css, dict)
+            else (
+                (
+                    lambda v: (
+                        v_css + " !important"
+                        if not (v_css := css(v)).endswith("!important")
+                        else v_css
+                    )
+                )
+                if isinstance(css, Callable)
+                else None
+            )
+        )
+
     def _apply_default_style(self, styled: Styler) -> Styler:
-        if isinstance(self.default_style.css, dict):
+        css = self._prioritize_css(self.default_style.css)
+
+        if isinstance(css, dict):
             styled = styled.set_properties(
                 subset=None,
-                **self.default_style.css,
+                **css,
             )
-        elif isinstance(self.default_style.css, Callable):
+        elif isinstance(css, Callable):
             styled = styled.applymap(
-                func=self.default_style.css,
+                func=css,
             )
 
         return styled
@@ -499,15 +529,17 @@ class ResultTable:
                     **{"text-align": style.alignment},
                 )
 
-            if isinstance(style.css, dict):
+            css = self._prioritize_css(style.css)
+
+            if isinstance(css, dict):
                 styled = styled.set_properties(
                     subset=subset,  # type: ignore
-                    **style.css,
+                    **css,
                 )
-            elif isinstance(style.css, Callable):
+            elif isinstance(css, Callable):
                 styled = styled.applymap(
                     subset=subset,  # type: ignore
-                    func=style.css,
+                    func=css,
                 )
 
             if style.str_format is not None:
@@ -553,7 +585,7 @@ class ResultTable:
                     ("", "")
                     if c[1] in self.__hidden_headers
                     else (
-                        (c[0], label_func(c[1]) or c[1])
+                        (label_func(c[0]), label_func(c[1]) or c[1])
                         if c[1]
                         else ("", label_func(c[0]) or c[0])
                     )
