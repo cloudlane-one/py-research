@@ -1,22 +1,12 @@
 """Easy to use relational database."""
 
-import secrets
 import warnings
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta
 from functools import partial, reduce, wraps
 from pathlib import Path
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generic,
-    Literal,
-    ParamSpec,
-    Self,
-    TypeVar,
-    cast,
-    overload,
-)
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, TypeVar, cast, overload
 
 import pandas as pd
 import sqlalchemy as sqla
@@ -27,20 +17,7 @@ from pandas.api.types import (
     is_numeric_dtype,
     is_string_dtype,
 )
-from pandas.util import hash_pandas_object
-
-from py_research.reflect.ref import PyObjectRef
-from py_research.reflect.runtime import get_all_subclasses
-
-from .conflicts import DataConflictError, DataConflictPolicy
-
-
-def _hash_df(df: pd.DataFrame | pd.Series) -> str:
-    return hex(abs(sum(hash_pandas_object(df))))[2:12]
-
-
-Params = ParamSpec("Params")
-
+from typing_extensions import override
 
 DBSchema = orm.DeclarativeBase
 
@@ -503,7 +480,7 @@ class Table:
 
     def extend(
         self,
-        other: "pd.DataFrame",
+        other: "Table | pd.DataFrame",
         conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy] = "raise",
     ) -> "Table":
         """Extend this table with data from another, returning a new table.
@@ -569,11 +546,7 @@ class Table:
                         case _:
                             pass
 
-        return SingleTable(
-            self.name,
-            self.db,
-            extended_df,
-        )
+        raise NotImplementedError("Extending tables is not yet supported.")
 
     def transform(
         self,
@@ -602,41 +575,9 @@ class Table:
         """
         raise NotImplementedError("Transforming tables is not yet supported.")
 
-    def extract(self, with_relations: bool = True) -> "DB":
-        """Extract this table into its own database (incl. related data).
-
-        Returns:
-            New database instance.
-        """
-        source_map = (
-            self.sources
-            if isinstance(self.sources, dict)
-            else {self.sources: self.sources}
-        )
-        inv_src_map = {
-            v: [k for k, v2 in source_map.items() if v2 == v]
-            for v in set(source_map.values())
-        }
-
-        source_tables = {
-            t: pd.concat(
-                [cast(pd.DataFrame, self.df[s]).drop_duplicates() for s in all_s]
-            )
-            .dropna(subset=[self.indexes[t]])
-            .set_index(self.indexes[t])
-            for t, all_s in inv_src_map.items()
-        }
-
-        return (
-            self.db.filter(
-                {
-                    s: self.db[s].df.index.to_series().isin(df.index)
-                    for s, df in source_tables.items()
-                }
-            )
-            if with_relations
-            else DB(table_dfs=source_tables)
-        )
+    def edit(self) -> "TableRW":
+        """Return a read-write version of this table."""
+        raise NotImplementedError("Editing tables is not yet supported.")
 
     @overload
     def df(self, chunksize: None) -> pd.DataFrame: ...
@@ -660,10 +601,6 @@ class Table:
         """Return the column of this table with the given name."""
         return self.query.selected_columns[name]
 
-    def __setitem__(self, name: str, value: sqla.ColumnElement | pd.Series) -> None:
-        """Set the column of this table with the given name."""
-        raise NotImplementedError("Setting columns is not yet supported.")
-
     def __contains__(self, name: str) -> bool:
         """Check whether this table has a column with the given name."""
         return name in self.query.selected_columns
@@ -682,26 +619,76 @@ class Table:
         return self.query.selected_columns.values()
 
 
+@dataclass(frozen=True)
+class TableRW(Table):
+    """Table in a relational database with read-write access."""
+
+    @overload
+    def extend(
+        self,
+        other: "Table | pd.DataFrame",
+        conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy],
+        inplace: Literal[True],
+    ) -> "TableRW": ...
+
+    @overload
+    def extend(
+        self,
+        other: "Table | pd.DataFrame",
+        conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy],
+        inplace: Literal[False],
+    ) -> Table: ...
+
+    @override
+    def extend(
+        self,
+        other: "Table | pd.DataFrame",
+        conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy] = "raise",
+        inplace: bool = False,
+    ) -> Table:
+        """Extend this table with data from another, returning a new table.
+
+        Args:
+            other: Other table to extend with.
+            conflict_policy:
+                Policy to use for resolving conflicts. Can be a global setting,
+                per-column via supplying a dict with column names as keys.
+            inplace: Whether to perform the extension in place.
+
+        Returns:
+            New table containing the extended data.
+        """
+        raise NotImplementedError("Extending tables is not yet supported.")
+
+    def __setitem__(self, name: str, value: sqla.ColumnElement | pd.Series) -> None:
+        """Set the column of this table with the given name."""
+        raise NotImplementedError("Setting columns is not yet supported.")
+
+
 @dataclass
 class DB:
     """Relational database consisting of multiple named tables."""
 
     backend: str | Path | sqla.URL
+    """Data backend of this database. May be a file path or a URL."""
 
     schema: type[DBSchema]
-    """Schema of this database."""
+    """Schema class of this database."""
 
-    schema_name: str | None = None
+    namespace: str | None = None
+    """Namespace (SQL schema) of this database."""
 
-    session_key: str = field(default_factory=partial(secrets.token_hex, nbytes=4))
+    cache_from: datetime | None = None
+    """Timestamp from which to cache data. None means no caching."""
 
-    overlay_key: str | None = None
+    cache_ttl: timedelta = timedelta(days=1)
+    """Time to live of cached data."""
+
+    overlays: dict[str, sqla.Select] = field(default_factory=dict)
+    """Overlays to apply to tables when querying the database."""
 
     validate: bool = True
-    """Whether to validate the DB schema on connection."""
-
-    _copied: bool = False
-    """Whether this database has been copied from somewhere else."""
+    """Whether to validate the database schema on connection."""
 
     def _temp_table_name(self, name: str) -> str:
         raise NotImplementedError("Temporary tables are not yet supported.")
@@ -872,27 +859,6 @@ class DB:
             "join tables": join_tables,
         }
 
-    def copy(self, deep: bool = True) -> "DB":
-        """Create a copy of this database, optionally deep.
-
-        Args:
-            deep: Whether to perform a deep copy (copy all table data).
-
-        Returns:
-            Copy of this database.
-        """
-        return DB(
-            table_dfs={
-                name: (table.df.copy() if deep else table.df)
-                for name, table in self.items()
-            },
-            relations=self.relations,
-            join_tables=self.join_tables,
-            schema=self.schema,
-            updates=self.updates,
-            _copied=True,
-        )
-
     def extend(
         self,
         other: "DB | dict[str, pd.DataFrame] | Table",
@@ -900,7 +866,6 @@ class DB:
             DataConflictPolicy
             | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]]
         ) = "raise",
-        inplace: bool = False,
     ) -> "DB":
         """Extend this database with data from another, returning a new database.
 
@@ -973,7 +938,6 @@ class DB:
             ]
         ),
         aggregators: dict[sqla.ForeignKey, sqla.Select] | None = None,
-        inplace: bool = False,
     ) -> "DB":
         """Return new database with only the data that is related to the given bases.
 
@@ -985,7 +949,6 @@ class DB:
             aggregators:
                 Mapping of foreign keys to aggregating queries. Given queries must
                 group the foreign key's table by the foreign key.
-            inplace: Whether to perform the trim in place.
 
         Returns:
             New database containing the trimmed data.
@@ -997,11 +960,20 @@ class DB:
         )
         return res
 
-    def transfer(self, new_backend: str | Path | sqla.URL) -> "DB":
+    def edit(self) -> "DBRW":
+        """Return a read-write version of this database."""
+        raise NotImplementedError("Editing databases is not yet supported.")
+
+    def transfer(
+        self,
+        to_backend: str | Path | sqla.URL | None = None,
+        to_schema: str | None = None,
+    ) -> "DB":
         """Transfer this database to a new backend.
 
         Args:
-            new_backend: New backend to transfer to.
+            to_backend: New backend to transfer to.
+            to_schema: New schema to transfer to.
 
         Returns:
             New database instance.
@@ -1121,29 +1093,6 @@ class DB:
             if name in self.table_dfs
             else self._manifest_virtual_table(name)
         )
-
-    def __setitem__(  # noqa: D105
-        self, name: str, value: SingleTable | pd.DataFrame
-    ) -> None:
-        if name.startswith("_"):
-            raise KeyError("Table names starting with '_' are not allowed.")
-
-        value = value.df if isinstance(value, SingleTable) else value
-        rels = self._get_rels()
-        target_tables = rels["target_table"].unique()
-        if name in target_tables:
-            target_cols = rels.loc[rels["target_table"] == name, "target_col"].unique()
-            if not set(target_cols).issubset(value.reset_index().columns):
-                raise ValueError(
-                    "Relations to given table name already exist, "
-                    f"but not all referenced columns were supplied: {target_cols}."
-                )
-
-        self.table_dfs[name] = value
-        self.updates[pd.Timestamp.now().round("s")] = {
-            "action": "set_table",
-            "table": name,
-        }
 
     def __contains__(self, name: str) -> bool:  # noqa: D105
         return name in self.keys() and not name.startswith("_")
@@ -1570,3 +1519,92 @@ class DB:
             join_tables=self.join_tables,
             schema=self.schema,
         )
+
+
+@dataclass
+class DBRW(DB):
+    """Relational database with read-write access."""
+
+    @override
+    def extend(
+        self,
+        other: "DB | dict[str, pd.DataFrame] | Table",
+        conflict_policy: (
+            DataConflictPolicy
+            | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]]
+        ) = "raise",
+        inplace: bool = False,
+    ) -> "DB":
+        """Extend this database with data from another, returning a new database.
+
+        Args:
+            other: Other database, dataframe dict or table to extend with.
+            conflict_policy:
+                Policy to use for resolving conflicts. Can be a global setting,
+                per-table via supplying a dict with table names as keys, or per-column
+                via supplying a dict of dicts.
+            inplace: Whether to perform the extension in place.
+
+        Returns:
+            New database containing the extended data.
+        """
+        raise NotImplementedError("Extending databases is not yet supported.")
+
+    def trim(
+        self,
+        bases: (
+            set[str | Table]
+            | dict[
+                str | Table, sqla.Select | sqla.ColumnElement[bool] | pd.Series[bool]
+            ]
+        ),
+        aggregators: dict[sqla.ForeignKey, sqla.Select] | None = None,
+        inplace: bool = False,
+    ) -> "DB":
+        """Return new database with only the data that is related to the given bases.
+
+        Args:
+            bases:
+                Tables to trim the database to. May be a set of table names or
+                table instances, or a dict mapping tables to a query or
+                a filter expression.
+            aggregators:
+                Mapping of foreign keys to aggregating queries. Given queries must
+                group the foreign key's table by the foreign key.
+            inplace: Whether to perform the trim in place.
+
+        Returns:
+            New database containing the trimmed data.
+        """
+        raise NotImplementedError("Trimming databases is not yet supported.")
+
+    def replace(self, other: "DB | dict[str, pd.DataFrame]") -> None:
+        """Replace this databases entire data with data from another.
+
+        Args:
+            other: Other database or dataframe dict to update with.
+        """
+        raise NotImplementedError("Replacing databases is not yet supported.")
+
+    def __setitem__(  # noqa: D105
+        self, name: str, value: SingleTable | pd.DataFrame
+    ) -> None:
+        if name.startswith("_"):
+            raise KeyError("Table names starting with '_' are not allowed.")
+
+        value = value.df if isinstance(value, SingleTable) else value
+        rels = self._get_rels()
+        target_tables = rels["target_table"].unique()
+        if name in target_tables:
+            target_cols = rels.loc[rels["target_table"] == name, "target_col"].unique()
+            if not set(target_cols).issubset(value.reset_index().columns):
+                raise ValueError(
+                    "Relations to given table name already exist, "
+                    f"but not all referenced columns were supplied: {target_cols}."
+                )
+
+        self.table_dfs[name] = value
+        self.updates[pd.Timestamp.now().round("s")] = {
+            "action": "set_table",
+            "table": name,
+        }
