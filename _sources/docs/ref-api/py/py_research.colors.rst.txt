@@ -1,0 +1,7 @@
+py\_research.colors module
+==========================
+
+.. automodule:: py_research.colors
+   :members:
+   :undoc-members:
+   :show-inheritance:

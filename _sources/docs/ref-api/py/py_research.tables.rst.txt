@@ -1,0 +1,7 @@
+py\_research.tables module
+==========================
+
+.. automodule:: py_research.tables
+   :members:
+   :undoc-members:
+   :show-inheritance:

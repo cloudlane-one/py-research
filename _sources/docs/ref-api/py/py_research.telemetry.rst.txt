@@ -1,0 +1,7 @@
+py\_research.telemetry module
+=============================
+
+.. automodule:: py_research.telemetry
+   :members:
+   :undoc-members:
+   :show-inheritance:
