@@ -6,12 +6,43 @@ import numpy as np
 import pandas as pd
 
 
+def _union_children_on_parents(
+    df: pd.DataFrame, name_col: str, parent_col: str
+) -> pd.DataFrame:
+    """Add union of all their children's ids to each parent node, recursively."""
+    tree = df[[name_col, parent_col]].drop_duplicates()
+
+    child_ids = df
+    for _ in range(20):
+        df = (
+            pd.concat(
+                [
+                    df,
+                    (
+                        child_ids.drop(columns=[name_col])
+                        .rename(columns={parent_col: name_col})
+                        .merge(tree, on=name_col, how="left")
+                    ),
+                ]
+            )
+            .drop_duplicates()
+            .dropna(subset=[name_col])
+        )
+
+        child_ids = df.loc[df[name_col].isin(child_ids[parent_col].dropna().unique())]
+        if child_ids.empty:
+            break
+
+    return df
+
+
 def dist_table(
     df: pd.DataFrame,
     category_cols: str | list[str],
     id_cols: str | list[str] | None = None,
     value_col: str | None = None,
     domains: dict[str, list[Hashable] | np.ndarray | pd.Index] = {},
+    category_parent_cols: str | dict[str, str] | None = None,
 ) -> pd.Series:
     """Return a frequency table of the distribution of unique entities.
 
@@ -26,6 +57,10 @@ def dist_table(
         domains:
             Force the distribution to be evaluated over these domains,
             filling missing values with 0.
+        category_parent_cols:
+            If category values are discrete and hierarchical, you may supply
+            a parent column for each category column. This will be used to
+            aggregate the distribution over the parent categories.
 
     Returns:
         Series of the distribution's values (count or sum) given the categories
@@ -39,6 +74,19 @@ def dist_table(
     category_cols = [
         *([category_cols] if isinstance(category_cols, str) else category_cols)
     ]
+
+    if category_parent_cols is not None:
+        category_parent_cols = (
+            category_parent_cols
+            if isinstance(category_parent_cols, dict)
+            else {category_cols[0]: category_parent_cols}
+        )
+        df = pd.concat(
+            [
+                _union_children_on_parents(df, name_col=col, parent_col=parent_col)
+                for col, parent_col in category_parent_cols.items()
+            ]
+        ).drop_duplicates()
 
     counts = (
         df.reset_index()[
