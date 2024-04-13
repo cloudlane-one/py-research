@@ -1,155 +1,49 @@
 """Connect to an SQL server, validate its schema and perform cached analysis queries."""
 
-from collections.abc import Callable, Mapping
-from contextvars import ContextVar
-from dataclasses import InitVar, dataclass
-from datetime import datetime
-from functools import partial, wraps
+from collections.abc import Mapping
+from dataclasses import dataclass
+from functools import cached_property, partial
 from typing import (
-    TYPE_CHECKING,
     Any,
     Generic,
     Literal,
+    LiteralString,
     ParamSpec,
-    Protocol,
     TypeAlias,
     TypeVar,
     cast,
+    get_args,
+    get_type_hints,
     overload,
 )
 
 import pandas as pd
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
-import sqlalchemy.sql.roles as sqla_roles
 from pandas.api.types import (
     is_datetime64_dtype,
     is_integer_dtype,
     is_numeric_dtype,
     is_string_dtype,
 )
-from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
+from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_all_subclasses
 
+N = TypeVar("N", bound=LiteralString)
 
-def _hash_df(df: pd.DataFrame | pd.Series) -> str:
-    return hex(abs(sum(hash_pandas_object(df))))[2:12]
-
+V = TypeVar("V")
 
 Params = ParamSpec("Params")
 
-
-def _get_sql_ctx() -> "DB":
-    sql_con = active_con.get()
-
-    if sql_con is None:
-        raise (RuntimeError("`SQLContext` object not supplied via context."))
-
-    return sql_con
+S = TypeVar("S", bound="Schema")
+S_cov = TypeVar("S_cov", covariant=True, bound="Schema")
+S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
+S2 = TypeVar("S2", bound="Schema")
 
 
-SchemaBase = orm.DeclarativeBase
-
-
-default_type_map = {
-    str: sqla.types.String().with_variant(
-        sqla.types.String(50), "oracle"
-    ),  # Avoid oracle error when VARCHAR has no size parameter
-}
-
-
-V = TypeVar("V")
-S = TypeVar("S", bound=SchemaBase)
-S_cov = TypeVar("S_cov", bound=SchemaBase, covariant=True)
-S_contra = TypeVar("S_contra", bound=SchemaBase, contravariant=True)
-V_contra = TypeVar("V_contra", contravariant=True)
-
-
-class ColRef(orm.InstrumentedAttribute[V], Generic[V, S_contra]):
-    """Reference a column by scheme type, name and value type."""  # type: ignore[override]
-
-
-class Col(orm.MappedColumn[V]):
-    """Define table column within a table schema."""
-
-    if TYPE_CHECKING:
-
-        @overload
-        def __get__(self, instance: None, owner: type[S]) -> ColRef[V, S]: ...
-
-        @overload
-        def __get__(self, instance: object, owner: type) -> V: ...
-
-        def __get__(  # noqa: D105
-            self, instance: object | None, owner: type[S]
-        ) -> ColRef[V, S] | V: ...
-
-    @classmethod
-    def cast_sqla_attr(cls, attr: orm.MappedColumn) -> Self:
-        """Cast a sqlalchemy attr object to this type."""
-        return cast(Self, attr)
-
-
-def _wrap_mapped_col(
-    func: Callable[Params, orm.MappedColumn[V]]
-) -> Callable[Params, Col[V]]:
-    @wraps(func)
-    def inner(*args: Params.args, **kwargs: Params.kwargs) -> Col[V]:
-        return Col.cast_sqla_attr(func(*args, **kwargs))
-
-    return inner
-
-
-col = _wrap_mapped_col(orm.mapped_column)
-Relation = sqla.ForeignKey
-
-
-class ColumnClause(sqla_roles.ColumnsClauseRole, sqla_roles.ExpressionElementRole):
-    """Mix sqlalchemy classes to mitigate typing mishabs."""
-
-
-class Data(Protocol[S_cov]):
-    """SQL table-shaped data."""
-
-    @property
-    def columns(self) -> Mapping[str, sqla.ColumnElement]:
-        """Return all columns within this data."""
-        ...
-
-    def __clause_element__(self) -> ColumnClause:  # noqa: D105
-        ...
-
-    def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
-    ) -> sqla.ColumnElement[V]: ...
-
-    @property
-    def name(self) -> str | None:
-        """Data object's name, if any."""
-        ...
-
-
-@dataclass
-class Table(Data[S_cov]):
-    """Reference to a manifested SQL table."""
-
-    sqla_table: sqla.Table
-
-    @property
-    def columns(self) -> dict[str, sqla.Column]:  # noqa: D102
-        return dict(self.sqla_table.columns)
-
-    def __getitem__(self, ref: str | ColRef[V, S_cov]) -> sqla.Column[V]:  # noqa: D105
-        return self.columns[ref if isinstance(ref, str) else ref.key]
-
-    def __clause_element__(self) -> ColumnClause:  # noqa: D105
-        return cast(ColumnClause, self.sqla_table)
-
-    @property
-    def name(self) -> str:  # noqa: D102
-        return self.sqla_table.name
+T = TypeVar("T", bound="Table")
 
 
 def _map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
@@ -189,225 +83,25 @@ def _cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
     }
 
 
-@dataclass
-class Query(Data[S_cov]):
-    """SQL data defined by a query."""
-
-    sel: sqla.Select
-    """SQLAlchemy select statement."""
-
-    query_name: InitVar[str]
-    """Name of this query."""
-
-    schema: type[S_cov] | None = None
-    """Schema of this query's result."""
-
-    _subquery: sqla.Subquery | None = None
-
-    def __post_init__(self, query_name: str):  # noqa: D105
-        self.__name = query_name
-
-    @property
-    def name(self) -> str:
-        """Name of this query."""
-        return self.__name
-
-    @property
-    def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
-        return dict(self.sel.columns)
-
-    def __clause_element__(self) -> ColumnClause:  # noqa: D105
-        if self._subquery is None:
-            self._subquery = self.sel.subquery()
-
-        return cast(ColumnClause, self._subquery)
-
-    def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
-    ) -> sqla.ColumnElement[V]:
-        return self.columns[ref if isinstance(ref, str) else ref.key]
-
-
-SelFunc: TypeAlias = Callable[Params, sqla.Select | sqla.Table]
-BoundSelFunc: TypeAlias = Callable[[], sqla.Select | sqla.Table]
-
-
-@dataclass
-class DeferredQuery(Data[S_cov]):
-    """SQL data defined by a query or table-returning Python function."""
-
-    func: BoundSelFunc
-    """Function returning a SQL query or table."""
-
-    schema: type[S_cov] | None = None
-    """Schema of this query's result."""
-
-    _subquery: sqla.Subquery | sqla.Table | None = None
-
-    @property
-    def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
-        return dict(self.subquery.columns)
-
-    @property
-    def subquery(self) -> sqla.Subquery | sqla.Table:
-        """Return subquery or table defined by this query."""
-        if self._subquery is None:
-            res = self.func()
-            self._subquery = res.subquery() if isinstance(res, sqla.Select) else res
-
-        return self._subquery
-
-    def __clause_element__(self) -> ColumnClause:  # noqa: D105
-        return cast(ColumnClause, self.subquery)
-
-    def __getitem__(  # noqa: D105
-        self, ref: str | ColRef[V, S_cov]
-    ) -> sqla.ColumnElement[V]:
-        return self.columns[ref if isinstance(ref, str) else ref.key]
-
-    @property
-    def name(self) -> str | None:  # noqa: D102
-        return self.subquery.name or (
-            self.func.func.__name__
-            if isinstance(self.func, partial)
-            else self.func.__name__ if isinstance(self.func, Callable) else None
-        )
-
-
-DS = TypeVar("DS", bound="DBSchema")
-
-
 def _map_foreignkey_schema(
-    table: sqla.Table,
+    _: sqla.Table,
     to_schema: str | None,
     constraint: sqla.ForeignKeyConstraint,
     referred_schema: str | None,
-    schema_dict: "dict[str | None, Schema | None]",
+    schema_dict: "dict[str | None, type[Schema]]",
 ) -> str | None:
     assert to_schema in schema_dict
 
     for schema_name, schema in schema_dict.items():
-        if schema is not None and schema.schema_def is not None:
-            for schema_class in get_all_subclasses(schema.schema_def):
+        if schema is not None:
+            for schema_class in get_all_subclasses(schema):
                 if (
-                    hasattr(schema_class, "__table__")
-                    and schema_class.__table__ is constraint.referred_table
+                    issubclass(schema_class, Table)
+                    and schema_class._sqla_table is constraint.referred_table
                 ):
                     return schema_name
 
     return referred_schema
-
-
-@dataclass
-class Schema(Generic[S_cov, DS]):
-    """SQL schema defining multiple related tables."""
-
-    schema_def: type[S_cov] | None = None
-    """Schema base class for this schema's tables."""
-
-    db_schema: type[DS] | None = None
-    """DBSchema instance this schema is defined in."""
-
-    default: bool = False
-    """Whether this is the default schema for its schema type."""
-
-    name: str | None = None
-    """Name of this schema."""
-
-    def __set_name__(self, _: type, name: str):  # noqa: D105
-        self.name = name if name != "__default__" else None
-
-    def __get__(  # noqa: D105
-        self, instance: Any, owner: type[DS]
-    ) -> "Schema[S_cov, DS]":
-        self.db_schema = owner
-        return self
-
-    @property
-    def tables(self) -> dict[str, Table]:
-        """Tables defined by this schema."""
-        assert self.db_schema is not None
-        return {
-            name: Table(table)
-            for name, table in self.db_schema.metadata().tables.items()
-            if table.schema == self.name
-        }
-
-    def __getitem__(self, table: type[S] | str) -> Table[S]:  # noqa: D105
-        # TODO: Find a way to limit table to type[S_cov] without losing type info,
-        # maybe via decorating the schema classes.
-        assert self.db_schema is not None
-        return Table(
-            self.db_schema.metadata().tables[
-                ".".join(
-                    [
-                        *([self.name] if self.name else []),
-                        table if isinstance(table, str) else table.__tablename__,
-                    ]
-                )
-            ]
-        )
-
-
-class DBSchema(Generic[S_cov]):
-    """Schema for an entire SQL database."""
-
-    __default__: Schema[S_cov, Self] = Schema()
-    """Default schema for this DB."""
-
-    @classmethod
-    def schema_dict(cls) -> dict[str | None, Schema | None]:
-        """Return dict with all sub-schemas."""
-        return {
-            None: cls.__default__,  # type: ignore
-            **{
-                (name if name != "__default__" else None): s
-                for name, s in cls.__dict__.items()
-                if isinstance(s, Schema) and name != "__default__"
-            },
-        }
-
-    @classmethod
-    def default(cls) -> Schema[S_cov, Self]:
-        """Return default schema."""
-        return cls.__default__  # type: ignore
-
-    @classmethod
-    def defaults(cls) -> dict[type[SchemaBase], Schema]:
-        """Return mapping of schema types to default schema names."""
-        defaults = {}
-        for s in cls.schema_dict().values():
-            if (
-                s is not None
-                and s.schema_def is not None
-                and (s.schema_def not in defaults.keys() or s.default)
-            ):
-                defaults[s.schema_def] = s
-        return defaults
-
-    @classmethod
-    def metadata(cls) -> sqla.MetaData:
-        """Return metadata object containing all this DB's schemas and tables."""
-        if hasattr(cls, "__metadata__"):
-            return cls.__metadata__
-
-        cls.__metadata__ = sqla.MetaData()
-        schema_dict = cls.schema_dict()
-        for schema in schema_dict.values():
-            if schema is not None and schema.schema_def is not None:
-                for table in schema.schema_def.metadata.tables.values():
-                    table.to_metadata(
-                        cls.__metadata__,
-                        schema=schema.name,
-                        referred_schema_fn=partial(
-                            _map_foreignkey_schema, schema_dict=schema_dict
-                        ),
-                    )
-
-        return cls.__metadata__
-
-
-S2 = TypeVar("S2", bound=SchemaBase)
 
 
 def _remove_external_fk(table: sqla.Table):
@@ -433,343 +127,346 @@ def _remove_external_fk(table: sqla.Table):
     )
 
 
+class ColRef(sqla.ColumnClause[V], Generic[V, T]):
+    """Reference a column by table schema, name and value type."""
+
+    def __init__(  # noqa: D107
+        self, table: type[T], name: str, value_type: type[V] | None
+    ) -> None:
+        self.table_schema = table
+        self.name = name
+        self.value_type = value_type
+
+        super().__init__(
+            self.name,
+            type_=self.table_schema._sqla_table.c[self.name].type,
+        )
+
+
 @dataclass
-class DB(Generic[S_cov, DS]):
-    """Active connection to a SQL server."""
+class Col(Generic[V]):
+    """Define table column within a table schema."""
+
+    name: str | None = None
+
+    def __setname__(self, _, name: str) -> None:  # noqa: D105
+        self.name = name
+
+    def __get__(  # noqa: D105 # type: ignore
+        self, instance: None, table: type[T]
+    ) -> ColRef[V, T]:
+        if instance is not None:
+            raise NotImplementedError("Instance-based column access not supported.")
+
+        assert self.name is not None
+        value_type: type[V] = get_args(table._type_hints[self.name])[0]
+
+        return ColRef(table, self.name, value_type)
+
+
+class Schema:
+    """Base class for declarative SQL schemas."""
+
+    _type_map: dict[type, sqla.types.TypeEngine] = {
+        str: sqla.types.String().with_variant(
+            sqla.types.String(50), "oracle"
+        ),  # Avoid oracle error when VARCHAR has no size parameter
+    }
+
+    @classmethod
+    def _tables(cls) -> set[type["Table"]]:
+        """Return all tables defined by subclasses."""
+        subclasses = get_all_subclasses(cls)
+        return {s for s in subclasses if isinstance(s, Table)}
+
+
+class Table(Schema):
+    """Protocol for table schemas."""
+
+    _table: str
+    _type_hints: dict[str, type]
+    _sqla_table: sqla.Table
+
+    def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
+        assert self._table is not None
+        return sqla.table(self._table)
+
+    def __init_subclass__(cls) -> None:  # noqa: D105
+        cls._type_hints = get_type_hints(cls)
+
+        registry = orm.registry(type_annotation_map=cls._type_map)
+
+        cls._sqla_table = sqla.Table(
+            cls._table,
+            registry.metadata,
+            *(
+                sqla.Column(name, registry._resolve_type(cls._type_hints[name]))
+                for name, col in cls.__dict__.items()
+                if isinstance(col, Col)
+            ),
+        )
+
+        return super().__init_subclass__()
+
+
+@dataclass(frozen=True)
+class Backend(Generic[N]):
+    """SQL backend for DB."""
+
+    name: N
+    """Unique name to identify this backend by."""
 
     url: str | sqla.URL
     """Connection URL."""
 
-    schema: type[DBSchema[S_cov]] = DBSchema
-    """Schema for this DB."""
 
-    tag: str = datetime.today().strftime("YYYY-MM-dd")
-    """Tag for this DB session. Used to identify automatically created tables."""
+SchemaValidation: TypeAlias = Literal["compatible-if-present", "all-present"]
 
-    validate: bool = True
-    """Whether to validate the DB schema on connection."""
 
-    def __post_init__(self):  # noqa: D105
-        self.__token = None
+@dataclass(frozen=True)
+class DBCol(Generic[N, V]):
+    """SQL column or table."""
 
-        self.engine = sqla.create_engine(self.url)
+    db: "DB[N, Any, Any]"
+    select: sqla.Select[tuple[V]]
+    name: str
 
-        if self.validate:
-            # Validation.
+    def __clause_element__(self) -> sqla.Subquery:  # noqa: D105
+        return self.select.subquery()
 
-            inspector = sqla.inspect(self.engine)
+    def to_series(self) -> pd.Series:
+        """Download selected column data as series.
 
-            for table in self.schema.metadata().tables.values():
-                if table.schema is not None:
-                    assert inspector.has_schema(table.schema)
+        Returns:
+            Series containing the data.
+        """
+        with self.db.engine.connect() as con:
+            return pd.read_sql(self.select, con)[self.select.columns[0].name]
 
-                assert inspector.has_table(table.name, table.schema)
-
-                db_columns = {
-                    c["name"]: c
-                    for c in inspector.get_columns(table.name, table.schema)
-                }
-                for column in table.columns:
-                    assert column.name in db_columns
-
-                    db_col = db_columns[column.name]
-                    assert isinstance(db_col["type"], type(column.type))
-                    assert (
-                        db_col["nullable"] == column.nullable or column.nullable is None
-                    )
-
-                db_pk = inspector.get_pk_constraint(table.name, table.schema)
-                if (
-                    len(db_pk["constrained_columns"]) > 0
-                ):  # Allow source tbales without pk
-                    assert set(db_pk["constrained_columns"]) == set(
-                        table.primary_key.columns.keys()
-                    )
-
-                db_fks = inspector.get_foreign_keys(table.name, table.schema)
-                for fk in table.foreign_key_constraints:
-                    matches = [
-                        (
-                            set(db_fk["constrained_columns"]) == set(fk.column_keys),
-                            (
-                                db_fk["referred_table"].lower()
-                                == fk.referred_table.name.lower()
-                            ),
-                            set(db_fk["referred_columns"])
-                            == set(f.column.name for f in fk.elements),
-                        )
-                        for db_fk in db_fks
-                    ]
-
-                    assert any(all(m) for m in matches)
-
-    @overload
-    def __getitem__(self, key: Schema[S2, DS]) -> Schema[S2, DS]: ...
-
-    @overload
-    def __getitem__(self, key: None) -> Schema[S_cov, DS]: ...
-
-    def __getitem__(  # noqa: D105
-        self, key: Schema[S2, DS] | None
-    ) -> Schema[S2, DS] | Schema[S_cov, DS]:
-        return self.schema.default() if key is None else key  # type: ignore
-
-    def activate(self) -> None:
-        """Set this instance as the current SQL context."""
-        self.__token = active_con.set(self)
-
-    def __enter__(self):  # noqa: D105
-        self.activate()
+    def __getitem__(self, key: slice) -> Self:  # noqa: D105
+        assert key == slice(None)
         return self
 
-    def __exit__(self, *_):  # noqa: D105
-        if self.__token is not None:
-            active_con.reset(self.__token)
+    def __setitem__(self, key: slice, value: pd.Series) -> None:  # noqa: D105
+        assert key == slice(None)
+        raise NotImplementedError("Setting SQL data not supported yet.")
 
-    def default_table(self, schema: type[S]) -> Table[S]:
-        """Return default table for given table schema.
 
-        Args:
-            schema: Schema of the table to return.
+@dataclass(frozen=True)
+class DBTable(DBCol[N, T], Generic[N, T]):
+    """SQL table."""
 
-        Returns:
-            Default table for given schema.
-        """
-        defaults = self.schema.defaults()
+    schema: type[T]
 
-        valid_keys = list(filter(lambda s: issubclass(schema, s), defaults.keys()))
-        if len(valid_keys) == 0:
-            raise KeyError(schema)
+    @property
+    def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
+        return dict(self.select.columns)
 
-        schema_name = defaults[valid_keys[0]].name
-        return Table(
-            self.schema.metadata().tables[
-                ".".join(
-                    [
-                        *([schema_name] if schema_name else []),
-                        schema.__tablename__,
-                    ]
-                )
-            ]
-        )
+    @overload
+    def __getitem__(self, ref: slice) -> Self: ...
 
-    def _table_from_df(
-        self,
-        df: pd.DataFrame,
-        schema: type[S_cov] | None = None,
-        name: str | None = None,
-    ) -> Table[S_cov]:
-        table_name = f"{self.tag}_df_{name + '_' if name else ''}{_hash_df(df)}"
+    @overload
+    def __getitem__(self, ref: str | ColRef[V, T]) -> DBCol[N, V]: ...
 
-        if table_name not in self.schema.metadata().tables and not sqla.inspect(
-            self.engine
-        ).has_table(table_name, schema=None):
-            cols = (
-                {
-                    c.key: sqla.Column(c.key, c.type, primary_key=c.primary_key)
-                    for c in schema.__table__.columns
-                }
-                if schema is not None
-                else _cols_from_df(df)
-            )
-            table = Table(
-                sqla.Table(table_name, self.schema.metadata(), *cols.values())
-            )
-            table.sqla_table.create(self.engine)
-            df.reset_index()[list(cols.keys())].to_sql(
-                table_name, self.engine, if_exists="append", index=False
-            )
+    @overload
+    def __getitem__(self, ref: sqla.ColumnElement[bool]) -> "DBTable[N, T]": ...
 
-        return (
-            Table(self.schema.metadata().tables[table_name])
-            if table_name in self.schema.metadata().tables
-            else Table(
-                sqla.Table(
-                    table_name, self.schema.metadata(), autoload_with=self.engine
-                )
-            )
-        )
-
-    def _table_from_query(
-        self, q: Query[S] | DeferredQuery[S], with_external_fk: bool = False
-    ) -> Table[S_cov]:
-        table_name = f"{self.tag}_query_{q.name}"
-
-        if table_name in self.schema.metadata().tables:
-            return Table(self.schema.metadata().tables[table_name])
-        elif sqla.inspect(self.engine).has_table(table_name, schema=None):
-            return Table(
-                sqla.Table(
-                    table_name,
-                    self.schema.metadata(),
-                    autoload_with=self.engine,
-                )
-            )
-        else:
-            sel_res = cast(sqla.Subquery | sqla.Table, q.__clause_element__())
-
-            sqla_table = (
-                q.schema.__table__.to_metadata(
-                    self.schema.metadata(),
-                    schema=None,  # type: ignore
-                    referred_schema_fn=partial(
-                        _map_foreignkey_schema, schema_dict=self.schema.schema_dict()
-                    ),
-                    name=table_name,
-                )
-                if q.schema is not None and isinstance(q.schema.__table__, sqla.Table)
-                else sqla.Table(
-                    table_name,
-                    self.schema.metadata(),
-                    *(
-                        sqla.Column(name, col.type, primary_key=col.primary_key)
-                        for name, col in sel_res.columns.items()
+    def __getitem__(  # noqa: D105
+        self, ref: slice | str | ColRef[V, T] | sqla.ColumnElement[bool]
+    ) -> "Self | DBCol[N, V] | DBTable[N, T]":
+        match ref:
+            case slice():
+                return super().__getitem__(ref)
+            case str() | ColRef():
+                name = ref if isinstance(ref, str) else ref.name
+                return cast(
+                    DBCol[N, V],
+                    DBCol(
+                        db=self.db, select=sqla.select(self.columns[name]), name=name
                     ),
                 )
-            )
-            if not with_external_fk:
-                _remove_external_fk(sqla_table)
-            sqla_table.create(self.engine)
-
-            table = Table(sqla_table)
-
-            with self.engine.begin() as con:
-                con.execute(
-                    sqla.insert(table).from_select(
-                        sel_res.exported_columns.keys(), sel_res
-                    )
+            case sqla.ColumnElement():
+                return DBTable(
+                    db=self.db,
+                    select=self.select.where(ref),
+                    name=self.name,
+                    schema=self.schema,
                 )
 
-            return table
-
-    def to_table(
-        self,
-        src: pd.DataFrame | Query[S_cov] | DeferredQuery[S_cov],
-        schema: type[S_cov] | None = None,
-        name: str | None = None,
-        with_external_fk: bool = False,
-    ) -> Table[S_cov]:
-        """Transfer dataframe or sql query results to manifested SQL table.
-
-        Args:
-            src: Source / definition of data.
-            schema: Schema of the table to create.
-            name: Name of the table to create.
-            with_external_fk: Whether to include foreign keys to external tables.
-
-        Returns:
-            Reference to manifested SQL table.
-        """
-        match src:
-            case pd.DataFrame():
-                return self._table_from_df(src, schema, name)
-            case Query() | DeferredQuery():
-                return self._table_from_query(src, with_external_fk)
-
-    def to_df(self, q: Data) -> pd.DataFrame:
-        """Transfer manifested table or query results to local dataframe.
-
-        Args:
-            q: Source / definition of data.
+    def to_df(self) -> pd.DataFrame:
+        """Download table selection to dataframe.
 
         Returns:
             Dataframe containing the data.
         """
-        sel = sqla.select(q)
-        with self.engine.connect() as con:
-            return pd.read_sql(sel, con)
+        with self.db.engine.connect() as con:
+            return pd.read_sql(self.select, con)
 
 
-active_con: ContextVar[DB | None] = ContextVar("active_sql_con", default=None)
+@dataclass
+class DB(Generic[N, S_cov, S_contrav]):
+    """Active connection to a SQL server."""
 
+    backend: Backend[N]
+    schema: type[S_cov | S_contrav] | Mapping[type[S_cov | S_contrav], str] | None = (
+        None
+    )
+    overlay: bool | str = False
+    validations: Mapping[type[S_cov], SchemaValidation] = {}
 
-QueryFunc: TypeAlias = Callable[Params, Query[S_cov]]
-DefQueryFunc: TypeAlias = Callable[Params, DeferredQuery[S_cov]]
+    @cached_property
+    def schema_dict(self) -> dict[str | None, type[S_cov | S_contrav]]:
+        """Return dict with all schemas."""
+        return (
+            {name: s for s, name in self.schema.items()}
+            if isinstance(self.schema, Mapping)
+            else {None: self.schema} if self.schema is not None else {}
+        )
 
+    @cached_property
+    def metadata(self) -> sqla.MetaData:
+        """Return metadata object containing all this DB's tables."""
+        metadata = sqla.MetaData()
+        schema_dict = self.schema_dict
 
-@overload
-def query(func: SelFunc[Params]) -> QueryFunc[Params, S]: ...
-
-
-@overload
-def query(
-    *, defer: Literal[True] = ..., schema: type[S] = ...  # type: ignore
-) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, S]]: ...
-
-
-@overload
-def query(
-    *, defer: Literal[True] = ..., schema: None = ...
-) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, Any]]: ...
-
-
-@overload
-def query(
-    *, defer: Literal[False] = ..., schema: type[S] = ...  # type: ignore
-) -> Callable[[SelFunc[Params]], QueryFunc[Params, S]]: ...
-
-
-@overload
-def query(
-    *, defer: Literal[False] = ..., schema: None = ...
-) -> Callable[[SelFunc[Params]], QueryFunc[Params, Any]]: ...
-
-
-def query(
-    func: SelFunc[Params] | None = None,
-    *,
-    defer: bool | None = False,
-    schema: type[S] | None = None,
-) -> (
-    QueryFunc[Params, S]
-    | Callable[[SelFunc[Params]], QueryFunc[Params, S] | DefQueryFunc[Params, S]]
-):
-    """Decorator to transform query-returning function into a referencable query.
-
-    Args:
-        func: Function returning a :py:obj:`sqla.Selectable`.
-        defer: Whether to defer execution of the query.
-        schema: Schema of the query's result.
-
-    Returns:
-        Decorated function.
-    """
-
-    def inner(
-        func: SelFunc[Params],
-    ) -> QueryFunc[Params, S] | DefQueryFunc[Params, S]:
-        @wraps(func)
-        def inner_inner(
-            *args: Params.args, **kwargs: Params.kwargs
-        ) -> Query[S] | DeferredQuery[S]:
-            res = func(*args, **kwargs)
-            return (
-                Query(
-                    res if isinstance(res, sqla.Select) else sqla.select(res),
-                    func.__name__,
-                    schema,
+        for schema_name, schema in schema_dict.items():
+            for table in schema._tables():
+                table._sqla_table.to_metadata(
+                    metadata,
+                    schema=schema_name or sqla.schema.SchemaConst.RETAIN_SCHEMA,
+                    referred_schema_fn=partial(
+                        _map_foreignkey_schema, schema_dict=schema_dict
+                    ),
                 )
-                if not defer
-                else DeferredQuery(partial(func, *args, **kwargs), schema)
+
+        return metadata
+
+    @cached_property
+    def engine(self) -> sqla.engine.Engine:
+        """Return engine for this DB."""
+        return sqla.create_engine(self.backend.url)
+
+    def validate(self) -> None:
+        """Perform pre-defined schema validations."""
+        tables = {
+            t: v
+            for s, v in self.validations.items()
+            for t in self[s].metadata.tables.values()
+        }
+
+        inspector = sqla.inspect(self.engine)
+
+        for table, validation in tables.items():
+            has_table = inspector.has_table(table.name, table.schema)
+
+            if not has_table and validation == "compatible-if-present":
+                continue
+
+            assert has_table
+
+            db_columns = {
+                c["name"]: c for c in inspector.get_columns(table.name, table.schema)
+            }
+            for column in table.columns:
+                assert column.name in db_columns
+
+                db_col = db_columns[column.name]
+                assert isinstance(db_col["type"], type(column.type))
+                assert db_col["nullable"] == column.nullable or column.nullable is None
+
+            db_pk = inspector.get_pk_constraint(table.name, table.schema)
+            if len(db_pk["constrained_columns"]) > 0:  # Allow source tbales without pk
+                assert set(db_pk["constrained_columns"]) == set(
+                    table.primary_key.columns.keys()
+                )
+
+            db_fks = inspector.get_foreign_keys(table.name, table.schema)
+            for fk in table.foreign_key_constraints:
+                matches = [
+                    (
+                        set(db_fk["constrained_columns"]) == set(fk.column_keys),
+                        (
+                            db_fk["referred_table"].lower()
+                            == fk.referred_table.name.lower()
+                        ),
+                        set(db_fk["referred_columns"])
+                        == set(f.column.name for f in fk.elements),
+                    )
+                    for db_fk in db_fks
+                ]
+
+                assert any(all(m) for m in matches)
+
+    def __post_init__(self):  # noqa: D105
+        self.validate()
+
+    @overload
+    def __getitem__(self, key: slice) -> Self: ...
+
+    @overload
+    def __getitem__(self: "DB[N, Any, T]", key: type[T]) -> "DBTable[N, T]": ...
+
+    @overload
+    def __getitem__(self: "DB[N, S, Any]", key: type[S]) -> "DB[N, S, S]": ...
+
+    def __getitem__(  # noqa: D105
+        self, key: "slice | type[T] | type[S]"
+    ) -> "Self | DBTable[N, T] | DB[N, S, S]":
+        if isinstance(key, slice):
+            return self
+
+        if issubclass(key, Table):
+            return DBTable(
+                db=self,
+                select=sqla.select(self.metadata.tables[key._table]),
+                name=key._table,
+                schema=key,
             )
 
-        return inner_inner  # type: ignore
+        if issubclass(key, Schema):
+            return DB(
+                self.backend, key, overlay=self.overlay, validations=self.validations
+            )
 
-    return inner(func) if func is not None else inner  # type: ignore
+    def to_table(
+        self,
+        df: pd.DataFrame,
+        schema: type[T] | None = None,
+        create_external_fk: bool = True,
+    ) -> DBTable[N, T]:
+        """Transfer dataframe or sql query results to manifested SQL table.
 
+        Args:
+            df: Source / definition of data.
+            schema: Schema of the table to create.
+            create_external_fk:
+                Whether to create foreign keys to external tables SQL-side
+                (may cause permission issues).
 
-def default_table(schema: type[S]) -> DeferredQuery[S]:
-    """Return default table for given table schema.
+        Returns:
+            Reference to manifested SQL table.
+        """
+        table_name = f"df_{gen_str_hash(df)}"
 
-    Args:
-        schema: Schema of the table to return.
+        sqla_table = (
+            sqla.Table(table_name, self.metadata, *_cols_from_df(df).values())
+            if schema is None
+            else schema._sqla_table
+        )
+        if not create_external_fk:
+            _remove_external_fk(sqla_table)
 
-    Returns:
-        Reference to default table for given schema.
-    """
+        if table_name not in self.metadata.tables and not sqla.inspect(
+            self.engine
+        ).has_table(table_name, schema=None):
+            sqla_table.create(self.engine)
+            df.reset_index()[list(sqla_table.c.keys())].to_sql(
+                table_name, self.engine, if_exists="append", index=False
+            )
 
-    def get_current_default_table() -> sqla.Table:
-        ctx = _get_sql_ctx()
-        return ctx.default_table(schema).sqla_table
-
-    return DeferredQuery(get_current_default_table, schema)
+        return DBTable(
+            db=self,
+            select=sqla.select(sqla_table),
+            name=table_name,
+            schema=schema or Table,
+        )
