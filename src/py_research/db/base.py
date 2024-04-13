@@ -38,7 +38,7 @@ class Table:
     db: "DB"
     """Database this table belongs to."""
 
-    df: pd.DataFrame
+    data: pd.DataFrame
     """Dataframe containing the data of this table."""
 
     source_map: str | dict[str, str]
@@ -108,7 +108,7 @@ class Table:
                 orient="index",
                 columns=["column"],
             ).rename_axis(index="table"),
-            "data": self.df,
+            "data": self.data,
         }
 
         with pd.ExcelWriter(
@@ -129,7 +129,7 @@ class Table:
         """
         return Table(
             self.db,
-            self.df.loc[filter_series],
+            self.data.loc[filter_series],
             self.source_map,
         )
 
@@ -193,7 +193,7 @@ class Table:
             via the ``source_map`` attribute.
         """
         # Standardize format of dataframe, making sure its columns are multi-level.
-        merged = self.df
+        merged = self.data
         if isinstance(self.source_map, str):
             merged = merged.rename_axis(merged.index.name or "id", axis="index")
             merged = merged.reset_index()
@@ -253,7 +253,7 @@ class Table:
                         if naming == "source"
                         else (
                             f"{sp}->{sc}=>{tc}<-{tt}"
-                            if tc != (self.db[tt].df.index.name or "id")
+                            if tc != (self.db[tt].data.index.name or "id")
                             else f"{sp}->{sc}"
                         )
                     ),
@@ -277,7 +277,7 @@ class Table:
                         if naming == "source"
                         else (
                             f"{sp}->{sc}=>{tc}<-{tt}"
-                            if tc != (self.db[tt].df.index.name or "id")
+                            if tc != (self.db[tt].data.index.name or "id")
                             else f"{sp}->{sc}"
                         )
                     ),
@@ -327,7 +327,7 @@ class Table:
                             if naming == "source"
                             else (
                                 f"{tp}->{tc}<={right.name}"
-                                if tc != (self.db[tt].df.index.name or "id")
+                                if tc != (self.db[tt].data.index.name or "id")
                                 else f"{tp}<={right.name}"
                             )
                         ),
@@ -344,7 +344,7 @@ class Table:
                             if naming == "source"
                             else (
                                 f"{tp}->{tc}<={sc}<-{st}"
-                                if tc != (self.db[tt].df.index.name or "id")
+                                if tc != (self.db[tt].data.index.name or "id")
                                 else f"{tp}<={sc}<-{st}"
                             )
                         ),
@@ -393,7 +393,7 @@ class Table:
                             else (
                                 (
                                     f"{btp}->{btc}"
-                                    if btc != (self.db[btt].df.index.name or "id")
+                                    if btc != (self.db[btt].data.index.name or "id")
                                     else btp
                                 )
                                 + "<="
@@ -425,7 +425,7 @@ class Table:
                                         + (
                                             f"{osc}<={otc}<-{ott}"
                                             if otc
-                                            != (self.db[ott].df.index.name or "id")
+                                            != (self.db[ott].data.index.name or "id")
                                             else osc
                                         )
                                     )
@@ -447,7 +447,7 @@ class Table:
             left_on = f"{sp}->{sc}"
 
             # Properly name columns of right table.
-            right_df = tt.df.reset_index().rename(columns=lambda c: f"{tp}->{c}")
+            right_df = tt.data.reset_index().rename(columns=lambda c: f"{tp}->{c}")
             right_on = f"{tp}->{tc}"
 
             new_merged = left_df.merge(
@@ -472,31 +472,37 @@ class Table:
             merge_source_map[tp] = tt.name
 
             # Add to indexes
-            merge_indexes[tt.name] = tt.df.index.name or "id"
+            merge_indexes[tt.name] = tt.data.index.name or "id"
 
         return Table(self.db, merged, merge_source_map, merge_indexes)
 
-    def flatten(
+    def df(
         self,
+        flatten: bool = True,
         sep: str = ".",
         prefix_strategy: Literal["always", "on_conflict"] = "always",
     ) -> pd.DataFrame:
-        """Collapse multi-dim. column labels of multi-source table, returning new df.
+        """Return dataframe representation of this table.
 
         Args:
-            sep: Separator to use between column levels.
-            prefix_strategy: Strategy to use for prefixing column names.
+            flatten: Collapse multi-dim. column labels of multi-source table
+            sep: Separator to use between column levels when flattening.
+            prefix_strategy:
+                Strategy to use for prefixing column names when flattening.
 
         Returns:
-            Dataframe representation of this table with flattened multi-dim columns.
+            Dataframe representation of this table.
         """
+        if not flatten:
+            return self.data
+
         level_counts = (
-            self.df.columns.to_frame()
-            .groupby(level=(1 if self.df.columns.nlevels > 1 else 0))
+            self.data.columns.to_frame()
+            .groupby(level=(1 if self.data.columns.nlevels > 1 else 0))
             .size()
         )
 
-        res_df = self.df.copy()
+        res_df = self.data.copy()
         res_df.columns = [
             (
                 c[0]
@@ -511,7 +517,7 @@ class Table:
                     else sep.join(c)
                 )
             )
-            for c in self.df.columns.to_frame().itertuples(index=False)
+            for c in self.data.columns.to_frame().itertuples(index=False)
         ]
 
         return res_df
@@ -534,7 +540,7 @@ class Table:
 
         source_tables = {
             t: pd.concat(
-                [cast(pd.DataFrame, self.df[s]).drop_duplicates() for s in all_s]
+                [cast(pd.DataFrame, self.data[s]).drop_duplicates() for s in all_s]
             )
             .dropna(subset=[self.indexes[t]])
             .set_index(self.indexes[t])
@@ -544,7 +550,7 @@ class Table:
         return (
             self.db.filter(
                 {
-                    s: self.db[s].df.index.to_series().isin(df.index)
+                    s: self.db[s].data.index.to_series().isin(df.index)
                     for s, df in source_tables.items()
                 }
             )
@@ -555,29 +561,29 @@ class Table:
     # Dictionary interface:
 
     def __getitem__(self, name: str) -> pd.Series:  # noqa: D105
-        return self.df[name]
+        return self.data[name]
 
     def __contains__(self, name: str) -> bool:  # noqa: D105
-        return name in self.df.columns
+        return name in self.data.columns
 
     def __iter__(self) -> Iterable[Hashable]:  # noqa: D105
-        return iter(self.df)
+        return iter(self.data)
 
     def __len__(self) -> int:  # noqa: D105
-        return len(self.df)
+        return len(self.data)
 
     def keys(self) -> Iterable[str]:  # noqa: D102
-        return self.df.keys()
+        return self.data.keys()
 
     def get(self, name: str, default: Any = None) -> Any:  # noqa: D102
-        return self.df.get(name, default)
+        return self.data.get(name, default)
 
     # DataFrame interface:
 
     @property
     def columns(self) -> Sequence[str | tuple[str, str]]:
         """Return the columns of this table."""
-        return self.df.columns.tolist()
+        return self.data.columns.tolist()
 
 
 class SingleTable(Table):
@@ -589,18 +595,18 @@ class SingleTable(Table):
         self,
         name: str,
         db: "DB",
-        df: pd.DataFrame,
+        data: pd.DataFrame,
     ) -> None:
         """Initialize this table.
 
         Args:
             name: Name of the source table.
             db: Database this table belongs to.
-            df: Dataframe containing the data of this table.
+            data: Dataframe containing the data of this table.
         """
         self.name = name
         self.db = db
-        self.df = df
+        self.data = data
 
     # Computed properties:
 
@@ -612,7 +618,7 @@ class SingleTable(Table):
     @property
     def indexes(self) -> dict[str, str]:  # type: ignore[override]
         """Name of the source table of this table."""
-        return {self.name: self.df.index.name or "id"}
+        return {self.name: self.data.index.name or "id"}
 
     # Method overrides:
 
@@ -620,15 +626,21 @@ class SingleTable(Table):
         """Return a filtered version of this table."""
         table = super().filter(filter_series)
         assert isinstance(table.source_map, str)
-        return SingleTable(name=table.source_map, db=table.db, df=table.df)
+        return SingleTable(name=table.source_map, db=table.db, data=table.data).trim()
 
-    def trim(self, cols: list[str]) -> "SingleTable":
-        """Return a trimmed version of this table.
+    def trim(self, cols: list[str] | Literal["all"] = "all") -> "SingleTable":
+        """Select subset of columns, then remove duplicate and all-nan rows.
 
         Args:
             cols: Columns to keep.
         """
-        return SingleTable(name=self.name, db=self.db, df=self.df[cols])
+        return SingleTable(
+            name=self.name,
+            db=self.db,
+            data=(self.data[cols] if cols != "all" else self.data)
+            .dropna(how="all")
+            .drop_duplicates(),
+        )
 
     # Public methods:
 
@@ -649,7 +661,7 @@ class SingleTable(Table):
             New table containing the extended data.
         """
         # Align index and columns of both tables.
-        left, right = self.df.align(other)
+        left, right = self.data.align(other)
 
         # First merge data, ignoring conflicts per default.
         extended_df = left.combine_first(right)
@@ -725,7 +737,7 @@ class SourceTable(SingleTable):
     # Computed properties:
 
     @property
-    def df(self) -> pd.DataFrame:
+    def data(self) -> pd.DataFrame:
         """Return the dataframe of this table."""
         return self.db.table_dfs[self.name]
 
@@ -938,7 +950,7 @@ class DB:
         """
         return DB(
             table_dfs={
-                name: (table.df.copy() if deep else table.df)
+                name: (table.data.copy() if deep else table.data)
                 for name, table in self.items()
             },
             relations=self.relations,
@@ -983,9 +995,9 @@ class DB:
 
         for t in tables:
             if t not in self:
-                merged[t] = other[t].df if isinstance(other, DB) else other[t]
+                merged[t] = other[t].data if isinstance(other, DB) else other[t]
             elif t not in other:
-                merged[t] = self[t].df
+                merged[t] = self[t].data
             # Perform more complicated matching if table exists in both databases.
             else:
                 table_conflict_policy = (
@@ -996,10 +1008,10 @@ class DB:
                 merged[t] = (
                     self[t]
                     .extend(
-                        other[t].df if isinstance(other, DB) else other[t],
+                        other[t].data if isinstance(other, DB) else other[t],
                         conflict_policy=table_conflict_policy,
                     )
-                    .df
+                    .data
                 )
 
         return DB(
@@ -1020,26 +1032,32 @@ class DB:
 
     def trim(
         self,
-        centers: list[str] | None = None,
+        focus: list[str] | None = None,
         circuit_breakers: list[str] | None = None,
     ) -> "DB":
-        """Return new database minus orphan data (relative to given ``centers``).
+        """Return new database minus orphan data (relative to given ``focus``).
 
         Args:
-            centers: Tables to use as centers for the trim.
-            circuit_breakers: Tables to use as circuit breakers for the trim.
+            focus:
+                List of tables to use as focus for the trim.
+                This will make the trim only keep data that is directly or indirectly
+                related to the tables in ``focus``.
+            circuit_breakers:
+                Tables used to break recursive loops while trimming.
+                Any supplied table can only be recursed into once while following
+                the relations between tables.
 
         Returns:
             New database containing the trimmed data.
         """
         res = (
             self._isotropic_trim()
-            if centers is None
-            else self._centered_trim(centers, circuit_breakers)
+            if focus is None
+            else self._centered_trim(focus, circuit_breakers)
         )
         res.updates[pd.Timestamp.now().round("s")] = {
             "action": "trim",
-            "centers": str(set(centers or [])),
+            "centers": str(set(focus or [])),
             "circuit_breakers": str(set(circuit_breakers or [])),
             "remaining_tables": str(set(self.keys())),
         }
@@ -1051,10 +1069,15 @@ class DB:
         """Return new db only containing data related to rows matched by ``filters``.
 
         Args:
-            filters: Mapping of table names to boolean filter series
+            filters:
+                Mapping of table names to boolean filter series.
+                Only rows that are matched by the filter series and any related
+                rows (in other tables) will be kept.
             extra_cb:
-                Additional circuit breakers (on top of the filtered tables)
-                to use when trimming the database according to the filters
+                Additional circuit breakers (on top of the filtered tables).
+                Tables used to break recursive loops while trimming.
+                Any supplied table can only be recursed into once while following
+                the relations between tables.
 
         Returns:
             New database containing the filtered data.
@@ -1068,7 +1091,7 @@ class DB:
         # Filter out unmatched rows of filter tables.
         new_db = DB(
             table_dfs={
-                t: (table.df[filters[t]] if t in filters else table.df)
+                t: (table.data[filters[t]] if t in filters else table.data)
                 for t, table in self.items()
             },
             relations=self.relations,
@@ -1103,11 +1126,11 @@ class DB:
         # Concat all node tables into one.
         node_dfs = [
             (
-                n.df.reset_index().assign(table=n.source_map)
+                n.data.reset_index().assign(table=n.source_map)
                 if isinstance(n.source_map, str)
                 else pd.concat(
                     [
-                        cast(pd.DataFrame, n.df[p])
+                        cast(pd.DataFrame, n.data[p])
                         .drop_duplicates()
                         .reset_index()
                         .assign(table=s)
@@ -1153,7 +1176,7 @@ class DB:
                 ],
                 *[
                     self[str(source_table)]
-                    .df.merge(
+                    .data.merge(
                         node_df.loc[
                             node_df["table"] == str(rel.iloc[0]["target_table"])
                         ].dropna(axis="columns", how="all"),
@@ -1205,7 +1228,7 @@ class DB:
         if name.startswith("_"):
             raise KeyError("Table names starting with '_' are not allowed.")
 
-        value = value.df if isinstance(value, SingleTable) else value
+        value = value.data if isinstance(value, SingleTable) else value
         rels = self._get_rels()
         target_tables = rels["target_table"].unique()
         if name in target_tables:
@@ -1280,9 +1303,9 @@ class DB:
         for t, rels in all_rels.groupby("source_table"):
             table = self[str(t)]
             df = (
-                table.df.rename_axis("id", axis="index")
-                if not table.df.index.name
-                else table.df
+                table.data.rename_axis("id", axis="index")
+                if not table.data.index.name
+                else table.data
             )
 
             for tt, r in rels.groupby("target_table"):
@@ -1292,7 +1315,7 @@ class DB:
                             df[[c]]
                             .reset_index()
                             .merge(
-                                self[str(tt)].df.pipe(
+                                self[str(tt)].data.pipe(
                                     lambda df: (
                                         df.rename_axis("id", axis="index")
                                         if not df.index.name
@@ -1344,7 +1367,9 @@ class DB:
             )
             frames.append(pd.DataFrame({tc: list(col_values)}))
 
-        return SingleTable(name=name, db=self, df=pd.concat(frames, ignore_index=True))
+        return SingleTable(
+            name=name, db=self, data=pd.concat(frames, ignore_index=True)
+        )
 
     def _isotropic_trim(self) -> "DB":
         """Return new database without orphan data (data w/ no refs to or from)."""
@@ -1353,7 +1378,7 @@ class DB:
 
         result = {}
         for t, table in self.items():
-            f = pd.Series(False, index=table.df.index)
+            f = pd.Series(False, index=table.data.index)
 
             # Include all rows with any valid outgoing reference.
             try:
@@ -1378,7 +1403,7 @@ class DB:
             except KeyError:
                 pass
 
-            result[t] = table.df.loc[f]
+            result[t] = table.data.loc[f]
 
         return DB(
             table_dfs=result,
@@ -1396,9 +1421,9 @@ class DB:
         # Get the status of each single reference.
         valid_refs = self._get_valid_refs()
 
-        current_stage = {c: set(self[c].df.index) for c in centers}
+        current_stage = {c: set(self[c].data.index) for c in centers}
         visit_counts = {
-            t: pd.Series(0, index=table.df.index) for t, table in self.items()
+            t: pd.Series(0, index=table.data.index) for t, table in self.items()
         }
         visited: set[str] = set()
 
@@ -1431,7 +1456,7 @@ class DB:
                         for col_name, col in refs.items():
                             try:
                                 ref_vals = col.dropna().unique()
-                                target_df = self[tt].df
+                                target_df = self[tt].data
                                 target_col = self.relations[(t, str(col_name))][1]
                                 target_idx = (
                                     ref_vals
@@ -1452,7 +1477,7 @@ class DB:
 
                     for st, refs in incoming.groupby("src_table"):
                         refs = refs.dropna(axis="columns", how="all")
-                        target_df = self[t].df
+                        target_df = self[t].data
                         target_cols = {
                             c: self.relations[(str(st), str(c))][1]
                             for c in refs.columns
@@ -1486,7 +1511,7 @@ class DB:
             current_stage = next_stage
 
         return DB(
-            table_dfs={t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()},
+            table_dfs={t: self[t].data.loc[rc > 0] for t, rc in visit_counts.items()},
             relations=self.relations,
             join_tables=self.join_tables,
             schema=self.schema,

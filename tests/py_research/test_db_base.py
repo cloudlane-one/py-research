@@ -154,7 +154,7 @@ def test_create_db_from_tables(db_from_tables: DB):
         "tasks",
         "genders",
     }
-    assert isinstance(db_from_tables["projects"].df, pd.DataFrame)
+    assert isinstance(db_from_tables["projects"].df(), pd.DataFrame)
     assert "persons" in db_from_tables
     assert "genders" in db_from_tables
     assert set(db_from_tables["genders"]["name"]) == {"male", "diverse"}
@@ -173,7 +173,7 @@ def test_trim_db_anisotropic(db_from_tables: DB):
     """Test the trimming of a DB instance."""
     db = db_from_tables.trim()
     assert isinstance(db, DB)
-    assert set(db["projects"].df.index) == {1, 2, 3}
+    assert set(db["projects"].df().index) == {1, 2, 3}
 
 
 def test_extend_db(db_from_tables: DB):
@@ -218,22 +218,22 @@ def test_extend_db(db_from_tables: DB):
         }
     )
     assert isinstance(db, DB)
-    assert set(db["projects"].df.index) == {1, 2, 3, 4, 5, 6}
-    assert set(db["persons"].df.index) == {"a", "b", "c", "d", "e"}
-    assert set(db["memberships"].df.index) == {0, 1, 2, 3, 4, 5}
-    assert set(db["tasks"].df.index) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
+    assert set(db["projects"].df().index) == {1, 2, 3, 4, 5, 6}
+    assert set(db["persons"].df().index) == {"a", "b", "c", "d", "e"}
+    assert set(db["memberships"].df().index) == {0, 1, 2, 3, 4, 5}
+    assert set(db["tasks"].df().index) == {1, 2, 3, 4, 5, 6, 7, 8, 9}
 
 
 def test_filter_db(db_from_tables: DB):
     """Test the filtering of a DB instance."""
     db = db_from_tables.filter(
-        {"projects": db_from_tables["projects"].df["status"] == "done"}
+        {"projects": db_from_tables["projects"].df()["status"] == "done"}
     )
     assert isinstance(db, DB)
-    assert set(db["projects"].df.index) == {1, 2}
-    assert set(db["persons"].df.index) == {"a", "b"}
-    assert len(db["memberships"].df) == 3
-    assert len(db["tasks"].df) == 6
+    assert set(db["projects"].df().index) == {1, 2}
+    assert set(db["persons"].df().index) == {"a", "b"}
+    assert len(db["memberships"].df()) == 3
+    assert len(db["tasks"].df()) == 6
 
 
 def test_save_load_db(db_from_tables: DB):
@@ -248,7 +248,7 @@ def test_save_load_db(db_from_tables: DB):
     db_loaded = DB.load(db_file_path)
     assert isinstance(db_loaded, DB)
     for t in db_loaded.keys():
-        pd.testing.assert_frame_equal(db_from_tables[t].df, db_loaded[t].df)
+        pd.testing.assert_frame_equal(db_from_tables[t].df(), db_loaded[t].df())
     assert db_from_tables.relations == db_loaded.relations
     assert db_from_tables.join_tables == db_loaded.join_tables
     assert db_from_tables.updates == db_loaded.updates
@@ -262,33 +262,33 @@ def test_table_to_from_excel(db_from_tables: DB):
 
     db_from_tables["persons"].to_excel(table_file_path)
     loaded_persons = Table.from_excel(table_file_path)
-    pd.testing.assert_frame_equal(db_from_tables["persons"].df, loaded_persons.df)
+    pd.testing.assert_frame_equal(db_from_tables["persons"].df(), loaded_persons.df())
     assert db_from_tables["persons"].source_map == loaded_persons.source_map
 
     merged = db_from_tables["persons"].merge(right=db_from_tables["projects"])
     merged.to_excel(table_file_path)
     merged_loaded = Table.from_excel(table_file_path)
-    pd.testing.assert_frame_equal(merged.df, merged_loaded.df)
+    pd.testing.assert_frame_equal(merged.df(), merged_loaded.df())
     assert merged.source_map == merged_loaded.source_map
 
 
 def test_filter_db_table(db_from_tables: DB):
     """Test the filtering of a DB table."""
     table = db_from_tables["projects"]
-    filtered_table = table.filter(table.df["status"] == "done")
+    filtered_table = table.filter(table.df()["status"] == "done")
     assert isinstance(filtered_table, Table)
-    assert set(filtered_table.df.index) == {1, 2}
+    assert set(filtered_table.df().index) == {1, 2}
 
 
 def test_set_db_table(db_from_tables: DB):
     """Test the filtering of a DB table."""
     table = db_from_tables["projects"]
-    filtered_table = table.filter(table.df["status"] == "done")
+    filtered_table = table.filter(table.df()["status"] == "done")
 
     db_from_tables["projects"] = filtered_table
-    assert set(db_from_tables["projects"].df.index) == {1, 2}
+    assert set(db_from_tables["projects"].df().index) == {1, 2}
     with pytest.raises(ValueError):
-        db_from_tables["projects"] = filtered_table.df.reset_index()[["name"]]
+        db_from_tables["projects"] = filtered_table.df().reset_index()[["name"]]
 
 
 def test_merge_db_table_forward(db_from_tables: DB):
@@ -297,9 +297,9 @@ def test_merge_db_table_forward(db_from_tables: DB):
 
     table_merged = table.merge(link_to_right="project", naming="source")
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten(".", "always")
+    table_flat = table_merged.df(sep=".", prefix_strategy="always")
     assert set(db_from_tables["tasks"]["name"].unique()) == set(
         table_flat["tasks.name"].unique()
     )
@@ -314,9 +314,9 @@ def test_merge_db_table_forward_virtual(db_from_tables: DB):
 
     table_merged = table.merge(link_to_right="gender", naming="source")
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten(".", "always")
+    table_flat = table_merged.df(sep=".", prefix_strategy="always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons.name"].unique()
     )
@@ -338,11 +338,11 @@ def test_merge_db_table_forward_filtered(db_from_tables: DB):
         right=right_table, link_to_right="project", naming="path"
     )
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(left_table["name"].unique()) == set(table_flat["tasks->name"].unique())
-    assert set(right_table.df.index) == set(
+    assert set(right_table.df().index) == set(
         table_flat["tasks->project->id"].dropna().unique()
     )
 
@@ -353,9 +353,9 @@ def test_merge_db_table_backward(db_from_tables: DB):
 
     table_merged = table.merge(right=db_from_tables["tasks"], naming="path")
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(db_from_tables["projects"]["name"].unique()) == set(
         table_flat["projects->name"].unique()
     )
@@ -372,9 +372,9 @@ def test_merge_db_table_backward_explicit(db_from_tables: DB):
         right=db_from_tables["tasks"], link_to_left="project", naming="path"
     )
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(db_from_tables["projects"]["name"].unique()) == set(
         table_flat["projects->name"].unique()
     )
@@ -389,9 +389,9 @@ def test_merge_db_table_double(db_from_tables: DB):
 
     table_merged = table.merge(right=db_from_tables["projects"], naming="path")
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -411,9 +411,9 @@ def test_merge_db_table_double_filtered(db_from_tables: DB):
         right=db_from_tables["projects"], link_table=link_table, naming="path"
     )
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(left_table["name"].unique()) == set(table_flat["persons->name"].unique())
     assert set(table_flat["persons->project->id"].unique()) == {1}
 
@@ -424,9 +424,9 @@ def test_merge_db_table_double_indefinite(db_from_tables: DB):
 
     table_merged = table.merge(link_table=db_from_tables["memberships"], naming="path")
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -445,9 +445,9 @@ def test_merge_db_table_double_explicit(db_from_tables: DB):
         naming="path",
     )
     assert isinstance(table_merged, Table)
-    assert table_merged.df.columns.nlevels == 2
+    assert table_merged.data.columns.nlevels == 2
 
-    table_flat = table_merged.flatten("->", "always")
+    table_flat = table_merged.df(sep="->", prefix_strategy="always")
     assert set(db_from_tables["persons"]["name"].unique()) == set(
         table_flat["persons->name"].unique()
     )
@@ -471,12 +471,12 @@ def test_extract_db_table(db_from_tables: DB):
         "persons",
         "genders",
     }
-    assert set(extracted_db1["projects"].df.index) == {1, 2, 3, 4}
+    assert set(extracted_db1["projects"].df().index) == {1, 2, 3, 4}
 
     extracted_db2 = table_merged.extract(with_relations=False)
     assert isinstance(extracted_db2, DB)
     assert set(extracted_db2.keys()) == {"projects", "tasks"}
-    assert set(extracted_db2["projects"].df.index) == {1, 2, 3, 4}
+    assert set(extracted_db2["projects"].df().index) == {1, 2, 3, 4}
 
 
 def test_extend_db_table(db_from_tables: DB):
@@ -495,7 +495,7 @@ def test_extend_db_table(db_from_tables: DB):
         ).set_index("id")
     )
     assert isinstance(table_extended, Table)
-    assert set(table_extended.df.index) == {1, 2, 3, 4, 5, 6}
+    assert set(table_extended.df().index) == {1, 2, 3, 4, 5, 6}
 
 
 def test_db_to_graph(db_from_tables: DB):
@@ -508,8 +508,8 @@ def test_db_to_graph(db_from_tables: DB):
         ]
     )
     assert isinstance(nodes, pd.DataFrame)
-    assert len(nodes) == len(trimmed_proj.df) + len(trimmed_pers.df) + len(
-        db_from_tables["tasks"].df
+    assert len(nodes) == len(trimmed_proj.df()) + len(trimmed_pers.df()) + len(
+        db_from_tables["tasks"].df()
     )
     assert set(nodes.columns) == {
         "node_id",

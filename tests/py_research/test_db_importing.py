@@ -1,7 +1,6 @@
 """Test db importing module."""
 
 import pytest
-
 from py_research.db import DB
 from py_research.db.importing import TableMap, tree_to_db
 
@@ -166,14 +165,14 @@ def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: TableMap)
         "searches_projects",
         "projects_tasks",
     }
-    assert len(db["searches"].df) == 1
-    assert len(db["projects"].df) == 3
-    assert len(db["tasks"].df) == 6
-    assert len(db["users"].df) == 3
-    assert len(db["organizations"].df) == 3
-    assert len(db["memberships"].df) > 0
-    assert len(db["searches_projects"].df) > 0
-    assert len(db["projects_tasks"].df) > 0
+    assert len(db["searches"].df()) == 1
+    assert len(db["projects"].df()) == 3
+    assert len(db["tasks"].df()) == 6
+    assert len(db["users"].df()) == 3
+    assert len(db["organizations"].df()) == 3
+    assert len(db["memberships"].df()) > 0
+    assert len(db["searches_projects"].df()) > 0
+    assert len(db["projects_tasks"].df()) > 0
     assert db.relations == {
         ("searches_projects", "results"): ("projects", "_id"),
         ("searches_projects", "results_of"): ("searches", "_id"),
