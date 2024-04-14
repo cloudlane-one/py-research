@@ -1,11 +1,11 @@
 """Simple & semi-automatic intl. + localization of data analysis functions."""
 
-from collections.abc import Callable, Generator, Iterable, Mapping
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from functools import partial
+from functools import partial, reduce
 from locale import LC_ALL, getlocale, normalize, setlocale
 from os import environ
 from pathlib import Path
@@ -176,7 +176,7 @@ class Format:
 class Args:
     """Match for args of a text template."""
 
-    values: Any = None
+    values: Sequence[set[Any] | Any] | set[Any] | Any = None
     all: bool = False
 
     def __hash__(self) -> int:  # noqa: D105
@@ -187,17 +187,27 @@ class Args:
         if self.all:
             return 1
 
-        values = self.values if isinstance(self.values, tuple | list) else [self.values]
+        values = self.values if isinstance(self.values, Sequence) else [self.values]
 
         if len(args) != len(values):
             return 0
 
+        # Matchers must be a list of sets,
+        # corresponding to the allowed values for each arg.
         matchers = [v if isinstance(v, set) else {v} for v in values]
 
-        return max(
+        # Calculate the match score for each arg.
+        # The score is 1 / len(matcher set) if the arg matches,
+        # and 0 otherwise.
+        scores = [
             (1 / len(matcher) if arg in matcher else 0)
             for arg, matcher in zip(args, matchers)
-        )
+        ]
+
+        # Return the product of scores as the overall score.
+        # This way, the overall score is 0 if any arg doesn't match.
+        # On match, the score is anti-proportional to the number of possible arg tuples.
+        return reduce(lambda x, y: x * y, scores)
 
 
 @dataclass
@@ -251,32 +261,32 @@ class Overrides:
 
     def merge(self, other: Self) -> Self:
         """Merge and override ``self`` with ``other``."""
-        texts = {}
+        templates = {}
         for name in set(self.templates.keys()).union(other.templates.keys()):
-            self_texts = self.templates.get(name, {})
-            other_texts = other.templates.get(name, {})
+            self_tmpl = self.templates.get(name, {})
+            other_tmpl = other.templates.get(name, {})
 
-            texts[name] = _merge_ordered_dicts(
+            templates[name] = _merge_ordered_dicts(
                 [
                     (
-                        self_texts
-                        if isinstance(self_texts, dict)
+                        self_tmpl
+                        if isinstance(self_tmpl, dict)
                         else {
                             Args(all=True): (
-                                Template(self_texts)
-                                if isinstance(self_texts, str)
-                                else self_texts
+                                Template(self_tmpl)
+                                if isinstance(self_tmpl, str)
+                                else self_tmpl
                             )
                         }
                     ),
                     (
-                        other_texts
-                        if isinstance(other_texts, dict)
+                        other_tmpl
+                        if isinstance(other_tmpl, dict)
                         else {
                             Args(all=True): (
-                                Template(other_texts)
-                                if isinstance(other_texts, str)
-                                else other_texts
+                                Template(other_tmpl)
+                                if isinstance(other_tmpl, str)
+                                else other_tmpl
                             )
                         }
                     ),
@@ -287,7 +297,7 @@ class Overrides:
             Self,
             Overrides(
                 vocabulary=_merge_ordered_dicts([self.vocabulary, other.vocabulary]),
-                templates=texts,
+                templates=templates,
                 format=self.format.merge(other.format),
             ),
         )
