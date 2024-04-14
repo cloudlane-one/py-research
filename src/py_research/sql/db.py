@@ -1,4 +1,4 @@
-"""Connect to an SQL server, validate its schema and perform cached analysis queries."""
+"""Abstract Python interface for SQL databases."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -12,201 +12,26 @@ from typing import (
     TypeAlias,
     TypeVar,
     cast,
-    get_args,
-    get_type_hints,
     overload,
 )
 
 import pandas as pd
 import sqlalchemy as sqla
-import sqlalchemy.orm as orm
-from pandas.api.types import (
-    is_datetime64_dtype,
-    is_integer_dtype,
-    is_numeric_dtype,
-    is_string_dtype,
-)
 from typing_extensions import Self
 
-from py_research.hashing import gen_str_hash
-from py_research.reflect.runtime import get_all_subclasses
+from py_research.sql.schema import ColRef, Schema, T, Table, V
+
+from .utils import cols_from_df, map_foreignkey_schema, remove_external_fk
 
 N = TypeVar("N", bound=LiteralString)
-
-V = TypeVar("V")
 
 Params = ParamSpec("Params")
 
 S = TypeVar("S", bound="Schema")
 S_cov = TypeVar("S_cov", covariant=True, bound="Schema")
+
 S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
 S2 = TypeVar("S2", bound="Schema")
-
-
-T = TypeVar("T", bound="Table")
-
-
-def _map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
-    if is_datetime64_dtype(c):
-        return sqla.types.DATETIME()
-    elif is_integer_dtype(c):
-        return sqla.types.INTEGER()
-    elif is_numeric_dtype(c):
-        return sqla.types.FLOAT()
-    elif is_string_dtype(c):
-        max_len = c.str.len().max()
-        if max_len < 16:
-            return sqla.types.CHAR(max_len)
-        elif max_len < 256:
-            return sqla.types.VARCHAR(max_len)
-
-    return sqla.types.BLOB()
-
-
-def _cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
-    if len(df.index.names) > 1:
-        raise NotImplementedError("Multi-index not supported yet.")
-
-    return {
-        **{
-            level: sqla.Column(
-                level,
-                _map_df_dtype(df.index.get_level_values(level).to_series()),
-                primary_key=True,
-            )
-            for level in df.index.names
-        },
-        **{
-            str(name): sqla.Column(str(col.name), _map_df_dtype(col))
-            for name, col in df.items()
-        },
-    }
-
-
-def _map_foreignkey_schema(
-    _: sqla.Table,
-    to_schema: str | None,
-    constraint: sqla.ForeignKeyConstraint,
-    referred_schema: str | None,
-    schema_dict: "dict[str | None, type[Schema]]",
-) -> str | None:
-    assert to_schema in schema_dict
-
-    for schema_name, schema in schema_dict.items():
-        if schema is not None:
-            for schema_class in get_all_subclasses(schema):
-                if (
-                    issubclass(schema_class, Table)
-                    and schema_class._sqla_table is constraint.referred_table
-                ):
-                    return schema_name
-
-    return referred_schema
-
-
-def _remove_external_fk(table: sqla.Table):
-    """Dirty vodoo to remove external FKs from existing table."""
-    for c in table.columns.values():
-        c.foreign_keys = set(
-            fk
-            for fk in c.foreign_keys
-            if fk.constraint and fk.constraint.referred_table.schema == table.schema
-        )
-
-    table.foreign_keys = set(  # type: ignore
-        fk
-        for fk in table.foreign_keys
-        if fk.constraint and fk.constraint.referred_table.schema == table.schema
-    )
-
-    table.constraints = set(
-        c
-        for c in table.constraints
-        if not isinstance(c, sqla.ForeignKeyConstraint)
-        or c.referred_table.schema == table.schema
-    )
-
-
-class ColRef(sqla.ColumnClause[V], Generic[V, T]):
-    """Reference a column by table schema, name and value type."""
-
-    def __init__(  # noqa: D107
-        self, table: type[T], name: str, value_type: type[V] | None
-    ) -> None:
-        self.table_schema = table
-        self.name = name
-        self.value_type = value_type
-
-        super().__init__(
-            self.name,
-            type_=self.table_schema._sqla_table.c[self.name].type,
-        )
-
-
-@dataclass
-class Col(Generic[V]):
-    """Define table column within a table schema."""
-
-    name: str | None = None
-
-    def __setname__(self, _, name: str) -> None:  # noqa: D105
-        self.name = name
-
-    def __get__(  # noqa: D105 # type: ignore
-        self, instance: None, table: type[T]
-    ) -> ColRef[V, T]:
-        if instance is not None:
-            raise NotImplementedError("Instance-based column access not supported.")
-
-        assert self.name is not None
-        value_type: type[V] = get_args(table._type_hints[self.name])[0]
-
-        return ColRef(table, self.name, value_type)
-
-
-class Schema:
-    """Base class for declarative SQL schemas."""
-
-    _type_map: dict[type, sqla.types.TypeEngine] = {
-        str: sqla.types.String().with_variant(
-            sqla.types.String(50), "oracle"
-        ),  # Avoid oracle error when VARCHAR has no size parameter
-    }
-
-    @classmethod
-    def _tables(cls) -> set[type["Table"]]:
-        """Return all tables defined by subclasses."""
-        subclasses = get_all_subclasses(cls)
-        return {s for s in subclasses if isinstance(s, Table)}
-
-
-class Table(Schema):
-    """Protocol for table schemas."""
-
-    _table: str
-    _type_hints: dict[str, type]
-    _sqla_table: sqla.Table
-
-    def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
-        assert self._table is not None
-        return sqla.table(self._table)
-
-    def __init_subclass__(cls) -> None:  # noqa: D105
-        cls._type_hints = get_type_hints(cls)
-
-        registry = orm.registry(type_annotation_map=cls._type_map)
-
-        cls._sqla_table = sqla.Table(
-            cls._table,
-            registry.metadata,
-            *(
-                sqla.Column(name, registry._resolve_type(cls._type_hints[name]))
-                for name, col in cls.__dict__.items()
-                if isinstance(col, Col)
-            ),
-        )
-
-        return super().__init_subclass__()
 
 
 @dataclass(frozen=True)
@@ -311,8 +136,10 @@ class DB(Generic[N, S_cov, S_contrav]):
     schema: type[S_cov | S_contrav] | Mapping[type[S_cov | S_contrav], str] | None = (
         None
     )
-    overlay: bool | str = False
     validations: Mapping[type[S_cov], SchemaValidation] = {}
+    substitutions: Mapping[type[S_cov], str | sqla.TableClause] = {}
+
+    create_cross_fk: bool = True
 
     @cached_property
     def schema_dict(self) -> dict[str | None, type[S_cov | S_contrav]]:
@@ -324,22 +151,45 @@ class DB(Generic[N, S_cov, S_contrav]):
         )
 
     @cached_property
-    def metadata(self) -> sqla.MetaData:
-        """Return metadata object containing all this DB's tables."""
-        metadata = sqla.MetaData()
+    def meta(self) -> sqla.MetaData:
+        """Return metadata object."""
+        return sqla.MetaData()
+
+    @cached_property
+    def table_map(self) -> dict[type[Table], sqla.Table]:
+        """Return table_map object containing all this DB's tables."""
+        meta = self.meta
         schema_dict = self.schema_dict
+
+        table_map = {}
+
+        table_subs = {
+            table: (
+                sqla.Table(name=sub.name, metadata=meta, schema=sub.schema)
+                if isinstance(sub, sqla.TableClause)
+                else sqla.Table(name=sub, metadata=meta)
+            )
+            for table, sub in self.substitutions.items()
+            if issubclass(table, Table)
+        }
 
         for schema_name, schema in schema_dict.items():
             for table in schema._tables():
-                table._sqla_table.to_metadata(
-                    metadata,
-                    schema=schema_name or sqla.schema.SchemaConst.RETAIN_SCHEMA,
+                sub = table_subs.get(table)
+                table_map[table] = table._sqla_table(meta, table_subs).to_metadata(
+                    meta,
+                    schema=(
+                        sub.schema
+                        if sub is not None
+                        else schema_name or sqla.schema.SchemaConst.RETAIN_SCHEMA
+                    ),  # type: ignore
                     referred_schema_fn=partial(
-                        _map_foreignkey_schema, schema_dict=schema_dict
+                        map_foreignkey_schema, schema_dict=schema_dict
                     ),
+                    name=sub.name if sub is not None else None,
                 )
 
-        return metadata
+        return table_map
 
     @cached_property
     def engine(self) -> sqla.engine.Engine:
@@ -351,7 +201,7 @@ class DB(Generic[N, S_cov, S_contrav]):
         tables = {
             t: v
             for s, v in self.validations.items()
-            for t in self[s].metadata.tables.values()
+            for t in self[s].table_map.values()
         }
 
         inspector = sqla.inspect(self.engine)
@@ -418,27 +268,29 @@ class DB(Generic[N, S_cov, S_contrav]):
         if issubclass(key, Table):
             return DBTable(
                 db=self,
-                select=sqla.select(self.metadata.tables[key._table]),
-                name=key._table,
+                select=sqla.select(self.table_map[key]),
+                name=key._default_name,
                 schema=key,
             )
 
         if issubclass(key, Schema):
             return DB(
-                self.backend, key, overlay=self.overlay, validations=self.validations
+                self.backend,
+                key,
+                validations=self.validations,
+                substitutions=self.substitutions,
             )
 
-    def to_table(
+    def __setitem__(
         self,
-        df: pd.DataFrame,
-        schema: type[T] | None = None,
-        create_external_fk: bool = True,
+        key: type[T],
+        value: pd.DataFrame | sqla.Select,
     ) -> DBTable[N, T]:
-        """Transfer dataframe or sql query results to manifested SQL table.
+        """Transfer dataframe or sql query results to SQL table.
 
         Args:
-            df: Source / definition of data.
-            schema: Schema of the table to create.
+            key: Schema of the table to upload to.
+            value: Source / definition of data.
             create_external_fk:
                 Whether to create foreign keys to external tables SQL-side
                 (may cause permission issues).
@@ -446,27 +298,53 @@ class DB(Generic[N, S_cov, S_contrav]):
         Returns:
             Reference to manifested SQL table.
         """
-        table_name = f"df_{gen_str_hash(df)}"
+        table_name = key._default_name
+        sqla_table = self.table_map.get(key)
 
-        sqla_table = (
-            sqla.Table(table_name, self.metadata, *_cols_from_df(df).values())
-            if schema is None
-            else schema._sqla_table
-        )
-        if not create_external_fk:
-            _remove_external_fk(sqla_table)
-
-        if table_name not in self.metadata.tables and not sqla.inspect(
-            self.engine
-        ).has_table(table_name, schema=None):
-            sqla_table.create(self.engine)
-            df.reset_index()[list(sqla_table.c.keys())].to_sql(
-                table_name, self.engine, if_exists="append", index=False
+        if sqla_table is None:
+            sqla_table = (
+                (
+                    sqla.Table(table_name, self.meta, *cols_from_df(value).values())
+                    if isinstance(value, pd.DataFrame)
+                    else sqla.Table(
+                        table_name,
+                        self.meta,
+                        *(
+                            sqla.Column(name, col.type, primary_key=col.primary_key)
+                            for name, col in value.selected_columns.items()
+                        ),
+                    )
+                )
+                if key is None
+                else key._sqla_table.to_metadata(self.table_map)
             )
+            if not self.create_cross_fk:
+                # Create a temporary copy of the table object and remove external FKs.
+                # That way, local metadata will retain info on the FKs
+                # (for automatic joins) but the FKs won't be created in the DB.
+                sqla_table = sqla_table.to_metadata(
+                    sqla.MetaData()  # temporary metadata
+                )
+                remove_external_fk(sqla_table)
+
+        if not sqla.inspect(self.engine).has_table(table_name, schema=None):
+            sqla_table.create(self.engine)
+
+        if isinstance(value, pd.DataFrame):
+            value.reset_index()[list(sqla_table.c.keys())].to_sql(
+                table_name, self.engine, if_exists="replace", index=False
+            )
+        else:
+            with self.engine.begin() as con:
+                con.execute(
+                    sqla.insert(sqla_table).from_select(
+                        value.selected_columns.keys(), value
+                    )
+                )
 
         return DBTable(
             db=self,
             select=sqla.select(sqla_table),
             name=table_name,
-            schema=schema or Table,
+            schema=key or Table,
         )
