@@ -585,7 +585,7 @@ class ResultTable:
                     ("", "")
                     if c[1] in self.__hidden_headers
                     else (
-                        (label_func(c[0]), label_func(c[1]) or c[1])
+                        (label_func(c[0]) or c[0], label_func(c[1]) or c[1])
                         if c[1]
                         else ("", label_func(c[0]) or c[0])
                     )
