@@ -20,7 +20,7 @@ from pandas.api.types import (
 from pandas.core.dtypes.base import ExtensionDtype
 from pandas.errors import ParserError
 
-from py_research.hashing import gen_int_hash
+from py_research.hashing import gen_str_hash
 
 YES = ["y", "t", "1", "yes", "true"]
 NO = ["n", "f", "0", "no", "false"]
@@ -185,6 +185,6 @@ def gen_id(x: Any, length: int = 10, raw_str: bool = False) -> str:
         case timedelta():
             s = str(x.total_seconds())
         case _:
-            s = str(abs(gen_int_hash(x)))
+            s = gen_str_hash(x, length=length)
 
     return s[:length]
