@@ -31,7 +31,7 @@ from pandas.api.types import (
 from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
-from py_research.reflect import get_all_subclasses
+from py_research.reflect.runtime import get_all_subclasses
 
 
 def _hash_df(df: pd.DataFrame | pd.Series) -> str:

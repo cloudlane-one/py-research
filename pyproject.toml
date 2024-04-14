@@ -32,10 +32,14 @@ dependencies = [
   "notebook>=7.0.6",
   "ipywidgets>=8.1.1",
   "ipython>=8.21.0",
+  "sphinx>=7.2.6",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
 readme = "README.md"
+
+[project.urls]
+Documentation = "https://cloudlane-one.github.io/py-research/"
 
 [build-system]
 requires = ["pdm-backend"]
@@ -45,7 +49,6 @@ build-backend = "pdm.backend"
 dev = [
   "black>=24",
   "pytest>=7.4.3",
-  "sphinx>=7.2.6",
   "pygments>=2.17.2",
   "nbsphinx>=0.9.3",
   "myst-parser>=2.0.0",
