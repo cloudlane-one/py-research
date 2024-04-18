@@ -171,7 +171,7 @@ def plotly_to_html(
                     id="{script_id}"
                     {_ind(script_attr_str, 20)}
                 >
-                    const scriptID = "{script_id}";
+                    var resplotScriptID = "{script_id}";
                     {_ind(plotly_responsive_js, 20)}
                 </script>
             </div>
