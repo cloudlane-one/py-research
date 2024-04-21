@@ -3,6 +3,8 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cached_property, partial
+from io import BytesIO
+from pathlib import Path
 from typing import (
     Any,
     Generic,
@@ -16,12 +18,17 @@ from typing import (
 )
 
 import pandas as pd
+import polars as pl
 import sqlalchemy as sqla
+import yarl
+from cloudpathlib import CloudPath
 from typing_extensions import Self
+from xlsxwriter import Workbook as ExcelWorkbook
 
+from py_research.files import HttpFile
 from py_research.sql.schema import ColRef, Schema, T, Table, V
 
-from .utils import cols_from_df, map_foreignkey_schema, remove_external_fk
+from .utils import map_foreignkey_schema, remove_external_fk
 
 N = TypeVar("N", bound=LiteralString)
 
@@ -41,8 +48,31 @@ class Backend(Generic[N]):
     name: N
     """Unique name to identify this backend by."""
 
-    url: str | sqla.URL
-    """Connection URL."""
+    url: sqla.URL | CloudPath | HttpFile | Path
+    """Connection URL or path."""
+
+    @cached_property
+    def type(self) -> Literal["sql-connection", "sqlite-file", "excel-file"]:
+        """Type of the backend."""
+        match self.url:
+            case Path() | CloudPath():
+                return "excel-file" if "xls" in self.url.suffix else "sqlite-file"
+            case sqla.URL():
+                return (
+                    "sqlite-file"
+                    if self.url.drivername == "sqlite"
+                    else "sql-connection"
+                )
+            case HttpFile():
+                url = yarl.URL(self.url.url)
+                typ = (
+                    ("excel-file" if "xls" in Path(url.path).suffix else "sqlite-file")
+                    if url.scheme in ("http", "https")
+                    else None
+                )
+                if typ is None:
+                    raise ValueError(f"Unsupported URL scheme: {url.scheme}")
+                return typ
 
 
 SchemaValidation: TypeAlias = Literal["compatible-if-present", "all-present"]
@@ -156,6 +186,19 @@ class DB(Generic[N, S_cov, S_contrav]):
         return sqla.MetaData()
 
     @cached_property
+    def subs(self) -> dict[type[Table], sqla.Table]:
+        """Return substitutions object."""
+        return {
+            table: (
+                sqla.Table(name=sub.name, metadata=self.meta, schema=sub.schema)
+                if isinstance(sub, sqla.TableClause)
+                else sqla.Table(name=sub, metadata=self.meta)
+            )
+            for table, sub in self.substitutions.items()
+            if issubclass(table, Table)
+        }
+
+    @cached_property
     def table_map(self) -> dict[type[Table], sqla.Table]:
         """Return table_map object containing all this DB's tables."""
         meta = self.meta
@@ -163,20 +206,10 @@ class DB(Generic[N, S_cov, S_contrav]):
 
         table_map = {}
 
-        table_subs = {
-            table: (
-                sqla.Table(name=sub.name, metadata=meta, schema=sub.schema)
-                if isinstance(sub, sqla.TableClause)
-                else sqla.Table(name=sub, metadata=meta)
-            )
-            for table, sub in self.substitutions.items()
-            if issubclass(table, Table)
-        }
-
         for schema_name, schema in schema_dict.items():
             for table in schema._tables():
-                sub = table_subs.get(table)
-                table_map[table] = table._sqla_table(meta, table_subs).to_metadata(
+                sub = self.subs.get(table)
+                table_map[table] = table._sqla_table(meta, self.subs).to_metadata(
                     meta,
                     schema=(
                         sub.schema
@@ -194,7 +227,16 @@ class DB(Generic[N, S_cov, S_contrav]):
     @cached_property
     def engine(self) -> sqla.engine.Engine:
         """Return engine for this DB."""
-        return sqla.create_engine(self.backend.url)
+        return (
+            sqla.create_engine(
+                self.backend.url
+                if isinstance(self.backend.url, sqla.URL)
+                else str(self.backend.url)
+            )
+            if self.backend.type == "sql-connection"
+            or self.backend.type == "sqlite-file"
+            else sqla.create_engine("duckdb:///:memory:")
+        )
 
     def validate(self) -> None:
         """Perform pre-defined schema validations."""
@@ -266,6 +308,7 @@ class DB(Generic[N, S_cov, S_contrav]):
             return self
 
         if issubclass(key, Table):
+            self._pre_gettable(key)
             return DBTable(
                 db=self,
                 select=sqla.select(self.table_map[key]),
@@ -298,41 +341,11 @@ class DB(Generic[N, S_cov, S_contrav]):
         Returns:
             Reference to manifested SQL table.
         """
-        table_name = key._default_name
-        sqla_table = self.table_map.get(key)
-
-        if sqla_table is None:
-            sqla_table = (
-                (
-                    sqla.Table(table_name, self.meta, *cols_from_df(value).values())
-                    if isinstance(value, pd.DataFrame)
-                    else sqla.Table(
-                        table_name,
-                        self.meta,
-                        *(
-                            sqla.Column(name, col.type, primary_key=col.primary_key)
-                            for name, col in value.selected_columns.items()
-                        ),
-                    )
-                )
-                if key is None
-                else key._sqla_table.to_metadata(self.table_map)
-            )
-            if not self.create_cross_fk:
-                # Create a temporary copy of the table object and remove external FKs.
-                # That way, local metadata will retain info on the FKs
-                # (for automatic joins) but the FKs won't be created in the DB.
-                sqla_table = sqla_table.to_metadata(
-                    sqla.MetaData()  # temporary metadata
-                )
-                remove_external_fk(sqla_table)
-
-        if not sqla.inspect(self.engine).has_table(table_name, schema=None):
-            sqla_table.create(self.engine)
+        sqla_table = self._ensure_table_exists(key)
 
         if isinstance(value, pd.DataFrame):
             value.reset_index()[list(sqla_table.c.keys())].to_sql(
-                table_name, self.engine, if_exists="replace", index=False
+                key._default_name, self.engine, if_exists="replace", index=False
             )
         else:
             with self.engine.begin() as con:
@@ -342,9 +355,87 @@ class DB(Generic[N, S_cov, S_contrav]):
                     )
                 )
 
+        self._post_settable(key, value)
+
         return DBTable(
             db=self,
             select=sqla.select(sqla_table),
-            name=table_name,
+            name=key._default_name,
             schema=key or Table,
         )
+
+    def _pre_gettable(self, table: type[Table]) -> None:
+        """Perform pre-getitem hooks."""
+        self._load_from_excel([table])
+
+    def _post_settable(
+        self, table: type[Table], value: pd.DataFrame | sqla.Select
+    ) -> None:
+        """Perform pre-setitem hooks."""
+        self._save_to_excel([table])
+
+    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
+        """Construct SQLA table from Table class."""
+        if not self.create_cross_fk:
+            # Create a temporary copy of the table object and remove external FKs.
+            # That way, local metadata will retain info on the FKs
+            # (for automatic joins) but the FKs won't be created in the DB.
+            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
+            remove_external_fk(sqla_table)
+
+        sqla_table.create(self.engine)
+
+    def _ensure_table_exists(self, table: type[Table]) -> sqla.Table:
+        """Ensure that the table exists in the database."""
+        sqla_table = self.table_map.get(table)
+        if sqla_table is None:
+            if table in self.substitutions:
+                sqla_table = self.subs[table]
+            else:
+                sqla_table = table._sqla_table(self.meta, subs=self.subs)
+
+        if not sqla.inspect(self.engine).has_table(
+            sqla_table.name, schema=sqla_table.schema
+        ):
+            self._create_sqla_table(sqla_table)
+
+        return sqla_table
+
+    def _load_from_excel(self, tables: list[type[Table]] | None = None) -> None:
+        """Load all tables from Excel."""
+        assert self.backend.type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
+
+        path = (
+            self.backend.url.get()
+            if isinstance(self.backend.url, HttpFile)
+            else self.backend.url
+        )
+
+        with open(path, "rb") as file:
+            for table in tables or self.table_map.keys():
+                sqla_table = self._ensure_table_exists(table)
+                pl.read_excel(file, sheet_name=table._default_name).write_database(
+                    str(sqla_table), str(self.engine.url)
+                )
+
+    def _save_to_excel(self, tables: list[type[Table]] | None) -> None:
+        """Save all tables to Excel."""
+        assert self.backend.type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
+
+        file = (
+            BytesIO()
+            if isinstance(self.backend.url, HttpFile)
+            else self.backend.url.open("wb")
+        )
+
+        with ExcelWorkbook(file) as wb:
+            for table in tables or self.table_map.keys():
+                pl.read_database(f"SELECT * FROM {table}", self.engine).write_excel(
+                    wb, worksheet=table._default_name
+                )
+
+        if isinstance(self.backend.url, HttpFile):
+            assert isinstance(file, BytesIO)
+            self.backend.url.set(file)
