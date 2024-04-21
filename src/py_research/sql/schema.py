@@ -153,11 +153,22 @@ class Schema:
         ),  # Avoid oracle error when VARCHAR has no size parameter
     }
 
-    @classmethod
-    def _tables(cls) -> set[type["Table"]]:
-        """Return all tables defined by subclasses."""
+    _tables: set[type["Table"]]
+    _assoc_tables: set[type["Table"]]
+
+    def __init_subclass__(cls) -> None:  # noqa: D105
         subclasses = get_all_subclasses(cls)
-        return {s for s in subclasses if isinstance(s, Table)}
+
+        cls._tables = {s for s in subclasses if isinstance(s, Table)}
+
+        cls._assoc_tables = set()
+        for table in cls._tables:
+            pks = set([col.name for col in table._primary_keys])
+            fks = set([col.name for rel in table._relations for col in rel.cols])
+            if pks in fks:
+                cls._assoc_tables.add(table)
+
+        super().__init_subclass__()
 
 
 class Table(Schema):

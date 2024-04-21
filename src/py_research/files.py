@@ -36,7 +36,7 @@ def ensure_dir_exists(path: Path | str):
 
 @dataclass
 class HttpFile:
-    """A file on a WebDAV server."""
+    """A (writable) file on a WebDAV server."""
 
     url: str | yarl.URL
     auth: tuple[str, str] | None = None
