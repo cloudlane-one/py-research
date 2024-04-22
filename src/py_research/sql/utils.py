@@ -1,6 +1,7 @@
 """SQL utility functions."""
 
 import pandas as pd
+import polars as pl
 import sqlalchemy as sqla
 from pandas.api.types import (
     is_datetime64_dtype,
@@ -9,45 +10,63 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from .schema import Schema
+from .schema import DataFrame, Schema
 
 
-def map_df_dtype(c: pd.Series) -> sqla.types.TypeEngine:
+def map_df_dtype(c: pd.Series | pl.Series) -> sqla.types.TypeEngine:  # noqa: C901
     """Map pandas dtype to sqlalchemy type."""
-    if is_datetime64_dtype(c):
-
-        return sqla.types.DATETIME()
-    elif is_integer_dtype(c):
-        return sqla.types.INTEGER()
-    elif is_numeric_dtype(c):
-        return sqla.types.FLOAT()
-    elif is_string_dtype(c):
-        max_len = c.str.len().max()
-        if max_len < 16:
-            return sqla.types.CHAR(max_len)
-        elif max_len < 256:
-            return sqla.types.VARCHAR(max_len)
+    if isinstance(c, pd.Series):
+        if is_datetime64_dtype(c):
+            return sqla.types.DATETIME()
+        elif is_integer_dtype(c):
+            return sqla.types.INTEGER()
+        elif is_numeric_dtype(c):
+            return sqla.types.FLOAT()
+        elif is_string_dtype(c):
+            max_len = c.str.len().max()
+            if max_len < 16:
+                return sqla.types.CHAR(max_len)
+            elif max_len < 256:
+                return sqla.types.VARCHAR(max_len)
+    else:
+        if c.dtype.is_temporal():
+            return sqla.types.DATE()
+        elif c.dtype.is_integer():
+            return sqla.types.INTEGER()
+        elif c.dtype.is_float():
+            return sqla.types.FLOAT()
+        elif c.dtype.is_(pl.String):
+            max_len = c.str.len_bytes().max()
+            assert max_len is not None
+            if (max_len) < 16:  # type: ignore
+                return sqla.types.CHAR(max_len)  # type: ignore
+            elif max_len < 256:  # type: ignore
+                return sqla.types.VARCHAR(max_len)  # type: ignore
 
     return sqla.types.BLOB()
 
 
-def cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
+def cols_from_df(df: DataFrame) -> dict[str, sqla.Column]:
     """Create columns from DataFrame."""
-    if len(df.index.names) > 1:
+    if isinstance(df, pd.DataFrame) and len(df.index.names) > 1:
         raise NotImplementedError("Multi-index not supported yet.")
 
     return {
+        **(
+            {
+                level: sqla.Column(
+                    level,
+                    map_df_dtype(df.index.get_level_values(level).to_series()),
+                    primary_key=True,
+                )
+                for level in df.index.names
+            }
+            if isinstance(df, pd.DataFrame)
+            else {}
+        ),
         **{
-            level: sqla.Column(
-                level,
-                map_df_dtype(df.index.get_level_values(level).to_series()),
-                primary_key=True,
-            )
-            for level in df.index.names
-        },
-        **{
-            str(name): sqla.Column(str(col.name), map_df_dtype(col))
-            for name, col in df.items()
+            str(df[col].name): sqla.Column(str(df[col].name), map_df_dtype(df[col]))
+            for col in df.columns
         },
     }
 
@@ -64,7 +83,7 @@ def map_foreignkey_schema(
 
     for schema_name, schema in schema_dict.items():
         if schema is not None:
-            for table in schema._tables():
+            for table in schema._tables:
                 if table._sqla_table is constraint.referred_table:
                     return schema_name
 

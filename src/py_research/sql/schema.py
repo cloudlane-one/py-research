@@ -6,6 +6,7 @@ from typing import (
     Any,
     Generic,
     Self,
+    TypeAlias,
     TypeVar,
     cast,
     get_args,
@@ -14,6 +15,8 @@ from typing import (
     overload,
 )
 
+import pandas as pd
+import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 
@@ -24,6 +27,9 @@ V = TypeVar("V")
 T = TypeVar("T", bound="Table")
 T2 = TypeVar("T2", bound="Table")
 T3 = TypeVar("T3", bound="Table")
+
+
+DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
 
 
 class ColRef(sqla.ColumnClause[V], Generic[V, T]):
@@ -225,14 +231,18 @@ class Table(Schema):
 
     @classmethod
     def _sqla_table(
-        cls, metadata: sqla.MetaData, subs: dict[type["Table"], sqla.Table]
+        cls,
+        metadata: sqla.MetaData,
+        subs: dict[type["Table"], sqla.Table],
+        name: str | None = None,
+        schema_name: str | None = None,
     ) -> sqla.Table:
         """Return a SQLAlchemy table object for this schema."""
         registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
 
         # Create a SQLAlchemy table object from the class definition
         return sqla.Table(
-            cls._default_name,
+            name or cls._default_name,
             registry.metadata,
             *(
                 sqla.Column(
@@ -255,4 +265,5 @@ class Table(Schema):
                 )
                 for rel in cls._relations
             ),
+            schema=schema_name,
         )

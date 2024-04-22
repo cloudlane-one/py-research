@@ -1,10 +1,11 @@
 """Abstract Python interface for SQL databases."""
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import cached_property, partial, reduce
 from io import BytesIO
 from pathlib import Path
+from secrets import token_hex
 from typing import (
     Any,
     Generic,
@@ -26,9 +27,10 @@ from typing_extensions import Self
 from xlsxwriter import Workbook as ExcelWorkbook
 
 from py_research.files import HttpFile
-from py_research.sql.schema import T2, ColRef, Rel, Schema, T, Table, V
+from py_research.hashing import gen_str_hash
+from py_research.sql.schema import ColRef, DataFrame, Rel, Schema, T, Table, V
 
-from .utils import map_foreignkey_schema, remove_external_fk
+from .utils import cols_from_df, map_foreignkey_schema, remove_external_fk
 
 N = TypeVar("N", bound=LiteralString)
 N2 = TypeVar("N2", bound=LiteralString)
@@ -42,8 +44,6 @@ S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
 S2 = TypeVar("S2", bound="Schema")
 
 D = TypeVar("D", bound="DataFrame")
-
-DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
 
 
 @dataclass(frozen=True)
@@ -130,28 +130,15 @@ class DBTable(DBCol[N, T], Generic[N, T]):
     def __getitem__(self, ref: str | ColRef[V, T]) -> DBCol[N, V]: ...
 
     @overload
-    def __getitem__(self: "DBTable[N, T2]", ref: type[T2]) -> "DBTable[N, T2]": ...
-
-    @overload
     def __getitem__(self, ref: sqla.ColumnElement[bool]) -> "DBTable[N, T]": ...
 
     def __getitem__(  # noqa: D105
         self,
-        ref: slice | type[Table] | str | ColRef[V, Table] | sqla.ColumnElement[bool],
+        ref: slice | str | ColRef[V, Table] | sqla.ColumnElement[bool],
     ) -> "Self | DBCol[N, V] | DBTable[N, Any]":
         match ref:
             case slice():
                 return super().__getitem__(ref)
-            case type():
-                subquery = self.select.subquery()
-                return DBTable(
-                    db=self.db,
-                    select=sqla.select(
-                        *(subquery.columns[c] for c in ref._columns.keys())
-                    ),
-                    name=self.name,
-                    schema=ref,
-                )
             case str() | ColRef():
                 name = ref if isinstance(ref, str) else ref.name
                 return cast(
@@ -179,6 +166,12 @@ class DBTable(DBCol[N, T], Generic[N, T]):
         else:
             with self.db.engine.connect() as con:
                 return cast(D, pd.read_sql(self.select, con))
+
+    def extend(
+        self, data: "DataFrame | sqla.Select | DBTable[N, T]"
+    ) -> "DBTable[N, T]":
+        """Extend the table with new data and return new table."""
+        raise NotImplementedError()
 
 
 @dataclass
@@ -430,7 +423,47 @@ class DB(Generic[N, S_cov, S_contrav]):
             table_dict = {key: value}
 
         for table, value in table_dict.items():
-            self._set_table(table, value)
+            self._set_table(
+                self._ensure_table_exists(self._table_from_schema(table)), value
+            )
+
+        self._save_to_excel(table_dict.keys())
+
+    def to_temp_table(
+        self, data: DataFrame | sqla.Select, schema: type[T] | None = None
+    ) -> DBTable[N, T]:
+        """Create a temporary table from a DataFrame or SQL query."""
+        table_name = (
+            f"df_{gen_str_hash(data, 10)}"
+            if isinstance(data, DataFrame)
+            else f"query_{token_hex(5)}"
+        )
+
+        sqla_table = (
+            sqla.Table(table_name, self.meta, *cols_from_df(data).values())
+            if isinstance(data, DataFrame)
+            else (
+                sqla.Table(
+                    table_name,
+                    self.meta,
+                    *(
+                        sqla.Column(name, col.type, primary_key=col.primary_key)
+                        for name, col in data.selected_columns.items()
+                    ),
+                )
+                if schema is None
+                else self._table_from_schema(schema, sub_name=table_name)
+            )
+        )
+
+        self._set_table(self._ensure_table_exists(sqla_table), data)
+
+        return DBTable(
+            db=self,
+            select=sqla.select(sqla_table),
+            name=table_name,
+            schema=schema or Table,
+        )
 
     def cast(
         self, schema: type[S2], validation: SchemaValidation = "compatible-if-present"
@@ -579,17 +612,62 @@ class DB(Generic[N, S_cov, S_contrav]):
 
         return node_df, edge_df
 
+    def _schema_name(self, schema: type[Table]) -> str | None:
+        """Return the schema name for a schema class."""
+        for name, s in self.schema_dict.items():
+            if issubclass(schema, s):
+                return name
+
+        return None
+
+    def _table_from_schema(
+        self, schema: type[T], sub_name: str | None = None
+    ) -> sqla.Table:
+        """Create a SQLA table from a schema class."""
+        sqla_table = self.table_map.get(schema)
+        if sqla_table is None:
+            if schema in self.substitutions:
+                sqla_table = self.subs[schema]
+            else:
+                sqla_table = schema._sqla_table(
+                    self.meta,
+                    subs=self.subs,
+                    name=sub_name,
+                    schema_name=self._schema_name(schema),
+                )
+
+        return sqla_table
+
+    def _ensure_table_exists(self, sqla_table: sqla.Table) -> sqla.Table:
+        """Ensure that the table exists in the database, then return it."""
+        if not sqla.inspect(self.engine).has_table(
+            sqla_table.name, schema=sqla_table.schema
+        ):
+            self._create_sqla_table(sqla_table)
+
+        return sqla_table
+
+    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
+        """Create SQL-side table from Table class."""
+        if not self.create_cross_fk:
+            # Create a temporary copy of the table object and remove external FKs.
+            # That way, local metadata will retain info on the FKs
+            # (for automatic joins) but the FKs won't be created in the DB.
+            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
+            remove_external_fk(sqla_table)
+
+        sqla_table.create(self.engine)
+
     def _set_table(
         self,
-        table: type[T],
+        sqla_table: sqla.Table,
         value: DBTable[N, T] | DataFrame | sqla.Select,
-    ) -> DBTable[N, T]:
-        sqla_table = self._ensure_table_exists(table)
-
+    ) -> None:
+        """Set a table in the database to a new value."""
         if isinstance(value, pd.DataFrame):
             # Upload dataframe to SQL
             value.reset_index()[list(sqla_table.c.keys())].to_sql(
-                str(self.table_map[table]),
+                str(sqla_table),
                 self.engine,
                 if_exists="replace",
                 index=False,
@@ -597,7 +675,7 @@ class DB(Generic[N, S_cov, S_contrav]):
         elif isinstance(value, pl.DataFrame):
             # Upload dataframe to SQL
             value[list(sqla_table.c.keys())].write_database(
-                str(self.table_map[table]),
+                str(sqla_table),
                 str(self.engine.url),
                 if_table_exists="replace",
             )
@@ -612,42 +690,6 @@ class DB(Generic[N, S_cov, S_contrav]):
                     )
                 )
 
-        self._save_to_excel([table])
-
-        return DBTable(
-            db=self,
-            select=sqla.select(sqla_table),
-            name=table._default_name,
-            schema=table,
-        )
-
-    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
-        """Create SQL-side table from Table class."""
-        if not self.create_cross_fk:
-            # Create a temporary copy of the table object and remove external FKs.
-            # That way, local metadata will retain info on the FKs
-            # (for automatic joins) but the FKs won't be created in the DB.
-            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
-            remove_external_fk(sqla_table)
-
-        sqla_table.create(self.engine)
-
-    def _ensure_table_exists(self, table: type[Table]) -> sqla.Table:
-        """Ensure that the table exists in the database and return a reference to it."""
-        sqla_table = self.table_map.get(table)
-        if sqla_table is None:
-            if table in self.substitutions:
-                sqla_table = self.subs[table]
-            else:
-                sqla_table = table._sqla_table(self.meta, subs=self.subs)
-
-        if not sqla.inspect(self.engine).has_table(
-            sqla_table.name, schema=sqla_table.schema
-        ):
-            self._create_sqla_table(sqla_table)
-
-        return sqla_table
-
     def _load_from_excel(self, tables: list[type[Table]] | None = None) -> None:
         """Load all tables from Excel."""
         assert self.backend.type == "excel-file", "Backend must be an Excel file."
@@ -660,12 +702,12 @@ class DB(Generic[N, S_cov, S_contrav]):
         )
 
         with open(path, "rb") as file:
-            for table, sqla_table in self.table_map.items():
+            for table in tables or self.table_map.keys():
                 pl.read_excel(file, sheet_name=table._default_name).write_database(
-                    str(sqla_table), str(self.engine.url)
+                    str(self.table_map[table]), str(self.engine.url)
                 )
 
-    def _save_to_excel(self, tables: list[type[Table]] | None) -> None:
+    def _save_to_excel(self, tables: Iterable[type[Table]] | None) -> None:
         """Save all tables to Excel."""
         assert self.backend.type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
@@ -677,9 +719,9 @@ class DB(Generic[N, S_cov, S_contrav]):
         )
 
         with ExcelWorkbook(file) as wb:
-            for table, sqla_table in self.table_map.items():
+            for table in tables or self.table_map.keys():
                 pl.read_database(
-                    f"SELECT * FROM {sqla_table}", self.engine
+                    f"SELECT * FROM {self.table_map[table]}", self.engine
                 ).write_excel(wb, worksheet=table._default_name)
 
         if isinstance(self.backend.url, HttpFile):
