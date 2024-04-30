@@ -2,6 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import asdict, dataclass
+from secrets import token_hex
 from typing import (
     Any,
     Generic,
@@ -19,6 +20,7 @@ import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
+from bidict import bidict
 
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_all_subclasses
@@ -35,20 +37,17 @@ Recs = TypeVar("Recs", bound=RecordValue)
 DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
 
 
-class AttrRef(sqla.ColumnClause[Val], Generic[Val, Rec]):
-    """Reference a property by its containing record type, name and value type."""
+def _extract_record_type(hint: Any) -> type["Record"]:
+    origin: type = get_origin(hint)
 
-    def __init__(  # noqa: D107
-        self, record_type: type[Rec], name: str, value_type: type[Val] | None
-    ) -> None:
-        self.record_type = record_type
-        self.name = name
-        self.value_type = value_type
+    if issubclass(origin, Record):
+        return origin
+    if isinstance(origin, Mapping):
+        return get_args(hint)[1]
+    if isinstance(origin, Iterable):
+        return get_args(hint)[0]
 
-        super().__init__(
-            self.name,
-            type_=self.record_type._sqla_table.c[self.name].type,
-        )
+    raise ValueError("Invalid record value.")
 
 
 @dataclass
@@ -58,7 +57,7 @@ class Prop(Generic[Val]):
     primary_key: bool = False
 
     _name: str | None = None
-    _record: type["Record"] | None = None
+    _record_type: type["Record"] | None = None
     _value_type: type[Val] | None = None
     _value: Val | None = None
 
@@ -69,10 +68,10 @@ class Prop(Generic[Val]):
         return self._name
 
     @property
-    def record(self) -> type["Record"]:
+    def record_type(self) -> type["Record"]:
         """Record type."""
-        assert self._record is not None, "Record type not set."
-        return self._record
+        assert self._record_type is not None, "Record type not set."
+        return self._record_type
 
     @property
     def value_type(self) -> type[Val]:
@@ -93,30 +92,48 @@ class Prop(Generic[Val]):
     def __get__(self, instance: "Record", owner: type["Record"]) -> Val: ...
 
     @overload
+    def __get__(
+        self: "Attr[Val]", instance: None, owner: type[Rec]
+    ) -> "AttrRef[Val, Rec]": ...
+
+    @overload
     def __get__(self: "Rel[Rec]", instance: None, owner: type[Rec]) -> type[Rec]: ...
 
     @overload
     def __get__(
-        self: "Attr[Val]", instance: None, owner: type[Rec]
-    ) -> AttrRef[Val, Rec]: ...
+        self: "Rel[Iterable[Rec]]", instance: None, owner: type[Rec]
+    ) -> "RelSet[Rec, None]": ...
+
+    @overload
+    def __get__(
+        self: "Rel[Mapping[Idx, Rec]]", instance: None, owner: type[Rec]
+    ) -> "RelSet[Rec, Idx]": ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
 
     def __get__(  # noqa: D105
         self, instance: "object | None", owner: type[Rec] | None
-    ) -> Val | type[Rec] | AttrRef[Val, Rec] | Self:
+    ) -> "Val | AttrRef[Val, Rec] | type[Record] | RelSet | Self":
         if owner is None or not issubclass(owner, Record):
             return self
 
         if instance is not None:
             return self.value
 
-        if is_subtype(self.value_type, RecordValue):
-            return cast(type[Rec], self.value_type)
-
         if isinstance(self, Attr):
-            return cast(AttrRef[Val, Rec], owner._cols()[self.name])
+            return cast(AttrRef[Val, Rec], owner._all_attrs()[self.name])
+
+        if isinstance(self, Rel) and issubclass(self.value_type, Record):
+            return type(token_hex(5), (self.value_type,), {"_rel": self})
+
+        if isinstance(self, Rel) and is_subtype(self.value_type, Iterable[Record]):
+            return RelSet(record_type=_extract_record_type(self.value_type), index=None)
+
+        if isinstance(self, Rel) and is_subtype(
+            self.value_type, Mapping[Hashable, Record]
+        ):
+            return RelSet(record_type=_extract_record_type(self.value_type), index=None)
 
         raise NotImplementedError()
 
@@ -129,81 +146,165 @@ class Prop(Generic[Val]):
 class Attr(Prop[Val]):
     """Define attribute of a record."""
 
-    col_name: str | None = None
+    attr_name: str | None = None
 
     @property
     def name(self) -> str:
         """Column name."""
-        return self.col_name or super().name
+        return self.attr_name or super().name
+
+
+class AttrRef(sqla.ColumnClause[Val], Generic[Val, Rec]):
+    """Reference a property by its containing record type, name and value type."""
+
+    def __init__(  # noqa: D107
+        self, record_type: type[Rec], name: str, value_type: type[Val] | None
+    ) -> None:
+        self.record_type = record_type
+        self.name = name
+        self.value_type = value_type
+
+        super().__init__(
+            self.name,
+            type_=self.record_type._sqla_table.c[self.name].type,
+        )
 
 
 @dataclass
 class Rel(Prop[Recs]):
     """Define relation to another record."""
 
-    foreign_key: Attr | Iterable[Attr] | dict[Attr, AttrRef] | None = None
+    via: (
+        Attr
+        | Iterable[Attr]
+        | dict[Attr, AttrRef]
+        | type["Record"]
+        | tuple[type["Record"], type["Record"]]
+        | None
+    ) = None
 
     _target: type["Record"] | None = None
 
     @property
-    def target(self) -> type["Record"]:
+    def target_type(self) -> type["Record"]:
         """Target record type."""
         assert self._target is not None, "Target record type not set."
         return self._target
 
     @property
-    def cols(self) -> list[Attr]:
-        """Foreign key columns."""
-        match self.foreign_key:
+    def fk_map(self) -> bidict[AttrRef, AttrRef]:
+        """Map source foreign keys to target attrs."""
+        target = self.target_type
+
+        match self.via:
+            case tuple() | type():
+                return bidict()
             case dict():
-                source_cols = list(self.foreign_key.keys())
-                target_cols = list(self.foreign_key.values())
-            case Attr() as col:
-                source_cols = [self.record._cols()[col.name]]
-                target_cols = self.target._primary_keys()
-            case Iterable() as cols:
-                source_cols = [self.record._cols()[col.name] for col in cols]
-                target_cols = self.target._primary_keys()
-            case None:
-                return [
-                    Attr(
-                        **asdict(target_col),
-                        col_name=f"{self._name}.{target_col.name}",
-                    )
-                    for target_col in self.target._primary_keys()
+                return bidict(
+                    {
+                        AttrRef(self.record_type, fk.name, fk.value_type): pk
+                        for fk, pk in self.via.items()
+                    }
+                )
+            case Attr() | Iterable():
+                attrs = self.via if isinstance(self.via, Iterable) else [self.via]
+                source_attrs = [
+                    self.record_type._all_attrs()[attr.name] for attr in attrs
                 ]
+                target_attrs = target._primary_keys()
+                fk_map = dict(zip(source_attrs, target_attrs))
 
-        assert len(list(source_cols)) == len(
-            target_cols
-        ), "Count of foreign keys must match count of primary keys in target table."
-        assert all(
-            issubclass(self.record._value_types[fk_col.name], pk_col.value_type)
-            for fk_col, pk_col in zip(source_cols, target_cols)
-            if pk_col.value_type is not None
-        ), "Foreign key value types must match primary key value types."
+                assert all(
+                    issubclass(
+                        self.record_type._value_types[fk_attr.name], pk_attr.value_type
+                    )
+                    for fk_attr, pk_attr in fk_map.items()
+                    if pk_attr.value_type is not None
+                ), "Foreign key value types must match primary key value types."
 
-        return [
-            Attr(
-                primary_key=self.primary_key,
-                col_name=fk_col.name,
-                _record=self.record,
-                _value_type=self.record._value_types[fk_col.name],
-            )
-            for fk_col in source_cols
-        ]
+                return bidict(fk_map)
+            case None:
+                return bidict(
+                    {
+                        AttrRef(
+                            record_type=self.record_type,
+                            name=f"{self._name}.{target_attr.name}",
+                            value_type=target_attr.value_type,
+                        ): target_attr
+                        for target_attr in target._primary_keys()
+                    }
+                )
+
+    @property
+    def join_path(self) -> list[tuple[type["Record"], Mapping[AttrRef, AttrRef]]]:
+        """Path to join target table."""
+        match self.via:
+            case type():
+                # Relation is defined via other relation or relation table
+                if hasattr(self.via, "_rel"):
+                    other_rel = getattr(self.via, "_rel")
+                    assert isinstance(other_rel, Rel)
+                    if issubclass(other_rel.target_type, self.record_type):
+                        # Supplied record type object is a backlinking relation
+                        return [(self.target_type, self.fk_map.inverse)]
+                    else:
+                        # Supplied record type object is a forward relation
+                        # on a relation table
+                        back_rel = [
+                            r
+                            for r in other_rel.record_type._rels
+                            if issubclass(r.target_type, self.record_type)
+                        ][0]
+
+                        return [
+                            (back_rel.record_type, back_rel.fk_map.inverse),
+                            (other_rel.target_type, other_rel.fk_map),
+                        ]
+                else:
+                    # Relation is defined via relation table
+                    fwd_rel = [
+                        r
+                        for r in self.via._rels
+                        if issubclass(r.target_type, self.target_type)
+                    ][0]
+                    back_rel = [
+                        r
+                        for r in self.via._rels
+                        if issubclass(r.target_type, self.record_type)
+                    ][0]
+
+                    return [
+                        (back_rel.record_type, back_rel.fk_map.inverse),
+                        (fwd_rel.target_type, fwd_rel.fk_map),
+                    ]
+            case tuple():
+                # Relation is defined via back-rel + forward-rel on a relation table.
+                back_rel_target, fwd_rel_target = self.via
+
+                assert hasattr(back_rel_target, "_rel") and hasattr(
+                    fwd_rel_target, "_rel"
+                )
+                back_rel: Rel = getattr(back_rel_target, "_rel")
+                fwd_rel: Rel = getattr(fwd_rel_target, "_rel")
+
+                return [
+                    (back_rel.record_type, back_rel.fk_map.inverse),
+                    (fwd_rel.target_type, fwd_rel.fk_map),
+                ]
+            case _:
+                # Relation is defined via foreign key attributes
+                return [(self.target_type, self.fk_map)]
 
 
-def _extract_record_type(hint: Any) -> type["Record"]:
-    origin: type = get_origin(hint)
+@dataclass
+class RelSet(Generic[Rec, Idx]):
+    """Reference to related reocrd type, optionally indexed."""
 
-    if issubclass(origin, Record):
-        return origin
-    if isinstance(origin, Mapping):
-        return get_args(hint)[1]
-    if isinstance(origin, Iterable):
-        return get_args(hint)[0]
+    record_type: type[Rec]
+    """Record type."""
 
-    raise ValueError("Invalid record value.")
+    index: Idx | None = None
+    """Index value."""
 
 
 class Record(Generic[Idx, Val]):
@@ -221,7 +322,7 @@ class Record(Generic[Idx, Val]):
     _rels: list[Rel]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
-        # Retrieve column type definitions from class annotations
+        # Retrieve property type definitions from class annotations
         cls._value_types = {
             name: get_args(hint)[0]
             for name, hint in get_type_hints(cls)
@@ -267,17 +368,21 @@ class Record(Generic[Idx, Val]):
         )
 
     @classmethod
-    def _cols(cls) -> dict[str, Attr]:
-        """Return the columns of this schema."""
+    def _all_attrs(cls) -> dict[str, AttrRef]:
+        """Return all data attributes of this schema."""
         return {
-            **{a.name: a for a in cls._defined_attrs},
-            **{c.name: c for rel in cls._rels for c in rel.cols},
+            **{a.name: AttrRef(cls, a.name, a.value_type) for a in cls._defined_attrs},
+            **{
+                c.name: AttrRef(cls, c.name, c.value_type)
+                for rel in cls._rels
+                for c in rel.fk_map.keys()
+            },
         }
 
     @classmethod
-    def _primary_keys(cls) -> list[Prop]:
-        """Return the primary key columns of this schema."""
-        return [p for p in cls._cols().values() if p.primary_key]
+    def _primary_keys(cls) -> list[AttrRef]:
+        """Return the primary key attributes of this schema."""
+        return [p for p in cls._all_attrs().values() if p.primary_key]
 
     @classmethod
     def _sqla_table(
@@ -296,20 +401,24 @@ class Record(Generic[Idx, Val]):
             registry.metadata,
             *(
                 sqla.Column(
-                    col.name,
-                    registry._resolve_type(col.value_type) if col.value_type else None,
-                    primary_key=col.primary_key,
+                    attr.name,
+                    (
+                        registry._resolve_type(attr.value_type)
+                        if attr.value_type
+                        else None
+                    ),
+                    primary_key=attr.primary_key,
                 )
-                for col in cls._cols().values()
+                for attr in cls._all_attrs().values()
             ),
             *(
                 sqla.ForeignKeyConstraint(
-                    [col.name for col in rel.cols],
-                    [col.name for col in rel.target._primary_keys()],
+                    [attr.name for attr in rel.fk_map.keys()],
+                    [attr.name for attr in rel.target_type._primary_keys()],
                     table=(
-                        subs[rel.target]
-                        if rel.target in subs
-                        else rel.target._sqla_table(metadata, subs)
+                        subs[rel.target_type]
+                        if rel.target_type in subs
+                        else rel.target_type._sqla_table(metadata, subs)
                     ),
                     name=f"{cls._default_table_name()}_{rel._name}_fk",
                 )
@@ -336,8 +445,8 @@ class Schema:
 
         cls._assoc_tables = set()
         for table in cls._record_types:
-            pks = set([col.name for col in table._primary_keys()])
-            fks = set([col.name for rel in table._rels for col in rel.cols])
+            pks = set([attr.name for attr in table._primary_keys()])
+            fks = set([attr.name for rel in table._rels for attr in rel.fk_map.keys()])
             if pks in fks:
                 cls._assoc_tables.add(table)
 

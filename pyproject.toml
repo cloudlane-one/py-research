@@ -37,6 +37,7 @@ dependencies = [
     "XlsxWriter>=3.2.0",
     "cloudpathlib>=0.18.1",
     "duckdb-engine>=0.11.5",
+    "bidict>=0.23.1",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
