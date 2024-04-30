@@ -53,6 +53,11 @@ class PyObjectRef(Generic[T]):
     docs_url: str | None = None
     """Deep-link to this object's section within the package's API reference."""
 
+    @property
+    def fqn(self) -> str:
+        """Fully qualified name of the object."""
+        return f"{self.module}.{self.object}"
+
     @staticmethod
     def reference(  # noqa: C901
         obj: T2,

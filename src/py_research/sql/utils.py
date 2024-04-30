@@ -83,7 +83,7 @@ def map_foreignkey_schema(
 
     for schema_name, schema in schema_dict.items():
         if schema is not None:
-            for table in schema._tables:
+            for table in schema._record_types:
                 if table._sqla_table is constraint.referred_table:
                     return schema_name
 

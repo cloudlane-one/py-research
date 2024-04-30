@@ -1,7 +1,7 @@
 """Static schemas for SQL databases."""
 
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Hashable, Iterable, Mapping
+from dataclasses import asdict, dataclass
 from typing import (
     Any,
     Generic,
@@ -20,220 +20,270 @@ import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 
+from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_all_subclasses
+from py_research.reflect.types import is_subtype
 
-V = TypeVar("V")
+RecordValue: TypeAlias = "Record | Iterable[Record] | Mapping[Any, Record]"
 
-T = TypeVar("T", bound="Table")
-T2 = TypeVar("T2", bound="Table")
-T3 = TypeVar("T3", bound="Table")
+Idx = TypeVar("Idx", bound="Hashable")
+Val = TypeVar("Val")
+Rec = TypeVar("Rec", bound="Record")
+Recs = TypeVar("Recs", bound=RecordValue)
 
 
 DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
 
 
-class ColRef(sqla.ColumnClause[V], Generic[V, T]):
-    """Reference a column by table schema, name and value type."""
+class AttrRef(sqla.ColumnClause[Val], Generic[Val, Rec]):
+    """Reference a property by its containing record type, name and value type."""
 
     def __init__(  # noqa: D107
-        self, table: type[T], name: str, value_type: type[V] | None
+        self, record_type: type[Rec], name: str, value_type: type[Val] | None
     ) -> None:
-        self.table_schema = table
+        self.record_type = record_type
         self.name = name
         self.value_type = value_type
 
         super().__init__(
             self.name,
-            type_=self.table_schema._sqla_table.c[self.name].type,
+            type_=self.record_type._sqla_table.c[self.name].type,
         )
 
 
 @dataclass
-class Col(Generic[V]):
-    """Define table column within a table schema."""
+class Prop(Generic[Val]):
+    """Define property of a record."""
 
     primary_key: bool = False
+
+    _name: str | None = None
+    _record: type["Record"] | None = None
+    _value_type: type[Val] | None = None
+    _value: Val | None = None
+
+    @property
+    def name(self) -> str:
+        """Property name."""
+        assert self._name is not None, "Property name not set."
+        return self._name
+
+    @property
+    def record(self) -> type["Record"]:
+        """Record type."""
+        assert self._record is not None, "Record type not set."
+        return self._record
+
+    @property
+    def value_type(self) -> type[Val]:
+        """Property value type."""
+        assert self._value_type is not None, "Property value type not set."
+        return self._value_type
+
+    @property
+    def value(self) -> Val:
+        """Property value."""
+        assert self._value is not None, "Property value not set."
+        return self._value
+
+    def __setname__(self, _, name: str) -> None:  # noqa: D105
+        self._name = name
+
+    @overload
+    def __get__(self, instance: "Record", owner: type["Record"]) -> Val: ...
+
+    @overload
+    def __get__(self: "Rel[Rec]", instance: None, owner: type[Rec]) -> type[Rec]: ...
+
+    @overload
+    def __get__(
+        self: "Attr[Val]", instance: None, owner: type[Rec]
+    ) -> AttrRef[Val, Rec]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: "object | None", owner: type[Rec] | None
+    ) -> Val | type[Rec] | AttrRef[Val, Rec] | Self:
+        if owner is None or not issubclass(owner, Record):
+            return self
+
+        if instance is not None:
+            return self.value
+
+        if is_subtype(self.value_type, RecordValue):
+            return cast(type[Rec], self.value_type)
+
+        if isinstance(self, Attr):
+            return cast(AttrRef[Val, Rec], owner._cols()[self.name])
+
+        raise NotImplementedError()
+
+    def __set__(self, instance: "Record", value: Val) -> None:
+        """Set the value of the property."""
+        self._value = value
+
+
+@dataclass
+class Attr(Prop[Val]):
+    """Define attribute of a record."""
+
     col_name: str | None = None
-    _attr_name: str | None = None
 
     @property
     def name(self) -> str:
         """Column name."""
-        name = self.col_name or self._attr_name
-        assert name is not None, "Column name not set."
-        return name
-
-    def __setname__(self, _, name: str) -> None:  # noqa: D105
-        self._attr_name = name
-
-    @overload
-    def __get__(self, instance: None, owner: type[T]) -> ColRef[V, T]: ...
-
-    @overload
-    def __get__(self, instance: object, owner: type) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type[T]
-    ) -> ColRef[V, T] | Self:
-        if instance is not None or not issubclass(owner, Table):
-            return self
-
-        assert self._attr_name is not None
-        return cast(ColRef[V, T], owner._columns[self._attr_name])
+        return self.col_name or super().name
 
 
 @dataclass
-class Rel(Generic[T, T2, V]):
-    """Define foreign key column(s) for a table."""
+class Rel(Prop[Recs]):
+    """Define relation to another record."""
 
-    target: type[T]
-    foreign_key: Col | Iterable[Col] | dict[Col[V], ColRef[V, T]] | None = None
-    _source: type[T2] | None = None
-    _attr_name: str | None = None
+    foreign_key: Attr | Iterable[Attr] | dict[Attr, AttrRef] | None = None
+
+    _target: type["Record"] | None = None
 
     @property
-    def cols(self) -> tuple[ColRef[Any, T2], ...]:
-        """Foreign key columns."""
-        assert self._source is not None, "Source table not set."
-        assert self._attr_name is not None, "Attribute name not set."
+    def target(self) -> type["Record"]:
+        """Target record type."""
+        assert self._target is not None, "Target record type not set."
+        return self._target
 
+    @property
+    def cols(self) -> list[Attr]:
+        """Foreign key columns."""
         match self.foreign_key:
             case dict():
                 source_cols = list(self.foreign_key.keys())
                 target_cols = list(self.foreign_key.values())
-            case Col() as col:
-                source_cols = [self._source._columns[col.name]]
-                target_cols = self.target._primary_keys
+            case Attr() as col:
+                source_cols = [self.record._cols()[col.name]]
+                target_cols = self.target._primary_keys()
             case Iterable() as cols:
-                source_cols = [self._source._columns[col.name] for col in cols]
-                target_cols = self.target._primary_keys
+                source_cols = [self.record._cols()[col.name] for col in cols]
+                target_cols = self.target._primary_keys()
             case None:
-                return tuple(
-                    ColRef(
-                        self._source,
-                        f"{self._attr_name}.{target_col.name}",
-                        target_col.value_type,
+                return [
+                    Attr(
+                        **asdict(target_col),
+                        col_name=f"{self._name}.{target_col.name}",
                     )
-                    for target_col in self.target._primary_keys
-                )
+                    for target_col in self.target._primary_keys()
+                ]
 
         assert len(list(source_cols)) == len(
             target_cols
         ), "Count of foreign keys must match count of primary keys in target table."
         assert all(
-            issubclass(self._source._value_types[fk_col.name], pk_col.value_type)
+            issubclass(self.record._value_types[fk_col.name], pk_col.value_type)
             for fk_col, pk_col in zip(source_cols, target_cols)
             if pk_col.value_type is not None
         ), "Foreign key value types must match primary key value types."
 
-        return tuple(
-            ColRef(self._source, fk_col.name, self._source._value_types[fk_col.name])
+        return [
+            Attr(
+                primary_key=self.primary_key,
+                col_name=fk_col.name,
+                _record=self.record,
+                _value_type=self.record._value_types[fk_col.name],
+            )
             for fk_col in source_cols
-        )
-
-    def __setname__(self, _, name: str) -> None:  # noqa: D105
-        self._attr_name = name
-
-    @overload
-    def __get__(self, instance: None, owner: type[T3]) -> "Rel[T, T3, V]": ...
-
-    @overload
-    def __get__(self, instance: object, owner: type) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type[T3]
-    ) -> "Rel[T, T3, V] | Self":
-        if instance is not None or not issubclass(owner, Table):
-            return self
-
-        assert self._attr_name is not None
-        return Rel(self.target, self.foreign_key, owner, self._attr_name)
+        ]
 
 
-class Schema:
-    """Base class for declarative SQL schemas."""
+def _extract_record_type(hint: Any) -> type["Record"]:
+    origin: type = get_origin(hint)
 
+    if issubclass(origin, Record):
+        return origin
+    if isinstance(origin, Mapping):
+        return get_args(hint)[1]
+    if isinstance(origin, Iterable):
+        return get_args(hint)[0]
+
+    raise ValueError("Invalid record value.")
+
+
+class Record(Generic[Idx, Val]):
+    """Schema for a record in a database."""
+
+    _table_name: str
     _type_map: dict[type, sqla.types.TypeEngine] = {
         str: sqla.types.String().with_variant(
             sqla.types.String(50), "oracle"
         ),  # Avoid oracle error when VARCHAR has no size parameter
     }
 
-    _tables: set[type["Table"]]
-    _assoc_tables: set[type["Table"]]
-
-    def __init_subclass__(cls) -> None:  # noqa: D105
-        subclasses = get_all_subclasses(cls)
-
-        cls._tables = {s for s in subclasses if isinstance(s, Table)}
-
-        cls._assoc_tables = set()
-        for table in cls._tables:
-            pks = set([col.name for col in table._primary_keys])
-            fks = set([col.name for rel in table._relations for col in rel.cols])
-            if pks in fks:
-                cls._assoc_tables.add(table)
-
-        super().__init_subclass__()
-
-
-class Table(Schema):
-    """Protocol for table schemas."""
-
-    _default_name: str
-
     _value_types: dict[str, type]
-    _primary_keys: tuple[ColRef["Table", Self], ...]
-    _relations: tuple[Rel["Table", Self, Any], ...]
-
-    _columns: dict[str, ColRef["Table", Self]]
-
-    def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
-        assert self._default_name is not None
-        return sqla.table(self._default_name)
+    _defined_attrs: list[Attr]
+    _rels: list[Rel]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
-        if not hasattr(cls, "_default_name"):
-            # Generate a default table name from the class name
-            cls._default_name = cls.__name__.lower()
-
         # Retrieve column type definitions from class annotations
         cls._value_types = {
-            attr: get_args(hint)[0]
-            for attr, hint in get_type_hints(cls)
-            if get_origin(hint) is Col
+            name: get_args(hint)[0]
+            for name, hint in get_type_hints(cls)
+            if issubclass(get_origin(hint) or type, Attr)
         }
 
-        # Create a dictionary of columns explicitly defined in the class
-        defined_cols = {
-            attr: ColRef(cls, attr, cls._value_types[attr])
-            for attr, col in cls.__dict__.items()
-            if isinstance(col, Col)
-        }
+        cls._defined_attrs = [
+            Attr(
+                **{
+                    **(asdict(attr) if isinstance(attr, Attr) else {}),
+                    "_name": name,
+                    "_record": cls,
+                    "_value_type": cls._value_types[name],
+                }
+            )
+            for name, attr in cls.__dict__.items()
+            if isinstance(attr, Attr)
+        ]
 
-        # Create a tuple of primary key columns
-        cls._primary_keys = tuple(c for c in defined_cols.values() if c.primary_key)
-
-        # Create a tuple of relation objects defined in the class
-        cls._relations = tuple(
-            Rel(rel.target, rel.foreign_key, cls, rel_name)
-            for rel_name, rel in cls.__dict__.items()
+        cls._rels = [
+            Rel(
+                **{
+                    **(asdict(rel) if isinstance(rel, Rel) else {}),
+                    "_name": name,
+                    "_record": cls,
+                    "_value_type": cls._value_types[name],
+                    "_target": _extract_record_type(cls._value_types[name]),
+                }
+            )
+            for name, rel in cls.__dict__.items()
             if isinstance(rel, Rel)
-        )
-
-        # Create a dictionary of all columns in the table
-        cls._columns = {
-            **defined_cols,
-            **{c.name: c for rel in cls._relations for c in rel.cols},
-        }
+        ]
 
         return super().__init_subclass__()
+
+    @classmethod
+    def _default_table_name(cls) -> str:
+        """Return the name of the table for this schema."""
+        return (
+            cls._table_name
+            if hasattr(cls, "_table_name")
+            else PyObjectRef.reference(cls).fqn.replace(".", "_")
+        )
+
+    @classmethod
+    def _cols(cls) -> dict[str, Attr]:
+        """Return the columns of this schema."""
+        return {
+            **{a.name: a for a in cls._defined_attrs},
+            **{c.name: c for rel in cls._rels for c in rel.cols},
+        }
+
+    @classmethod
+    def _primary_keys(cls) -> list[Prop]:
+        """Return the primary key columns of this schema."""
+        return [p for p in cls._cols().values() if p.primary_key]
 
     @classmethod
     def _sqla_table(
         cls,
         metadata: sqla.MetaData,
-        subs: dict[type["Table"], sqla.Table],
+        subs: dict[type["Record"], sqla.Table],
         name: str | None = None,
         schema_name: str | None = None,
     ) -> sqla.Table:
@@ -242,7 +292,7 @@ class Table(Schema):
 
         # Create a SQLAlchemy table object from the class definition
         return sqla.Table(
-            name or cls._default_name,
+            name or cls._default_table_name(),
             registry.metadata,
             *(
                 sqla.Column(
@@ -250,20 +300,45 @@ class Table(Schema):
                     registry._resolve_type(col.value_type) if col.value_type else None,
                     primary_key=col.primary_key,
                 )
-                for col in cls._columns.values()
+                for col in cls._cols().values()
             ),
             *(
                 sqla.ForeignKeyConstraint(
                     [col.name for col in rel.cols],
-                    [col.name for col in rel.target._primary_keys],
+                    [col.name for col in rel.target._primary_keys()],
                     table=(
                         subs[rel.target]
                         if rel.target in subs
                         else rel.target._sqla_table(metadata, subs)
                     ),
-                    name=f"{cls._default_name}_{rel._attr_name}_fk",
+                    name=f"{cls._default_table_name()}_{rel._name}_fk",
                 )
-                for rel in cls._relations
+                for rel in cls._rels
             ),
             schema=schema_name,
         )
+
+    def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
+        assert self._default_table_name() is not None
+        return sqla.table(self._default_table_name())
+
+
+class Schema:
+    """Group multiple record types into a schema."""
+
+    _record_types: set[type["Record"]]
+    _assoc_tables: set[type["Record"]]
+
+    def __init_subclass__(cls) -> None:  # noqa: D105
+        subclasses = get_all_subclasses(cls)
+
+        cls._record_types = {s for s in subclasses if isinstance(s, Record)}
+
+        cls._assoc_tables = set()
+        for table in cls._record_types:
+            pks = set([col.name for col in table._primary_keys()])
+            fks = set([col.name for rel in table._rels for col in rel.cols])
+            if pks in fks:
+                cls._assoc_tables.add(table)
+
+        super().__init_subclass__()
