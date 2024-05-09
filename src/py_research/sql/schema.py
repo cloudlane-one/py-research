@@ -16,8 +16,6 @@ from typing import (
     overload,
 )
 
-import pandas as pd
-import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 from bidict import bidict
@@ -30,11 +28,12 @@ RecordValue: TypeAlias = "Record | Iterable[Record] | Mapping[Any, Record]"
 
 Idx = TypeVar("Idx", bound="Hashable")
 Val = TypeVar("Val")
+Val2 = TypeVar("Val2")
 Rec = TypeVar("Rec", bound="Record")
+Rec2 = TypeVar("Rec2", bound="Record")
 Recs = TypeVar("Recs", bound=RecordValue)
-
-
-DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
+Sch = TypeVar("Sch", bound="Schema")
+DBS = TypeVar("DBS", bound="Record | Schema")
 
 
 def _extract_record_type(hint: Any) -> type["Record"]:
@@ -94,27 +93,24 @@ class Prop(Generic[Val]):
     @overload
     def __get__(
         self: "Attr[Val]", instance: None, owner: type[Rec]
-    ) -> "AttrRef[Val, Rec]": ...
-
-    @overload
-    def __get__(self: "Rel[Rec]", instance: None, owner: type[Rec]) -> type[Rec]: ...
+    ) -> "AttrRef[Rec, Val]": ...
 
     @overload
     def __get__(
-        self: "Rel[Iterable[Rec]]", instance: None, owner: type[Rec]
-    ) -> "RelSet[Rec, None]": ...
+        self: "Rel[Rec2 | Iterable[Rec2]]", instance: None, owner: type[Rec]
+    ) -> "RelRef[Rec, Rec2, None]": ...
 
     @overload
     def __get__(
-        self: "Rel[Mapping[Idx, Rec]]", instance: None, owner: type[Rec]
-    ) -> "RelSet[Rec, Idx]": ...
+        self: "Rel[Mapping[Idx, Rec2]]", instance: None, owner: type[Rec]
+    ) -> "RelRef[Rec, Rec2, Idx]": ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
 
     def __get__(  # noqa: D105
         self, instance: "object | None", owner: type[Rec] | None
-    ) -> "Val | AttrRef[Val, Rec] | type[Record] | RelSet | Self":
+    ) -> "Val | AttrRef[Rec, Val] | type[Record] | RelRef | Self":
         if owner is None or not issubclass(owner, Record):
             return self
 
@@ -122,18 +118,26 @@ class Prop(Generic[Val]):
             return self.value
 
         if isinstance(self, Attr):
-            return cast(AttrRef[Val, Rec], owner._all_attrs()[self.name])
+            return cast(AttrRef[Rec, Val], owner._all_attrs()[self.name])
 
         if isinstance(self, Rel) and issubclass(self.value_type, Record):
             return type(token_hex(5), (self.value_type,), {"_rel": self})
 
         if isinstance(self, Rel) and is_subtype(self.value_type, Iterable[Record]):
-            return RelSet(record_type=_extract_record_type(self.value_type), index=None)
+            return RelRef(
+                source=owner,
+                r=_extract_record_type(self.value_type),
+                idx=None,
+            )
 
         if isinstance(self, Rel) and is_subtype(
             self.value_type, Mapping[Hashable, Record]
         ):
-            return RelSet(record_type=_extract_record_type(self.value_type), index=None)
+            return RelRef(
+                source=owner,
+                r=_extract_record_type(self.value_type),
+                idx=None,
+            )
 
         raise NotImplementedError()
 
@@ -154,7 +158,7 @@ class Attr(Prop[Val]):
         return self.attr_name or super().name
 
 
-class AttrRef(sqla.ColumnClause[Val], Generic[Val, Rec]):
+class AttrRef(sqla.ColumnClause[Val], Generic[Rec, Val]):
     """Reference a property by its containing record type, name and value type."""
 
     def __init__(  # noqa: D107
@@ -167,6 +171,12 @@ class AttrRef(sqla.ColumnClause[Val], Generic[Val, Rec]):
         super().__init__(
             self.name,
             type_=self.record_type._sqla_table.c[self.name].type,
+        )
+
+    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec, Val2]":
+        """Specialize the value type of this attribute."""
+        return AttrRef(
+            record_type=self.record_type, name=self.name, value_type=value_type
         )
 
 
@@ -297,14 +307,17 @@ class Rel(Prop[Recs]):
 
 
 @dataclass
-class RelSet(Generic[Rec, Idx]):
-    """Reference to related reocrd type, optionally indexed."""
+class RelRef(Generic[Rec, Rec2, Idx]):
+    """Reference to related record type, optionally indexed."""
 
-    record_type: type[Rec]
-    """Record type."""
+    source: type[Rec]
+    """Source record type."""
 
-    index: Idx | None = None
-    """Index value."""
+    r: type[Rec2]
+    """Target record type."""
+
+    idx: type[Idx] | None = None
+    """Index type."""
 
 
 class Record(Generic[Idx, Val]):
@@ -359,6 +372,13 @@ class Record(Generic[Idx, Val]):
         return super().__init_subclass__()
 
     @classmethod
+    def rel(
+        cls, other: type[Rec], index: type[Idx] | None = None
+    ) -> RelRef[Self, Rec, Idx]:
+        """Dynamically define a relation to another record type."""
+        return RelRef(cls, other, index)
+
+    @classmethod
     def _default_table_name(cls) -> str:
         """Return the name of the table for this schema."""
         return (
@@ -388,16 +408,16 @@ class Record(Generic[Idx, Val]):
     def _sqla_table(
         cls,
         metadata: sqla.MetaData,
-        subs: dict[type["Record"], sqla.Table],
-        name: str | None = None,
-        schema_name: str | None = None,
+        subs: Mapping[type["Record"], sqla.TableClause],
     ) -> sqla.Table:
         """Return a SQLAlchemy table object for this schema."""
         registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
 
+        sub = subs.get(cls)
+
         # Create a SQLAlchemy table object from the class definition
         return sqla.Table(
-            name or cls._default_table_name(),
+            sub.name if sub is not None else cls._default_table_name(),
             registry.metadata,
             *(
                 sqla.Column(
@@ -415,16 +435,12 @@ class Record(Generic[Idx, Val]):
                 sqla.ForeignKeyConstraint(
                     [attr.name for attr in rel.fk_map.keys()],
                     [attr.name for attr in rel.target_type._primary_keys()],
-                    table=(
-                        subs[rel.target_type]
-                        if rel.target_type in subs
-                        else rel.target_type._sqla_table(metadata, subs)
-                    ),
+                    table=(rel.target_type._sqla_table(metadata, subs)),
                     name=f"{cls._default_table_name()}_{rel._name}_fk",
                 )
                 for rel in cls._rels
             ),
-            schema=schema_name,
+            schema=(sub.schema if sub is not None else None),
         )
 
     def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
@@ -436,18 +452,24 @@ class Schema:
     """Group multiple record types into a schema."""
 
     _record_types: set[type["Record"]]
-    _assoc_tables: set[type["Record"]]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
         subclasses = get_all_subclasses(cls)
-
         cls._record_types = {s for s in subclasses if isinstance(s, Record)}
-
-        cls._assoc_tables = set()
-        for table in cls._record_types:
-            pks = set([attr.name for attr in table._primary_keys()])
-            fks = set([attr.name for rel in table._rels for attr in rel.fk_map.keys()])
-            if pks in fks:
-                cls._assoc_tables.add(table)
-
         super().__init_subclass__()
+
+
+@dataclass(frozen=True)
+class Required(Generic[DBS]):
+    """Define required record type in a schema."""
+
+    type: type[DBS]
+    """Record type."""
+
+
+class a(Record):  # noqa: N801
+    """Dynamically defined record type."""
+
+    def __getattribute__(self, name: str) -> Any:
+        """Get dynamic attribute by name."""
+        return AttrRef(type(self), name, Any)

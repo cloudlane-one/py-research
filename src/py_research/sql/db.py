@@ -1,8 +1,8 @@
 """Abstract Python interface for SQL databases."""
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from functools import cached_property, partial, reduce
+from functools import cached_property, reduce
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
@@ -11,9 +11,9 @@ from typing import (
     Generic,
     Literal,
     LiteralString,
-    ParamSpec,
     TypeAlias,
     TypeVar,
+    TypeVarTuple,
     cast,
     overload,
 )
@@ -22,35 +22,139 @@ import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import yarl
+from bidict import bidict
 from cloudpathlib import CloudPath
+from pandas.api.types import (
+    is_datetime64_dtype,
+    is_integer_dtype,
+    is_numeric_dtype,
+    is_string_dtype,
+)
 from typing_extensions import Self
 from xlsxwriter import Workbook as ExcelWorkbook
 
 from py_research.files import HttpFile
 from py_research.hashing import gen_str_hash
-from py_research.sql.schema import ColRef, DataFrame, Rel, Schema, T, Table, V
+from py_research.reflect.types import has_type
+from py_research.sql.schema import (
+    Attr,
+    AttrRef,
+    Idx,
+    Prop,
+    Rec,
+    Rec2,
+    Record,
+    Rel,
+    RelRef,
+    Required,
+    Sch,
+    Schema,
+    Val,
+)
 
-from .utils import cols_from_df, map_foreignkey_schema, remove_external_fk
+DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
+Series: TypeAlias = pd.Series | pl.Series
 
-N = TypeVar("N", bound=LiteralString)
-N2 = TypeVar("N2", bound=LiteralString)
+Name = TypeVar("Name", bound=LiteralString)
+Name2 = TypeVar("Name2", bound=LiteralString)
 
-Params = ParamSpec("Params")
+DBS_contrav = TypeVar("DBS_contrav", contravariant=True, bound=Record | Schema)
+Rec_cov = TypeVar("Rec_cov", covariant=True, bound=Record)
 
-S = TypeVar("S", bound="Schema")
-S_cov = TypeVar("S_cov", covariant=True, bound="Schema")
+Idx_cov = TypeVar("Idx_cov", covariant=True, bound=Hashable)
+Idx2 = TypeVar("Idx2", bound=Hashable)
+Idx3 = TypeVar("Idx3", bound=Hashable)
+IdxTup = TypeVarTuple("IdxTup")
 
-S_contrav = TypeVar("S_contrav", contravariant=True, bound="Schema")
-S2 = TypeVar("S2", bound="Schema")
+Df = TypeVar("Df", bound=DataFrame)
 
-D = TypeVar("D", bound="DataFrame")
+
+def map_df_dtype(c: pd.Series | pl.Series) -> sqla.types.TypeEngine:  # noqa: C901
+    """Map pandas dtype to sqlalchemy type."""
+    if isinstance(c, pd.Series):
+        if is_datetime64_dtype(c):
+            return sqla.types.DATETIME()
+        elif is_integer_dtype(c):
+            return sqla.types.INTEGER()
+        elif is_numeric_dtype(c):
+            return sqla.types.FLOAT()
+        elif is_string_dtype(c):
+            max_len = c.str.len().max()
+            if max_len < 16:
+                return sqla.types.CHAR(max_len)
+            elif max_len < 256:
+                return sqla.types.VARCHAR(max_len)
+    else:
+        if c.dtype.is_temporal():
+            return sqla.types.DATE()
+        elif c.dtype.is_integer():
+            return sqla.types.INTEGER()
+        elif c.dtype.is_float():
+            return sqla.types.FLOAT()
+        elif c.dtype.is_(pl.String):
+            max_len = c.str.len_bytes().max()
+            assert max_len is not None
+            if (max_len) < 16:  # type: ignore
+                return sqla.types.CHAR(max_len)  # type: ignore
+            elif max_len < 256:  # type: ignore
+                return sqla.types.VARCHAR(max_len)  # type: ignore
+
+    return sqla.types.BLOB()
+
+
+def cols_from_df(df: DataFrame) -> dict[str, sqla.Column]:
+    """Create columns from DataFrame."""
+    if isinstance(df, pd.DataFrame) and len(df.index.names) > 1:
+        raise NotImplementedError("Multi-index not supported yet.")
+
+    return {
+        **(
+            {
+                level: sqla.Column(
+                    level,
+                    map_df_dtype(df.index.get_level_values(level).to_series()),
+                    primary_key=True,
+                )
+                for level in df.index.names
+            }
+            if isinstance(df, pd.DataFrame)
+            else {}
+        ),
+        **{
+            str(df[col].name): sqla.Column(str(df[col].name), map_df_dtype(df[col]))
+            for col in df.columns
+        },
+    }
+
+
+def remove_external_fk(table: sqla.Table):
+    """Dirty vodoo to remove external FKs from existing table."""
+    for c in table.columns.values():
+        c.foreign_keys = set(
+            fk
+            for fk in c.foreign_keys
+            if fk.constraint and fk.constraint.referred_table.schema == table.schema
+        )
+
+    table.foreign_keys = set(  # type: ignore
+        fk
+        for fk in table.foreign_keys
+        if fk.constraint and fk.constraint.referred_table.schema == table.schema
+    )
+
+    table.constraints = set(
+        c
+        for c in table.constraints
+        if not isinstance(c, sqla.ForeignKeyConstraint)
+        or c.referred_table.schema == table.schema
+    )
 
 
 @dataclass(frozen=True)
-class Backend(Generic[N]):
+class Backend(Generic[Name]):
     """SQL backend for DB."""
 
-    name: N
+    name: Name
     """Unique name to identify this backend by."""
 
     url: sqla.URL | CloudPath | HttpFile | Path
@@ -80,126 +184,34 @@ class Backend(Generic[N]):
                 return typ
 
 
-SchemaValidation: TypeAlias = Literal["compatible-if-present", "all-present"]
-
-
-@dataclass(frozen=True)
-class DBCol(Generic[N, V]):
-    """SQL column or table."""
-
-    db: "DB[N, Any, Any]"
-    select: sqla.Select[tuple[V]]
-    name: str
-
-    def __clause_element__(self) -> sqla.Subquery:  # noqa: D105
-        return self.select.subquery()
-
-    def to_series(self) -> pd.Series:
-        """Download selected column data as series.
-
-        Returns:
-            Series containing the data.
-        """
-        with self.db.engine.connect() as con:
-            return pd.read_sql(self.select, con)[self.select.columns[0].name]
-
-    def __getitem__(self, key: slice) -> Self:  # noqa: D105
-        assert key == slice(None)
-        return self
-
-    def __setitem__(self, key: slice, value: pd.Series) -> None:  # noqa: D105
-        assert key == slice(None)
-        raise NotImplementedError("Setting SQL data not supported yet.")
-
-
-@dataclass(frozen=True)
-class DBTable(DBCol[N, T], Generic[N, T]):
-    """SQL table."""
-
-    schema: type[T]
-    sources: set["DBTable[N, Any]"] = set()
-
-    @property
-    def columns(self) -> dict[str, sqla.ColumnElement]:  # noqa: D102
-        return dict(self.select.columns)
-
-    @overload
-    def __getitem__(self, ref: slice) -> Self: ...
-
-    @overload
-    def __getitem__(self, ref: str | ColRef[V, T]) -> DBCol[N, V]: ...
-
-    @overload
-    def __getitem__(self, ref: sqla.ColumnElement[bool]) -> "DBTable[N, T]": ...
-
-    def __getitem__(  # noqa: D105
-        self,
-        ref: slice | str | ColRef[V, Table] | sqla.ColumnElement[bool],
-    ) -> "Self | DBCol[N, V] | DBTable[N, Any]":
-        match ref:
-            case slice():
-                return super().__getitem__(ref)
-            case str() | ColRef():
-                name = ref if isinstance(ref, str) else ref.name
-                return cast(
-                    DBCol[N, V],
-                    DBCol(
-                        db=self.db, select=sqla.select(self.columns[name]), name=name
-                    ),
-                )
-            case sqla.ColumnElement():
-                return DBTable(
-                    db=self.db,
-                    select=self.select.where(ref),
-                    name=self.name,
-                    schema=self.schema,
-                )
-
-    def to_df(self, kind: type[D] = pd.DataFrame) -> D:
-        """Download table selection to dataframe.
-
-        Returns:
-            Dataframe containing the data.
-        """
-        if kind is pl.DataFrame:
-            return cast(D, pl.read_database(self.select, self.db.engine))
-        else:
-            with self.db.engine.connect() as con:
-                return cast(D, pd.read_sql(self.select, con))
-
-    def extend(
-        self, data: "DataFrame | sqla.Select | DBTable[N, T]"
-    ) -> "DBTable[N, T]":
-        """Extend the table with new data and return new table."""
-        raise NotImplementedError()
+IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
+IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
+IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
+DfInput: TypeAlias = DataFrame | Iterable[Val] | Mapping[Idx, Val]
+SeriesInput: TypeAlias = Series | Iterable[Val] | Mapping[Idx, Val]
 
 
 @dataclass
-class DB(Generic[N, S_cov, S_contrav]):
+class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
     """Active connection to a SQL server."""
 
-    backend: Backend[N]
-    schema: type[S_cov | S_contrav] | Mapping[type[S_cov | S_contrav], str] | None = (
-        None
-    )
-    validations: Mapping[type[S_cov], SchemaValidation] = {}
-    substitutions: Mapping[type[S_cov], str | sqla.TableClause] = {}
+    backend: Backend[Name]
+    schema: (
+        type[DBS_contrav]
+        | Required[DBS_contrav]
+        | set[type[DBS_contrav] | Required[DBS_contrav]]
+        | Mapping[
+            type[DBS_contrav] | Required[DBS_contrav],
+            str | sqla.TableClause,
+        ]
+        | None
+    ) = None
+    index: AttrRef[Any, Idx] | None = None
 
     create_cross_fk: bool = True
+    validate_schema: bool = True
 
-    @cached_property
-    def schema_dict(self) -> dict[str | None, type[S_cov | S_contrav]]:
-        """Dict with all schemas."""
-        return (
-            {name: s for s, name in self.schema.items()}
-            if isinstance(self.schema, Mapping)
-            else {None: self.schema} if self.schema is not None else {}
-        )
-
-    @cached_property
-    def assoc_tables(self) -> set[type[Table]]:
-        """Set of all association tables in this DB."""
-        return {t for s in self.schema_dict.values() for t in s._assoc_tables}
+    selection: sqla.Select[tuple[Rec_cov]] | None = None
 
     @cached_property
     def meta(self) -> sqla.MetaData:
@@ -207,55 +219,72 @@ class DB(Generic[N, S_cov, S_contrav]):
         return sqla.MetaData()
 
     @cached_property
-    def subs(self) -> dict[type[Table], sqla.Table]:
-        """Parsed substitutions map."""
-        return {
-            table: (
-                sqla.Table(name=sub.name, metadata=self.meta, schema=sub.schema)
-                if isinstance(sub, sqla.TableClause)
-                else sqla.Table(name=sub, metadata=self.meta)
-            )
-            for table, sub in self.substitutions.items()
-            if issubclass(table, Table)
-        }
+    def subs(self) -> Mapping[type[Record], sqla.TableClause]:
+        """Substitutions for tables in this DB."""
+        if has_type(
+            self.schema,
+            Mapping[type[Record] | Required[Record], str | sqla.TableClause],
+        ):
+            return {
+                (rec.type if isinstance(rec, Required) else rec): (
+                    sub if isinstance(sub, sqla.TableClause) else sqla.table(sub)
+                )
+                for rec, sub in self.schema.items()
+            }
+
+        if has_type(self.schema, Mapping[type[Schema] | Required[Schema], str]):
+            return {
+                rec: sqla.table(rec._table_name, schema=schema_name)
+                for schema, schema_name in self.schema.items()
+                for rec in (
+                    schema.type if isinstance(schema, Required) else schema
+                )._record_types
+            }
+
+        return {}
 
     @cached_property
-    def table_map(self) -> dict[type[Table], sqla.Table]:
+    def table_map(self) -> bidict[type[Record], sqla.Table]:
         """Maps all table classes in this DB to their SQLA tables."""
         meta = self.meta
-        schema_dict = self.schema_dict
+        recs = self.subs.keys()
 
-        table_map = {}
+        if len(recs) == 0:
+            assert isinstance(self.schema, type | set)
+            types = self.schema if isinstance(self.schema, set) else set([self.schema])
+            types = {rec.type if isinstance(rec, Required) else rec for rec in types}
+            recs = {rec for rec in types if issubclass(rec, Record)} | {
+                rec
+                for schema in types
+                if issubclass(schema, Schema)
+                for rec in schema._record_types
+            }
 
-        for schema_name, schema in schema_dict.items():
-            for table in schema._tables:
-                sub = self.subs.get(table)
-                table_map[table] = table._sqla_table(meta, self.subs).to_metadata(
-                    meta,
-                    schema=(
-                        sub.schema
-                        if sub is not None
-                        else schema_name or sqla.schema.SchemaConst.RETAIN_SCHEMA
-                    ),  # type: ignore # None is supported but not in the stubs
-                    referred_schema_fn=partial(
-                        map_foreignkey_schema, schema_dict=schema_dict
-                    ),
-                    name=sub.name if sub is not None else None,
-                )
-
-        return table_map
+        return bidict({rec: rec._sqla_table(meta, self.subs) for rec in recs})
 
     @cached_property
-    def relation_map(self) -> dict[type[Table], set[Rel[Table, Table, Any]]]:
+    def assoc_types(self) -> set[type[Record]]:
+        """Set of all association tables in this DB."""
+        assoc_types = set()
+        for rec in self.table_map.keys():
+            pks = set([attr.name for attr in rec._primary_keys()])
+            fks = set([attr.name for rel in rec._rels for attr in rel.fk_map.keys()])
+            if pks in fks:
+                assoc_types.add(rec)
+
+        return assoc_types
+
+    @cached_property
+    def relation_map(self) -> dict[type[Record], set[Rel]]:
         """Maps all tables in this DB to their outgoing or incoming relations."""
-        rels: dict[type[Table], set[Rel]] = {
+        rels: dict[type[Record], set[Rel]] = {
             table: set() for table in self.table_map.keys()
         }
 
-        for table in self.table_map.keys():
-            for rel in table._relations:
-                rels[table].add(rel)
-                rels[rel.target].add(rel)
+        for rec in self.table_map.keys():
+            for rel in rec._rels:
+                rels[rec].add(rel)
+                rels[rel.target_type].add(rel)
 
         return rels
 
@@ -277,20 +306,67 @@ class DB(Generic[N, S_cov, S_contrav]):
 
     def validate(self) -> None:
         """Perform pre-defined schema validations."""
-        # Get all tables that need to be validated
-        tables = {
-            t: v
-            for s, v in self.validations.items()
-            for t in self[s].table_map.values()
-        }
+        if not self.validate_schema:
+            return
+
+        types = None
+
+        if has_type(
+            self.schema,
+            Mapping[type[Record] | Required[Record], str | sqla.TableClause],
+        ):
+            types = {
+                (rec.type if isinstance(rec, Required) else rec): isinstance(
+                    rec, Required
+                )
+                for rec in self.schema.keys()
+            }
+        elif has_type(self.schema, Mapping[type[Schema] | Required[Schema], str]):
+            types = {
+                rec: isinstance(schema, Required)
+                for schema, schema_name in self.schema.items()
+                for rec in (
+                    schema.type if isinstance(schema, Required) else schema
+                )._record_types
+            }
+        elif (
+            has_type(self.schema, set[type[Schema] | Required[Schema]])
+            or has_type(self.schema, type[Schema])
+            or has_type(self.schema, Required[Schema])
+        ):
+            schema_items = (
+                self.schema if isinstance(self.schema, set) else {self.schema}
+            )
+            types = {
+                rec: isinstance(self.schema, Required)
+                for schema in schema_items
+                for rec in (
+                    schema.type if isinstance(schema, Required) else schema
+                )._record_types
+            }
+        elif (
+            has_type(self.schema, set[type[Record] | Required[Record]])
+            or has_type(self.schema, type[Record])
+            or has_type(self.schema, Required[Record])
+        ):
+            recs = self.schema if isinstance(self.schema, set) else {self.schema}
+            types = {
+                rec.type if isinstance(rec, Required) else rec: isinstance(
+                    rec, Required
+                )
+                for rec in recs
+            }
+
+        assert types is not None
+        tables = {self.table_map[rec]: required for rec, required in types.items()}
 
         inspector = sqla.inspect(self.engine)
 
         # Iterate over all tables and perform validations for each
-        for table, validation in tables.items():
+        for table, required in tables.items():
             has_table = inspector.has_table(table.name, table.schema)
 
-            if not has_table and validation == "compatible-if-present":
+            if not has_table and not required:
                 continue
 
             # Check if table exists
@@ -338,100 +414,250 @@ class DB(Generic[N, S_cov, S_contrav]):
         self.validate()
 
     @overload
+    def __getitem__(
+        self: "DB[Name, Rec, Rec, Idx]", key: type[Rec]
+    ) -> "DB[Name, DBS_contrav, Rec, Idx]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, Sch, Rec_cov, Idx]", key: type[Sch]
+    ) -> "DB[Name, Sch, Rec_cov, Idx]": ...
+
+    @overload
+    def __getitem__(  # type: ignore
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
+        key: AttrRef[Rec_cov, Val],
+    ) -> "DB[Name, DBS_contrav, Record[Val, None], Idx2]": ...
+
+    @overload
+    def __getitem__(  # type: ignore
+        self: "DB[Name, DBS_contrav, Any, Idx]", key: AttrRef[Rec_cov, Val]
+    ) -> "DB[Name, DBS_contrav, Record[Val, None], Idx]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]", key: AttrRef[Any, Val]
+    ) -> "DB[Name, DBS_contrav, Record[Val, None], IdxStart[Idx2]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Any, Idx]", key: AttrRef[Any, Val]
+    ) -> "DB[Name, DBS_contrav, Record[Val, None], IdxStart[Idx]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DB[Name, DBS_contrav, Rec2, tuple[Idx2, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DB[Name, DBS_contrav, Rec2, tuple[*IdxTup, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DB[Name, DBS_contrav, Rec2, tuple[Idx, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Any, tuple[*IdxTup]]", key: RelRef[Any, Rec2, Idx3]
+    ) -> "DB[Name, DBS_contrav, Rec2, IdxTupEnd[*IdxTup, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
+        key: RelRef[Any, Rec2, Idx3],
+    ) -> "DB[Name, DBS_contrav, Rec2, IdxStartEnd[Idx2, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Any, Idx]", key: RelRef[Any, Rec2, Idx3]
+    ) -> "DB[Name, DBS_contrav, Rec2, IdxStartEnd[Idx, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Iterable[Idx2]
+    ) -> "DB[Name, DBS_contrav, Rec_cov, None]": ...
+
+    @overload
+    def __getitem__(self, key: Iterable[Idx]) -> Self: ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Idx2
+    ) -> Val: ...
+
+    @overload
+    def __getitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]", key: Idx
+    ) -> Val: ...
+
+    @overload
+    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
+
+    @overload
     def __getitem__(self, key: slice) -> Self: ...
 
-    @overload
-    def __getitem__(self: "DB[N, Any, T]", key: type[T]) -> "DBTable[N, T]": ...
-
-    @overload
-    def __getitem__(self: "DB[N, S, Any]", key: type[S]) -> "DB[N, S, S]": ...
-
     def __getitem__(  # noqa: D105
-        self, key: slice | type[T] | type[S]
-    ) -> "Self | DBTable[N, T] | DB[N, S, S]":
-        if isinstance(key, slice):
-            assert (
-                key.start is None and key.stop is None and key.step is None
-            ), "Only empty slices are supported as keys for DB objects."
-            return self
-
-        if issubclass(key, Table):
-            # Return a single table.
-            self._load_from_excel([key])
-            return DBTable(
-                db=self,
-                select=sqla.select(self.table_map[key]),
-                name=key._default_name,
-                schema=key,
-            )
-
-        if issubclass(key, Schema):
-            # Return a new DB instance bound to a sub-schema.
-            return DB(
-                self.backend,
-                key,
-                validations=self.validations,
-                substitutions=self.substitutions,
-            )
+        self,
+        key: (
+            type[Schema]
+            | type[Record]
+            | AttrRef[Any, Val]
+            | RelRef
+            | Iterable[Hashable]
+            | Hashable
+            | slice
+        ),
+    ) -> "DB | Val":
+        raise NotImplementedError()
 
     @overload
     def __setitem__(
-        self: "DB[N, Any, T]",
-        key: slice,
-        value: "DB[N, S_cov, Any] | dict[type[T] | str, DataFrame | sqla.Select]",
+        self: "DB[Name, Rec, Rec, Idx]",
+        key: type[Rec],
+        value: "DB[Name, DBS_contrav, Rec, Idx | None] | DfInput[Rec, Idx]",
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DB[N, Any, T]",
-        key: type[T],
-        value: "DBTable[N, T] | DataFrame | sqla.Select",
+        self: "DB[Name, Sch, Any, Idx]",
+        key: type[Sch],
+        value: "DB[Name, Sch, Any, Idx | None] | Mapping[Sch, DfInput[Sch, Idx]]",
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DB[N, S, Any]",
-        key: type[S],
-        value: "DB[N, S, Any] | dict[type[S] | str, DataFrame | sqla.Select]",
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]",
+        key: AttrRef[Rec_cov, Val],
+        value: "DB[Name, Record[Val, Idx2], Any, None] | DB[Name, Record[Val, Any], Any, Idx2] | SeriesInput[Val, Idx2]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
+        key: AttrRef[Rec_cov, Val],
+        value: "DB[Name, Record[Val, Idx], Any, None] | DB[Name, Record[Val, Any], Any, Idx] | SeriesInput[Val, Idx]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]",
+        key: AttrRef[Any, Val],
+        value: "DB[Name, Record[Val, IdxStart[Idx2]], Any, None] | DB[Name, Record[Val, Any], Any, IdxStart[Idx2]] | SeriesInput[Val, IdxStart[Idx2]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
+        key: AttrRef[Any, Val],
+        value: "DB[Name, Record[Val, IdxStart[Idx]], Any, None] | DB[Name, Record[Val, Any], Any, IdxStart[Idx]] | SeriesInput[Val, IdxStart[Idx]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, tuple[Idx2, Idx3]] | DfInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, tuple[Idx, Idx3]] | DfInput[Rec2, tuple[Idx, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, tuple[*IdxTup, Idx3]] | DfInput[Rec2, tuple[*IdxTup, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, IdxStartEnd[Idx2, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, IdxStartEnd[Idx, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DB[Name, Rec2, Rec2, IdxTupEnd[*IdxTup, Idx3]] | DfInput[Rec2, IdxTupEnd[*IdxTup, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], Idx_cov]",
+        key: Iterable[Idx2],
+        value: "DB[Name, Any, Rec_cov, Idx2 | None] | Iterable[Rec_cov] | DataFrame",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
+        key: Iterable[Idx],
+        value: "DB[Name, Any, Rec_cov, Idx | None] | Iterable[Rec_cov] | DataFrame",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Idx2, value: Val
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]", key: Idx, value: Val
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self, key: sqla.ColumnElement[bool], value: Self | Iterable[Rec_cov] | DataFrame
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self, key: slice, value: Self | Iterable[Rec_cov] | DataFrame
     ) -> None: ...
 
     def __setitem__(  # noqa: D105
         self,
-        key: slice | type[Schema],
-        value: "DBTable[N, Any] | DataFrame | sqla.Select | DB[N, Any, Any] | dict[type[Schema] | str, DataFrame | sqla.Select]",  # noqa: E501
+        key: (
+            type[Schema]
+            | type[Record]
+            | AttrRef[Any, Val]
+            | RelRef
+            | Iterable[Hashable]
+            | Hashable
+            | slice
+        ),
+        value: "DB | DfInput[Rec_cov, Any] | SeriesInput[Val, Any] | Val",
     ) -> None:
-        table_dict: dict[type[Table], DBTable[N, Any] | DataFrame | sqla.Select] = {}
-        if isinstance(key, slice):
-            assert (
-                key.start is None and key.stop is None and key.step is None
-            ), "Only empty slices are supported as keys for DB objects."
-            assert isinstance(
-                value, DB | dict
-            ), "Value must be a DB object or a dictionary."
-            table_dict = {k: value[k] for k in self.table_map.keys()}
-        elif issubclass(key, Schema):
-            assert isinstance(value, DB) or isinstance(
-                value, dict
-            ), "Value must be a DB object or a dictionary."
-            table_dict = {k: value[k] for k in key._tables}
-        elif issubclass(key, Table):
-            assert (
-                isinstance(value, DBTable)
-                or isinstance(value, pd.DataFrame)
-                or isinstance(value, sqla.Select)
-            ), "Value must be a DBTable, DataFrame or SQLA Select object."
-            table_dict = {key: value}
+        raise NotImplementedError()
 
-        for table, value in table_dict.items():
-            self._set_table(
-                self._ensure_table_exists(self._table_from_schema(table)), value
-            )
-
-        self._save_to_excel(table_dict.keys())
+    def __clause_element__(self) -> sqla.Subquery:
+        """Return subquery for the current selection to be used inside SQL clauses."""
+        if self.selection is None:
+            raise ValueError("Only a selected DB can be used as a clause element.")
+        return self.selection.subquery()
 
     def to_temp_table(
         self, data: DataFrame | sqla.Select, schema: type[T] | None = None
-    ) -> DBTable[N, T]:
+    ) -> DBTable[Name, T]:
         """Create a temporary table from a DataFrame or SQL query."""
         table_name = (
             f"df_{gen_str_hash(data, 10)}"
@@ -465,9 +691,21 @@ class DB(Generic[N, S_cov, S_contrav]):
             schema=schema or Table,
         )
 
+    def to_df(self, kind: type[D] = pd.DataFrame) -> D:
+        """Download table selection to dataframe.
+
+        Returns:
+            Dataframe containing the data.
+        """
+        if kind is pl.DataFrame:
+            return cast(D, pl.read_database(self.select, self.db.engine))
+        else:
+            with self.db.engine.connect() as con:
+                return cast(D, pd.read_sql(self.select, con))
+
     def cast(
         self, schema: type[S2], validation: SchemaValidation = "compatible-if-present"
-    ) -> "DB[N, S2, S2]":
+    ) -> "DB[Name, S2, S2]":
         """Cast the DB to a different schema."""
         return DB(
             self.backend,
@@ -476,7 +714,7 @@ class DB(Generic[N, S_cov, S_contrav]):
             substitutions=self.substitutions,
         )
 
-    def transfer(self, backend: Backend[N2]) -> "DB[N2, S_cov, S_contrav]":
+    def transfer(self, backend: Backend[Name2]) -> "DB[Name2, S_cov, S_contrav]":
         """Transfer the DB to a different backend."""
         other_db = DB(
             backend,
@@ -497,7 +735,7 @@ class DB(Generic[N, S_cov, S_contrav]):
         return other_db
 
     def to_graph(
-        self: "DB[N, T, Any]", nodes: Sequence[type[T]]
+        self: "DB[Name, T, Any]", nodes: Sequence[type[T]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -524,7 +762,7 @@ class DB(Generic[N, S_cov, S_contrav]):
             t: set() for t in nodes
         }
         for n in nodes:
-            for at in self.assoc_tables:
+            for at in self.assoc_types:
                 if len(at._relations) == 2:
                     left, right = at._relations
                     if left.target == n:
@@ -661,7 +899,7 @@ class DB(Generic[N, S_cov, S_contrav]):
     def _set_table(
         self,
         sqla_table: sqla.Table,
-        value: DBTable[N, T] | DataFrame | sqla.Select,
+        value: DBTable[Name, T] | DataFrame | sqla.Select,
     ) -> None:
         """Set a table in the database to a new value."""
         if isinstance(value, pd.DataFrame):
