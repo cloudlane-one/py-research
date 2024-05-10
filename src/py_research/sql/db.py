@@ -37,17 +37,15 @@ from py_research.files import HttpFile
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import has_type
 from py_research.sql.schema import (
-    Attr,
     AttrRef,
     Idx,
-    Prop,
     Rec,
     Rec2,
+    Rec_cov,
     Record,
     Rel,
     RelRef,
     Required,
-    Sch,
     Schema,
     Val,
 )
@@ -59,7 +57,6 @@ Name = TypeVar("Name", bound=LiteralString)
 Name2 = TypeVar("Name2", bound=LiteralString)
 
 DBS_contrav = TypeVar("DBS_contrav", contravariant=True, bound=Record | Schema)
-Rec_cov = TypeVar("Rec_cov", covariant=True, bound=Record)
 
 Idx_cov = TypeVar("Idx_cov", covariant=True, bound=Hashable)
 Idx2 = TypeVar("Idx2", bound=Hashable)
@@ -184,15 +181,8 @@ class Backend(Generic[Name]):
                 return typ
 
 
-IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
-IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
-IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
-DfInput: TypeAlias = DataFrame | Iterable[Val] | Mapping[Idx, Val]
-SeriesInput: TypeAlias = Series | Iterable[Val] | Mapping[Idx, Val]
-
-
 @dataclass
-class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
+class DataBase(Generic[Name, DBS_contrav]):
     """Active connection to a SQL server."""
 
     backend: Backend[Name]
@@ -206,12 +196,9 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
         ]
         | None
     ) = None
-    index: AttrRef[Any, Idx] | None = None
 
+    validate_on_init: bool = True
     create_cross_fk: bool = True
-    validate_schema: bool = True
-
-    selection: sqla.Select[tuple[Rec_cov]] | None = None
 
     @cached_property
     def meta(self) -> sqla.MetaData:
@@ -306,7 +293,7 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
 
     def validate(self) -> None:
         """Perform pre-defined schema validations."""
-        if not self.validate_schema:
+        if not self.validate_on_init:
             return
 
         types = None
@@ -413,247 +400,15 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
     def __post_init__(self):  # noqa: D105
         self.validate()
 
-    @overload
-    def __getitem__(
-        self: "DB[Name, Rec, Rec, Idx]", key: type[Rec]
-    ) -> "DB[Name, DBS_contrav, Rec, Idx]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, Sch, Rec_cov, Idx]", key: type[Sch]
-    ) -> "DB[Name, Sch, Rec_cov, Idx]": ...
-
-    @overload
-    def __getitem__(  # type: ignore
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
-        key: AttrRef[Rec_cov, Val],
-    ) -> "DB[Name, DBS_contrav, Record[Val, None], Idx2]": ...
-
-    @overload
-    def __getitem__(  # type: ignore
-        self: "DB[Name, DBS_contrav, Any, Idx]", key: AttrRef[Rec_cov, Val]
-    ) -> "DB[Name, DBS_contrav, Record[Val, None], Idx]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]", key: AttrRef[Any, Val]
-    ) -> "DB[Name, DBS_contrav, Record[Val, None], IdxStart[Idx2]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Any, Idx]", key: AttrRef[Any, Val]
-    ) -> "DB[Name, DBS_contrav, Record[Val, None], IdxStart[Idx]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-    ) -> "DB[Name, DBS_contrav, Rec2, tuple[Idx2, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-    ) -> "DB[Name, DBS_contrav, Rec2, tuple[*IdxTup, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-    ) -> "DB[Name, DBS_contrav, Rec2, tuple[Idx, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Any, tuple[*IdxTup]]", key: RelRef[Any, Rec2, Idx3]
-    ) -> "DB[Name, DBS_contrav, Rec2, IdxTupEnd[*IdxTup, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
-        key: RelRef[Any, Rec2, Idx3],
-    ) -> "DB[Name, DBS_contrav, Rec2, IdxStartEnd[Idx2, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Any, Idx]", key: RelRef[Any, Rec2, Idx3]
-    ) -> "DB[Name, DBS_contrav, Rec2, IdxStartEnd[Idx, Idx3]]": ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Iterable[Idx2]
-    ) -> "DB[Name, DBS_contrav, Rec_cov, None]": ...
-
-    @overload
-    def __getitem__(self, key: Iterable[Idx]) -> Self: ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Idx2
-    ) -> Val: ...
-
-    @overload
-    def __getitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]", key: Idx
-    ) -> Val: ...
-
-    @overload
-    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
-
-    @overload
-    def __getitem__(self, key: slice) -> Self: ...
-
-    def __getitem__(  # noqa: D105
-        self,
-        key: (
-            type[Schema]
-            | type[Record]
-            | AttrRef[Any, Val]
-            | RelRef
-            | Iterable[Hashable]
-            | Hashable
-            | slice
-        ),
-    ) -> "DB | Val":
+    def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":  # noqa: D105
         raise NotImplementedError()
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, Rec, Rec, Idx]",
-        key: type[Rec],
-        value: "DB[Name, DBS_contrav, Rec, Idx | None] | DfInput[Rec, Idx]",
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, Sch, Any, Idx]",
-        key: type[Sch],
-        value: "DB[Name, Sch, Any, Idx | None] | Mapping[Sch, DfInput[Sch, Idx]]",
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]",
-        key: AttrRef[Rec_cov, Val],
-        value: "DB[Name, Record[Val, Idx2], Any, None] | DB[Name, Record[Val, Any], Any, Idx2] | SeriesInput[Val, Idx2]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
-        key: AttrRef[Rec_cov, Val],
-        value: "DB[Name, Record[Val, Idx], Any, None] | DB[Name, Record[Val, Any], Any, Idx] | SeriesInput[Val, Idx]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]",
-        key: AttrRef[Any, Val],
-        value: "DB[Name, Record[Val, IdxStart[Idx2]], Any, None] | DB[Name, Record[Val, Any], Any, IdxStart[Idx2]] | SeriesInput[Val, IdxStart[Idx2]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
-        key: AttrRef[Any, Val],
-        value: "DB[Name, Record[Val, IdxStart[Idx]], Any, None] | DB[Name, Record[Val, Any], Any, IdxStart[Idx]] | SeriesInput[Val, IdxStart[Idx]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, tuple[Idx2, Idx3]] | DfInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, tuple[Idx, Idx3]] | DfInput[Rec2, tuple[Idx, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
-        key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, tuple[*IdxTup, Idx3]] | DfInput[Rec2, tuple[*IdxTup, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Any, Idx2], None]",
-        key: RelRef[Any, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, IdxStartEnd[Idx2, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, Idx]",
-        key: RelRef[Any, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, IdxStartEnd[Idx, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Rec_cov, tuple[*IdxTup]]",
-        key: RelRef[Any, Rec2, Idx3],
-        value: "DB[Name, Rec2, Rec2, IdxTupEnd[*IdxTup, Idx3]] | DfInput[Rec2, IdxTupEnd[*IdxTup, Idx3]]",  # noqa: E501
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], Idx_cov]",
-        key: Iterable[Idx2],
-        value: "DB[Name, Any, Rec_cov, Idx2 | None] | Iterable[Rec_cov] | DataFrame",
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]",
-        key: Iterable[Idx],
-        value: "DB[Name, Any, Rec_cov, Idx | None] | Iterable[Rec_cov] | DataFrame",
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Idx2], None]", key: Idx2, value: Val
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self: "DB[Name, DBS_contrav, Record[Val, Any], Idx]", key: Idx, value: Val
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self, key: sqla.ColumnElement[bool], value: Self | Iterable[Rec_cov] | DataFrame
-    ) -> None: ...
-
-    @overload
-    def __setitem__(
-        self, key: slice, value: Self | Iterable[Rec_cov] | DataFrame
-    ) -> None: ...
 
     def __setitem__(  # noqa: D105
         self,
-        key: (
-            type[Schema]
-            | type[Record]
-            | AttrRef[Any, Val]
-            | RelRef
-            | Iterable[Hashable]
-            | Hashable
-            | slice
-        ),
-        value: "DB | DfInput[Rec_cov, Any] | SeriesInput[Val, Any] | Val",
+        key: type[Rec],
+        value: "DataSet[Name, Rec, Idx | None] | DfInput[Rec, Idx]",
     ) -> None:
         raise NotImplementedError()
-
-    def __clause_element__(self) -> sqla.Subquery:
-        """Return subquery for the current selection to be used inside SQL clauses."""
-        if self.selection is None:
-            raise ValueError("Only a selected DB can be used as a clause element.")
-        return self.selection.subquery()
 
     def to_temp_table(
         self, data: DataFrame | sqla.Select, schema: type[T] | None = None
@@ -691,32 +446,9 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
             schema=schema or Table,
         )
 
-    def to_df(self, kind: type[D] = pd.DataFrame) -> D:
-        """Download table selection to dataframe.
-
-        Returns:
-            Dataframe containing the data.
-        """
-        if kind is pl.DataFrame:
-            return cast(D, pl.read_database(self.select, self.db.engine))
-        else:
-            with self.db.engine.connect() as con:
-                return cast(D, pd.read_sql(self.select, con))
-
-    def cast(
-        self, schema: type[S2], validation: SchemaValidation = "compatible-if-present"
-    ) -> "DB[Name, S2, S2]":
-        """Cast the DB to a different schema."""
-        return DB(
-            self.backend,
-            schema,
-            validations={schema: validation},
-            substitutions=self.substitutions,
-        )
-
-    def transfer(self, backend: Backend[Name2]) -> "DB[Name2, S_cov, S_contrav]":
+    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2, S_cov, S_contrav]":
         """Transfer the DB to a different backend."""
-        other_db = DB(
+        other_db = DataBase(
             backend,
             self.schema,
             validations=self.validations,
@@ -735,7 +467,7 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
         return other_db
 
     def to_graph(
-        self: "DB[Name, T, Any]", nodes: Sequence[type[T]]
+        self: "DataBase[Name, T, Any]", nodes: Sequence[type[T]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -965,3 +697,231 @@ class DB(Generic[Name, DBS_contrav, Rec_cov, Idx]):
         if isinstance(self.backend.url, HttpFile):
             assert isinstance(file, BytesIO)
             self.backend.url.set(file)
+
+
+IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
+IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
+IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
+DfInput: TypeAlias = DataFrame | Iterable[Val] | Mapping[Idx, Val]
+SeriesInput: TypeAlias = Series | Iterable[Val] | Mapping[Idx, Val]
+
+
+@dataclass
+class DataSet(Generic[Name, Rec_cov, Idx_cov]):
+    """Dataset selection."""
+
+    db: DataBase[Name, Any]
+    selection: sqla.Select[tuple[Rec_cov]]
+    index: AttrRef[Any, Idx_cov] | None = None
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: AttrRef[Rec_cov, Val],
+    ) -> "DataSet[Name, Record[Val, None], Idx2]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec, Idx]", key: AttrRef[Rec, Val]
+    ) -> "DataSet[Name, Record[Val, None], Idx]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]", key: AttrRef[Any, Val]
+    ) -> "DataSet[Name, Record[Val, None], IdxStart[Idx2]]": ...
+
+    @overload
+    def __getitem__(
+        self, key: AttrRef[Any, Val]
+    ) -> "DataSet[Name, Record[Val, None], IdxStart[Idx_cov]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DataSet[Name, Rec2, tuple[Idx2, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec_cov, tuple[*IdxTup]]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DataSet[Name, Rec2, tuple[*IdxTup, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec_cov, Idx]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+    ) -> "DataSet[Name, Rec2, tuple[Idx, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Any, tuple[*IdxTup]]", key: RelRef[Any, Rec2, Idx3]
+    ) -> "DataSet[Name, Rec2, IdxTupEnd[*IdxTup, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: RelRef[Any, Rec2, Idx3],
+    ) -> "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self, key: RelRef[Any, Rec2, Idx3]
+    ) -> "DataSet[Name, Rec2, IdxStartEnd[Idx_cov, Idx3]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Val, Idx2], None]", key: Iterable[Idx2]
+    ) -> "DataSet[Name, Rec_cov, None]": ...
+
+    @overload
+    def __getitem__(self, key: Iterable[Idx_cov]) -> Self: ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Record[Val, Idx2], None]", key: Idx2
+    ) -> Val: ...
+
+    @overload
+    def __getitem__(self: "DataSet[Name, Record[Val, Any], Idx]", key: Idx) -> Val: ...
+
+    @overload
+    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
+
+    @overload
+    def __getitem__(self, key: slice) -> Self: ...
+
+    def __getitem__(  # noqa: D105
+        self,
+        key: AttrRef[Any, Val] | RelRef | Iterable[Hashable] | Hashable | slice,
+    ) -> "DataSet | Val":
+        raise NotImplementedError()
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Idx2], None]",
+        key: AttrRef[Rec_cov, Val],
+        value: "DataSet[Name, Record[Val, Idx2], None] | DataSet[Name, Record[Val, Any], Idx2] | SeriesInput[Val, Idx2]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Any], Idx]",
+        key: AttrRef[Rec_cov, Val],
+        value: "DataSet[Name, Record[Val, Idx], None] | DataSet[Name, Record[Val, Any], Idx] | SeriesInput[Val, Idx]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Idx2], None]",
+        key: AttrRef[Any, Val],
+        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | SeriesInput[Val, IdxStart[Idx2]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Any], Idx]",
+        key: AttrRef[Any, Val],
+        value: "DataSet[Name, Record[Val, IdxStart[Idx]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | SeriesInput[Val, IdxStart[Idx]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, tuple[Idx2, Idx3]] | DfInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, tuple[Idx_cov, Idx3]] | DfInput[Rec2, tuple[Idx_cov, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Rec_cov, tuple[*IdxTup]]",
+        key: RelRef[Rec_cov, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, tuple[*IdxTup, Idx3]] | DfInput[Rec2, tuple[*IdxTup, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, IdxStartEnd[Idx_cov, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx_cov, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Any, tuple[*IdxTup]]",
+        key: RelRef[Any, Rec2, Idx3],
+        value: "DataSet[Name, Rec2, IdxTupEnd[*IdxTup, Idx3]] | DfInput[Rec2, IdxTupEnd[*IdxTup, Idx3]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Any, Idx2], Any]",
+        key: Iterable[Idx2],
+        value: "DataSet[Name, Rec_cov, Idx2 | None] | Iterable[Rec_cov] | DataFrame",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        key: Iterable[Idx_cov],
+        value: "DataSet[Name, Rec_cov, Idx | None] | Iterable[Rec_cov] | DataFrame",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Idx2], None]", key: Idx2, value: Val
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Record[Val, Any], Idx]", key: Idx, value: Val
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self, key: sqla.ColumnElement[bool], value: Self | Iterable[Rec_cov] | DataFrame
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self, key: slice, value: Self | Iterable[Rec_cov] | DataFrame
+    ) -> None: ...
+
+    def __setitem__(  # noqa: D105
+        self,
+        key: AttrRef[Any, Val] | RelRef | Iterable[Hashable] | Hashable | slice,
+        value: "DataSet | DfInput[Rec_cov, Any] | SeriesInput[Val, Any] | Val",
+    ) -> None:
+        raise NotImplementedError()
+
+    def __clause_element__(self) -> sqla.Subquery:
+        """Return subquery for the current selection to be used inside SQL clauses."""
+        if self.selection is None:
+            raise ValueError("Only a selected DB can be used as a clause element.")
+        return self.selection.subquery()
+
+    def to_df(self, kind: type[Df] = pd.DataFrame) -> Df:
+        """Download table selection to dataframe.
+
+        Returns:
+            Dataframe containing the data.
+        """
+        if kind is pl.DataFrame:
+            return cast(Df, pl.read_database(self.selection, self.db.engine))
+        else:
+            with self.db.engine.connect() as con:
+                return cast(Df, pd.read_sql(self.selection, con))

@@ -27,11 +27,15 @@ from py_research.reflect.types import is_subtype
 RecordValue: TypeAlias = "Record | Iterable[Record] | Mapping[Any, Record]"
 
 Idx = TypeVar("Idx", bound="Hashable")
+
 Val = TypeVar("Val")
 Val2 = TypeVar("Val2")
+
 Rec = TypeVar("Rec", bound="Record")
 Rec2 = TypeVar("Rec2", bound="Record")
+Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
 Recs = TypeVar("Recs", bound=RecordValue)
+
 Sch = TypeVar("Sch", bound="Schema")
 DBS = TypeVar("DBS", bound="Record | Schema")
 
@@ -158,7 +162,7 @@ class Attr(Prop[Val]):
         return self.attr_name or super().name
 
 
-class AttrRef(sqla.ColumnClause[Val], Generic[Rec, Val]):
+class AttrRef(sqla.ColumnClause[Val], Generic[Rec_cov, Val]):
     """Reference a property by its containing record type, name and value type."""
 
     def __init__(  # noqa: D107
@@ -173,7 +177,7 @@ class AttrRef(sqla.ColumnClause[Val], Generic[Rec, Val]):
             type_=self.record_type._sqla_table.c[self.name].type,
         )
 
-    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec, Val2]":
+    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec_cov, Val2]":
         """Specialize the value type of this attribute."""
         return AttrRef(
             record_type=self.record_type, name=self.name, value_type=value_type
