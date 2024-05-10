@@ -21,7 +21,7 @@ import sqlalchemy.orm as orm
 from bidict import bidict
 
 from py_research.reflect.ref import PyObjectRef
-from py_research.reflect.runtime import get_all_subclasses
+from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import is_subtype
 
 RecordValue: TypeAlias = "Record | Iterable[Record] | Mapping[Any, Record]"
@@ -337,6 +337,7 @@ class Record(Generic[Idx, Val]):
     _value_types: dict[str, type]
     _defined_attrs: list[Attr]
     _rels: list[Rel]
+    _rel_types: set[type["Record"]]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
         # Retrieve property type definitions from class annotations
@@ -372,6 +373,15 @@ class Record(Generic[Idx, Val]):
             for name, rel in cls.__dict__.items()
             if isinstance(rel, Rel)
         ]
+
+        # Crawl through relational tree, visiting each not at most once,
+        # to get all related record types.
+        cls._rel_types = set(rel.target_type for rel in cls._rels)
+        crawled = set()
+        while remaining := cls._rel_types - crawled:
+            rel_type = remaining.pop()
+            cls._rel_types |= set(rel.target_type for rel in rel_type._rels)
+            crawled |= {rel_type}
 
         return super().__init_subclass__()
 
@@ -456,10 +466,12 @@ class Schema:
     """Group multiple record types into a schema."""
 
     _record_types: set[type["Record"]]
+    _rel_record_types: set[type["Record"]]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
-        subclasses = get_all_subclasses(cls)
+        subclasses = get_subclasses(cls, max_level=1)
         cls._record_types = {s for s in subclasses if isinstance(s, Record)}
+        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
         super().__init_subclass__()
 
 
