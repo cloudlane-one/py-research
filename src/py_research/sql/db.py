@@ -22,7 +22,6 @@ import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import yarl
-from bidict import bidict
 from cloudpathlib import CloudPath
 from pandas.api.types import (
     is_datetime64_dtype,
@@ -64,6 +63,18 @@ Idx3 = TypeVar("Idx3", bound=Hashable)
 IdxTup = TypeVarTuple("IdxTup")
 
 Df = TypeVar("Df", bound=DataFrame)
+
+
+IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
+IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
+IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
+
+RecInput: TypeAlias = (
+    DataFrame | Iterable[Rec] | Mapping[Idx, Rec] | sqla.Select[tuple[Rec]] | Rec
+)
+ValInput: TypeAlias = (
+    Series | Iterable[Val] | Mapping[Idx, Val] | sqla.Select[tuple[Val]] | Val
+)
 
 
 def map_df_dtype(c: pd.Series | pl.Series) -> sqla.types.TypeEngine:  # noqa: C901
@@ -200,6 +211,10 @@ class DataBase(Generic[Name, DBS_contrav]):
     validate_on_init: bool = True
     create_cross_fk: bool = True
 
+    def __post_init__(self):  # noqa: D105
+        if self.validate_on_init:
+            self.validate()
+
     @cached_property
     def meta(self) -> sqla.MetaData:
         """Metadata object for this DB instance."""
@@ -231,12 +246,13 @@ class DataBase(Generic[Name, DBS_contrav]):
         return {}
 
     @cached_property
-    def table_map(self) -> bidict[type[Record], sqla.Table]:
-        """Maps all table classes in this DB to their SQLA tables."""
-        meta = self.meta
+    def record_types(self) -> set[type[Record]]:
+        """Return all record types as per the defined schema."""
         recs = self.subs.keys()
 
         if len(recs) == 0:
+            # No records retrieved from substitutions,
+            # so schema must be defined via set of types.
             assert isinstance(self.schema, type | set)
             types = self.schema if isinstance(self.schema, set) else set([self.schema])
             types = {rec.type if isinstance(rec, Required) else rec for rec in types}
@@ -247,13 +263,13 @@ class DataBase(Generic[Name, DBS_contrav]):
                 for rec in schema._record_types
             }
 
-        return bidict({rec: rec._sqla_table(meta, self.subs) for rec in recs})
+        return set(recs)
 
     @cached_property
     def assoc_types(self) -> set[type[Record]]:
         """Set of all association tables in this DB."""
         assoc_types = set()
-        for rec in self.table_map.keys():
+        for rec in self.record_types:
             pks = set([attr.name for attr in rec._primary_keys()])
             fks = set([attr.name for rel in rec._rels for attr in rel.fk_map.keys()])
             if pks in fks:
@@ -265,10 +281,10 @@ class DataBase(Generic[Name, DBS_contrav]):
     def relation_map(self) -> dict[type[Record], set[Rel]]:
         """Maps all tables in this DB to their outgoing or incoming relations."""
         rels: dict[type[Record], set[Rel]] = {
-            table: set() for table in self.table_map.keys()
+            table: set() for table in self.record_types
         }
 
-        for rec in self.table_map.keys():
+        for rec in self.record_types:
             for rel in rec._rels:
                 rels[rec].add(rel)
                 rels[rel.target_type].add(rel)
@@ -293,9 +309,6 @@ class DataBase(Generic[Name, DBS_contrav]):
 
     def validate(self) -> None:
         """Perform pre-defined schema validations."""
-        if not self.validate_on_init:
-            return
-
         types = None
 
         if has_type(
@@ -345,7 +358,10 @@ class DataBase(Generic[Name, DBS_contrav]):
             }
 
         assert types is not None
-        tables = {self.table_map[rec]: required for rec, required in types.items()}
+        tables = {
+            rec._sqla_table(self.meta, self.subs): required
+            for rec, required in types.items()
+        }
 
         inspector = sqla.inspect(self.engine)
 
@@ -397,69 +413,74 @@ class DataBase(Generic[Name, DBS_contrav]):
 
                 assert any(all(m) for m in matches)
 
-    def __post_init__(self):  # noqa: D105
-        self.validate()
-
-    def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":  # noqa: D105
-        raise NotImplementedError()
+    def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
+        """Return the dataset for given record type."""
+        return DataSet(self, sqla.select(key._sqla_table(self.meta, self.subs)), key)
 
     def __setitem__(  # noqa: D105
         self,
         key: type[Rec],
-        value: "DataSet[Name, Rec, Idx | None] | DfInput[Rec, Idx]",
+        value: "DataSet[Name, Rec, Idx | None] | RecInput[Rec, Idx] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
-        raise NotImplementedError()
+        sqla_table = self._ensure_table_exists(key._sqla_table(self.meta, self.subs))
+        DataSet(self, sqla.select(sqla_table), key)[:] = value
 
-    def to_temp_table(
-        self, data: DataFrame | sqla.Select, schema: type[T] | None = None
-    ) -> DBTable[Name, T]:
-        """Create a temporary table from a DataFrame or SQL query."""
+    def dataset(
+        self, data: RecInput[Rec, Any], record_type: type[Rec] | None = None
+    ) -> "DataSet[Name, Rec, None]":
+        """Create a temporary dataset instance from a DataFrame or SQL query."""
         table_name = (
-            f"df_{gen_str_hash(data, 10)}"
+            f"temp_df_{gen_str_hash(data, 10)}"
             if isinstance(data, DataFrame)
-            else f"query_{token_hex(5)}"
+            else f"temp_{token_hex(5)}"
         )
 
-        sqla_table = (
-            sqla.Table(table_name, self.meta, *cols_from_df(data).values())
-            if isinstance(data, DataFrame)
-            else (
-                sqla.Table(
-                    table_name,
-                    self.meta,
-                    *(
-                        sqla.Column(name, col.type, primary_key=col.primary_key)
-                        for name, col in data.selected_columns.items()
-                    ),
-                )
-                if schema is None
-                else self._table_from_schema(schema, sub_name=table_name)
+        sqla_table = None
+
+        if record_type is not None:
+            sqla_table = record_type._sqla_table(self.meta, self.subs)
+        elif isinstance(data, DataFrame):
+            sqla_table = sqla.Table(table_name, self.meta, *cols_from_df(data).values())
+        elif isinstance(data, Record):
+            sqla_table = data._sqla_table(self.meta, self.subs)
+        elif has_type(data, Iterable[Record]):
+            sqla_table = next(data.__iter__())._sqla_table(self.meta, self.subs)
+        elif has_type(data, Mapping[Any, Record]):
+            sqla_table = next(data.values().__iter__())._sqla_table(
+                self.meta, self.subs
             )
-        )
+        elif isinstance(data, sqla.Select):
+            sqla_table = sqla.Table(
+                table_name,
+                self.meta,
+                *(
+                    sqla.Column(name, col.type, primary_key=col.primary_key)
+                    for name, col in data.selected_columns.items()
+                ),
+            )
+        else:
+            raise TypeError("Unsupported type given as value")
 
-        self._set_table(self._ensure_table_exists(sqla_table), data)
+        sqla_table = self._ensure_table_exists(sqla_table)
 
-        return DBTable(
-            db=self,
-            select=sqla.select(sqla_table),
-            name=table_name,
-            schema=schema or Table,
-        )
+        ds = DataSet(self, sqla.select(sqla_table), record_type)
+        ds[:] = data
+        return ds
 
-    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2, S_cov, S_contrav]":
+    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2, DBS_contrav]":
         """Transfer the DB to a different backend."""
         other_db = DataBase(
             backend,
             self.schema,
-            validations=self.validations,
-            substitutions=self.substitutions,
             create_cross_fk=self.create_cross_fk,
+            validate_on_init=False,
         )
 
         if self.backend.type == "excel-file":
             self._load_from_excel()
 
-        for sqla_table in self.table_map.values():
+        for rec in self.record_types:
+            sqla_table = rec._sqla_table(self.meta, self.subs)
             pl.read_database(
                 f"SELECT * FROM {sqla_table}", other_db.engine
             ).write_database(str(sqla_table), str(other_db.backend.url))
@@ -467,7 +488,7 @@ class DataBase(Generic[Name, DBS_contrav]):
         return other_db
 
     def to_graph(
-        self: "DataBase[Name, T, Any]", nodes: Sequence[type[T]]
+        self, nodes: Sequence[type[Record]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -479,8 +500,9 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         # Concat all node tables into one.
         node_dfs = [
-            n.to_df().reset_index().assign(table=n.sources.pop().name)
+            n.to_df().reset_index().assign(table=n.record_type._default_table_name())
             for n in node_tables
+            if n.record_type is not None
         ]
         node_df = (
             pd.concat(node_dfs, ignore_index=True)
@@ -490,16 +512,16 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         directed_edges = reduce(set.union, (self.relation_map[n] for n in nodes))
 
-        undirected_edges: dict[type[Table], set[tuple[Rel[Table, Table, Any], ...]]] = {
+        undirected_edges: dict[type[Record], set[tuple[Rel, ...]]] = {
             t: set() for t in nodes
         }
         for n in nodes:
             for at in self.assoc_types:
-                if len(at._relations) == 2:
-                    left, right = at._relations
-                    if left.target == n:
+                if len(at._rels) == 2:
+                    left, right = at._rels
+                    if left.target_type == n:
                         undirected_edges[n].add((left, right))
-                    elif right.target == n:
+                    elif right.target_type == n:
                         undirected_edges[n].add((right, left))
 
         # Concat all edges into one table.
@@ -507,57 +529,42 @@ class DataBase(Generic[Name, DBS_contrav]):
             [
                 *[
                     node_df.loc[
-                        node_df["table"] == str((rel._source or Table)._default_name)
+                        node_df["table"]
+                        == str((rel._record_type or Record)._default_table_name())
                     ]
                     .rename(columns={"node_id": "source"})
                     .merge(
-                        node_df.loc[node_df["table"] == str(rel.target._default_name)],
-                        left_on=[c.name for c in rel.cols],
-                        right_on=[
-                            c.name
-                            for c in (
-                                rel.foreign_key.values()
-                                if isinstance(rel.foreign_key, dict)
-                                else rel.target._primary_keys
-                            )
+                        node_df.loc[
+                            node_df["table"]
+                            == str(rel.target_type._default_table_name())
                         ],
+                        left_on=[c.name for c in rel.fk_map.keys()],
+                        right_on=[c.name for c in rel.fk_map.values()],
                     )
                     .rename(columns={"node_id": "target"})[["source", "target"]]
-                    .assign(ltr=",".join(c.name for c in rel.cols), rtl=None)
+                    .assign(ltr=",".join(c.name for c in rel.fk_map.keys()), rtl=None)
                     for rel in directed_edges
                 ],
                 *[
-                    self[str(assoc_table)]
+                    self[assoc_table]
                     .to_df()
                     .merge(
                         node_df.loc[
-                            node_df["table"] == str(left_rel.target._default_name)
+                            node_df["table"]
+                            == str(left_rel.target_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in left_rel.cols],
-                        right_on=[
-                            c.name
-                            for c in (
-                                left_rel.foreign_key.values()
-                                if isinstance(left_rel.foreign_key, dict)
-                                else left_rel.target._primary_keys
-                            )
-                        ],
+                        left_on=[c.name for c in left_rel.fk_map.keys()],
+                        right_on=[c.name for c in left_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "source"})
                     .merge(
                         node_df.loc[
-                            node_df["table"] == str(left_rel.target._default_name)
+                            node_df["table"]
+                            == str(left_rel.target_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in right_rel.cols],
-                        right_on=[
-                            c.name
-                            for c in (
-                                right_rel.foreign_key.values()
-                                if isinstance(right_rel.foreign_key, dict)
-                                else right_rel.target._primary_keys
-                            )
-                        ],
+                        left_on=[c.name for c in right_rel.fk_map.keys()],
+                        right_on=[c.name for c in right_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "target"})[
@@ -565,13 +572,13 @@ class DataBase(Generic[Name, DBS_contrav]):
                             {
                                 "source",
                                 "target",
-                                *(left_rel._source or Table)._columns.keys(),
+                                *(left_rel._record_type or Record)._all_attrs().keys(),
                             }
                         )
                     ]
                     .assign(
-                        ltr=",".join(c.name for c in right_rel.cols),
-                        rtl=",".join(c.name for c in left_rel.cols),
+                        ltr=",".join(c.name for c in right_rel.fk_map.keys()),
+                        rtl=",".join(c.name for c in left_rel.fk_map.keys()),
                     )
                     for assoc_table, rels in undirected_edges.items()
                     for left_rel, right_rel in rels
@@ -581,32 +588,6 @@ class DataBase(Generic[Name, DBS_contrav]):
         )
 
         return node_df, edge_df
-
-    def _schema_name(self, schema: type[Table]) -> str | None:
-        """Return the schema name for a schema class."""
-        for name, s in self.schema_dict.items():
-            if issubclass(schema, s):
-                return name
-
-        return None
-
-    def _table_from_schema(
-        self, schema: type[T], sub_name: str | None = None
-    ) -> sqla.Table:
-        """Create a SQLA table from a schema class."""
-        sqla_table = self.table_map.get(schema)
-        if sqla_table is None:
-            if schema in self.substitutions:
-                sqla_table = self.subs[schema]
-            else:
-                sqla_table = schema._sqla_table(
-                    self.meta,
-                    subs=self.subs,
-                    name=sub_name,
-                    schema_name=self._schema_name(schema),
-                )
-
-        return sqla_table
 
     def _ensure_table_exists(self, sqla_table: sqla.Table) -> sqla.Table:
         """Ensure that the table exists in the database, then return it."""
@@ -628,39 +609,7 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         sqla_table.create(self.engine)
 
-    def _set_table(
-        self,
-        sqla_table: sqla.Table,
-        value: DBTable[Name, T] | DataFrame | sqla.Select,
-    ) -> None:
-        """Set a table in the database to a new value."""
-        if isinstance(value, pd.DataFrame):
-            # Upload dataframe to SQL
-            value.reset_index()[list(sqla_table.c.keys())].to_sql(
-                str(sqla_table),
-                self.engine,
-                if_exists="replace",
-                index=False,
-            )
-        elif isinstance(value, pl.DataFrame):
-            # Upload dataframe to SQL
-            value[list(sqla_table.c.keys())].write_database(
-                str(sqla_table),
-                str(self.engine.url),
-                if_table_exists="replace",
-            )
-        else:
-            select = value if isinstance(value, sqla.Select) else value.select
-
-            # Transfer table or query results to SQL table
-            with self.engine.begin() as con:
-                con.execute(
-                    sqla.insert(sqla_table).from_select(
-                        select.selected_columns.keys(), select
-                    )
-                )
-
-    def _load_from_excel(self, tables: list[type[Table]] | None = None) -> None:
+    def _load_from_excel(self, record_types: list[type[Record]] | None = None) -> None:
         """Load all tables from Excel."""
         assert self.backend.type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
@@ -672,12 +621,14 @@ class DataBase(Generic[Name, DBS_contrav]):
         )
 
         with open(path, "rb") as file:
-            for table in tables or self.table_map.keys():
-                pl.read_excel(file, sheet_name=table._default_name).write_database(
-                    str(self.table_map[table]), str(self.engine.url)
+            for rec in record_types or self.record_types:
+                pl.read_excel(
+                    file, sheet_name=rec._default_table_name()
+                ).write_database(
+                    str(rec._sqla_table(self.meta, self.subs)), str(self.engine.url)
                 )
 
-    def _save_to_excel(self, tables: Iterable[type[Table]] | None) -> None:
+    def _save_to_excel(self, record_types: Iterable[type[Record]] | None) -> None:
         """Save all tables to Excel."""
         assert self.backend.type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
@@ -689,21 +640,15 @@ class DataBase(Generic[Name, DBS_contrav]):
         )
 
         with ExcelWorkbook(file) as wb:
-            for table in tables or self.table_map.keys():
+            for rec in record_types or self.record_types:
                 pl.read_database(
-                    f"SELECT * FROM {self.table_map[table]}", self.engine
-                ).write_excel(wb, worksheet=table._default_name)
+                    f"SELECT * FROM {rec._sqla_table(self.meta, self.subs)}",
+                    self.engine,
+                ).write_excel(wb, worksheet=rec._default_table_name())
 
         if isinstance(self.backend.url, HttpFile):
             assert isinstance(file, BytesIO)
             self.backend.url.set(file)
-
-
-IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
-IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
-IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
-DfInput: TypeAlias = DataFrame | Iterable[Val] | Mapping[Idx, Val]
-SeriesInput: TypeAlias = Series | Iterable[Val] | Mapping[Idx, Val]
 
 
 @dataclass
@@ -712,6 +657,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     db: DataBase[Name, Any]
     selection: sqla.Select[tuple[Rec_cov]]
+    record_type: type[Rec_cov] | None = None
     index: AttrRef[Any, Idx_cov] | None = None
 
     @overload
@@ -801,70 +747,70 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __setitem__(
         self: "DataSet[Name, Record[Val, Idx2], None]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx2], None] | DataSet[Name, Record[Val, Any], Idx2] | SeriesInput[Val, Idx2]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx2], None] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx], None] | DataSet[Name, Record[Val, Any], Idx] | SeriesInput[Val, Idx]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx], None] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Idx2], None]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | SeriesInput[Val, IdxStart[Idx2]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | ValInput[Val, IdxStart[Idx2]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | SeriesInput[Val, IdxStart[Idx]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Any, Idx2], None]",
         key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, tuple[Idx2, Idx3]] | DfInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, tuple[Idx2, Idx3]] | RecInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
         key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, tuple[Idx_cov, Idx3]] | DfInput[Rec2, tuple[Idx_cov, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, tuple[Idx_cov, Idx3]] | RecInput[Rec2, tuple[Idx_cov, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Rec_cov, tuple[*IdxTup]]",
         key: RelRef[Rec_cov, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, tuple[*IdxTup, Idx3]] | DfInput[Rec2, tuple[*IdxTup, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, tuple[*IdxTup, Idx3]] | RecInput[Rec2, tuple[*IdxTup, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Any, Idx2], None]",
         key: RelRef[Any, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]] | RecInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
         key: RelRef[Any, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, IdxStartEnd[Idx_cov, Idx3]] | DfInput[Rec2, IdxStartEnd[Idx_cov, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, IdxStartEnd[Idx_cov, Idx3]] | RecInput[Rec2, IdxStartEnd[Idx_cov, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Any, tuple[*IdxTup]]",
         key: RelRef[Any, Rec2, Idx3],
-        value: "DataSet[Name, Rec2, IdxTupEnd[*IdxTup, Idx3]] | DfInput[Rec2, IdxTupEnd[*IdxTup, Idx3]]",  # noqa: E501
+        value: "DataSet[Name, Rec2, IdxTupEnd[*IdxTup, Idx3]] | RecInput[Rec2, IdxTupEnd[*IdxTup, Idx3]]",  # noqa: E501
     ) -> None: ...
 
     @overload
@@ -904,8 +850,35 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __setitem__(  # noqa: D105
         self,
         key: AttrRef[Any, Val] | RelRef | Iterable[Hashable] | Hashable | slice,
-        value: "DataSet | DfInput[Rec_cov, Any] | SeriesInput[Val, Any] | Val",
+        value: "DataSet | RecInput[Rec_cov, Any] | ValInput[Val, Any] | Val",
     ) -> None:
+        # if isinstance(value, pd.DataFrame):
+        #     # Upload dataframe to SQL
+        #     value.reset_index()[list(sqla_table.c.keys())].to_sql(
+        #         str(sqla_table),
+        #         self.engine,
+        #         if_exists="replace",
+        #         index=False,
+        #     )
+        # elif isinstance(value, pl.DataFrame):
+        #     # Upload dataframe to SQL
+        #     value[list(sqla_table.c.keys())].write_database(
+        #         str(sqla_table),
+        #         str(self.engine.url),
+        #         if_table_exists="replace",
+        #     )
+        # elif isinstance(value, Iterable):
+        #     pass
+        # else:
+        #     select = value if isinstance(value, sqla.Select) else value.selection
+
+        #     # Transfer table or query results to SQL table
+        #     with self.engine.begin() as con:
+        #         con.execute(
+        #             sqla.insert(sqla_table).from_select(
+        #                 select.selected_columns.keys(), select
+        #             )
+        #         )
         raise NotImplementedError()
 
     def __clause_element__(self) -> sqla.Subquery:
