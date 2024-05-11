@@ -1,7 +1,7 @@
 """Abstract Python interface for SQL databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import cached_property, reduce
 from io import BytesIO
 from pathlib import Path
@@ -14,7 +14,6 @@ from typing import (
     TypeAlias,
     TypeVar,
     TypeVarTuple,
-    cast,
     overload,
 )
 
@@ -54,6 +53,7 @@ Series: TypeAlias = pd.Series | pl.Series
 
 Name = TypeVar("Name", bound=LiteralString)
 Name2 = TypeVar("Name2", bound=LiteralString)
+
 
 DBS_contrav = TypeVar("DBS_contrav", contravariant=True, bound=Record | Schema)
 
@@ -415,15 +415,16 @@ class DataBase(Generic[Name, DBS_contrav]):
 
     def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
         """Return the dataset for given record type."""
-        return DataSet(self, sqla.select(key._sqla_table(self.meta, self.subs)), key)
+        table = key._sqla_table(self.meta, self.subs)
+        return DataSet(self, table, key)
 
     def __setitem__(  # noqa: D105
         self,
         key: type[Rec],
         value: "DataSet[Name, Rec, Idx | None] | RecInput[Rec, Idx] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
-        sqla_table = self._ensure_table_exists(key._sqla_table(self.meta, self.subs))
-        DataSet(self, sqla.select(sqla_table), key)[:] = value
+        table = self._ensure_table_exists(key._sqla_table(self.meta, self.subs))
+        DataSet(self, table, key)[:] = value
 
     def dataset(
         self, data: RecInput[Rec, Any], record_type: type[Rec] | None = None
@@ -435,22 +436,20 @@ class DataBase(Generic[Name, DBS_contrav]):
             else f"temp_{token_hex(5)}"
         )
 
-        sqla_table = None
+        table = None
 
         if record_type is not None:
-            sqla_table = record_type._sqla_table(self.meta, self.subs)
+            table = record_type._sqla_table(self.meta, self.subs)
         elif isinstance(data, DataFrame):
-            sqla_table = sqla.Table(table_name, self.meta, *cols_from_df(data).values())
+            table = sqla.Table(table_name, self.meta, *cols_from_df(data).values())
         elif isinstance(data, Record):
-            sqla_table = data._sqla_table(self.meta, self.subs)
+            table = data._sqla_table(self.meta, self.subs)
         elif has_type(data, Iterable[Record]):
-            sqla_table = next(data.__iter__())._sqla_table(self.meta, self.subs)
+            table = next(data.__iter__())._sqla_table(self.meta, self.subs)
         elif has_type(data, Mapping[Any, Record]):
-            sqla_table = next(data.values().__iter__())._sqla_table(
-                self.meta, self.subs
-            )
+            table = next(data.values().__iter__())._sqla_table(self.meta, self.subs)
         elif isinstance(data, sqla.Select):
-            sqla_table = sqla.Table(
+            table = sqla.Table(
                 table_name,
                 self.meta,
                 *(
@@ -461,9 +460,9 @@ class DataBase(Generic[Name, DBS_contrav]):
         else:
             raise TypeError("Unsupported type given as value")
 
-        sqla_table = self._ensure_table_exists(sqla_table)
+        table = self._ensure_table_exists(table)
 
-        ds = DataSet(self, sqla.select(sqla_table), record_type)
+        ds = DataSet(self, table, record_type)
         ds[:] = data
         return ds
 
@@ -656,8 +655,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     """Dataset selection."""
 
     db: DataBase[Name, Any]
-    selection: sqla.Select[tuple[Rec_cov]]
+    base_table: sqla.Table
     record_type: type[Rec_cov] | None = None
+    joins: list[tuple[sqla.Table, sqla.ColumnElement[bool]]] = field(
+        default_factory=list
+    )
+    filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
     index: AttrRef[Any, Idx_cov] | None = None
 
     @overload
@@ -883,9 +886,10 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
-        if self.selection is None:
-            raise ValueError("Only a selected DB can be used as a clause element.")
-        return self.selection.subquery()
+        # if self.selection is None:
+        #     raise ValueError("Only a selected DB can be used as a clause element.")
+        # return self.selection.subquery()
+        raise NotImplementedError()
 
     def to_df(self, kind: type[Df] = pd.DataFrame) -> Df:
         """Download table selection to dataframe.
@@ -893,8 +897,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         Returns:
             Dataframe containing the data.
         """
-        if kind is pl.DataFrame:
-            return cast(Df, pl.read_database(self.selection, self.db.engine))
-        else:
-            with self.db.engine.connect() as con:
-                return cast(Df, pd.read_sql(self.selection, con))
+        # if kind is pl.DataFrame:
+        #     return cast(Df, pl.read_database(self.selection, self.db.engine))
+        # else:
+        #     with self.db.engine.connect() as con:
+        #         return cast(Df, pd.read_sql(self.selection, con))
+        raise NotImplementedError()

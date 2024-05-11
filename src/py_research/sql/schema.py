@@ -2,6 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import asdict, dataclass
+from functools import cached_property
 from secrets import token_hex
 from typing import (
     Any,
@@ -24,8 +25,6 @@ from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import is_subtype
 
-RecordValue: TypeAlias = "Record | Iterable[Record] | Mapping[Any, Record]"
-
 Idx = TypeVar("Idx", bound="Hashable")
 
 Val = TypeVar("Val")
@@ -34,6 +33,8 @@ Val2 = TypeVar("Val2")
 Rec = TypeVar("Rec", bound="Record")
 Rec2 = TypeVar("Rec2", bound="Record")
 Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
+
+RecordValue: TypeAlias = Rec | Iterable[Rec] | Mapping[Any, Rec]
 Recs = TypeVar("Recs", bound=RecordValue)
 
 Sch = TypeVar("Sch", bound="Schema")
@@ -124,13 +125,13 @@ class Prop(Generic[Val]):
         if isinstance(self, Attr):
             return cast(AttrRef[Rec, Val], owner._all_attrs()[self.name])
 
-        if isinstance(self, Rel) and issubclass(self.value_type, Record):
-            return type(token_hex(5), (self.value_type,), {"_rel": self})
-
-        if isinstance(self, Rel) and is_subtype(self.value_type, Iterable[Record]):
+        if isinstance(self, Rel) and is_subtype(
+            self.value_type, Record | Iterable[Record]
+        ):
             return RelRef(
                 source=owner,
-                r=_extract_record_type(self.value_type),
+                target=_extract_record_type(self.value_type),
+                rel=self,
                 idx=None,
             )
 
@@ -139,7 +140,8 @@ class Prop(Generic[Val]):
         ):
             return RelRef(
                 source=owner,
-                r=_extract_record_type(self.value_type),
+                target=_extract_record_type(self.value_type),
+                rel=self,
                 idx=None,
             )
 
@@ -317,11 +319,34 @@ class RelRef(Generic[Rec, Rec2, Idx]):
     source: type[Rec]
     """Source record type."""
 
-    r: type[Rec2]
+    target: type[Rec2]
     """Target record type."""
+
+    rel: Rel[RecordValue[Rec2]] | None = None
+    """Relation prop on source record."""
 
     idx: type[Idx] | None = None
     """Index type."""
+
+    @cached_property
+    def r(self) -> type[Rec2]:
+        """Reference props of the target record type."""
+        return cast(type[Rec2], type(token_hex(5), (self.target,), {"_rel": self}))
+
+    @staticmethod
+    def get_tag(rec_type: type["Record"]) -> "RelRef | None":
+        """Retrieve relation-tag of a record type, if any."""
+        try:
+            rel = getattr(rec_type, "_rel")
+            return rel if isinstance(rel, RelRef) else None
+        except AttributeError:
+            return None
+
+    @cached_property
+    def path(self) -> list["RelRef"]:
+        """Path from base record type to this relref."""
+        parent = self.get_tag(self.source)
+        return [*(parent.path if parent is not None else []), self]
 
 
 class Record(Generic[Idx, Val]):
@@ -390,7 +415,7 @@ class Record(Generic[Idx, Val]):
         cls, other: type[Rec], index: type[Idx] | None = None
     ) -> RelRef[Self, Rec, Idx]:
         """Dynamically define a relation to another record type."""
-        return RelRef(cls, other, index)
+        return RelRef(cls, other, idx=index)
 
     @classmethod
     def _default_table_name(cls) -> str:
