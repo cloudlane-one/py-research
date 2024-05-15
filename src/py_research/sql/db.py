@@ -2,7 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import cached_property, reduce
+from functools import cache, cached_property, reduce
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
@@ -37,6 +37,7 @@ from py_research.reflect.types import has_type
 from py_research.sql.schema import (
     AttrRef,
     Idx,
+    Keyless,
     Rec,
     Rec2,
     Rec_cov,
@@ -192,7 +193,7 @@ class Backend(Generic[Name]):
                 return typ
 
 
-@dataclass
+@dataclass(frozen=True)
 class DataBase(Generic[Name, DBS_contrav]):
     """Active connection to a SQL server."""
 
@@ -271,7 +272,14 @@ class DataBase(Generic[Name, DBS_contrav]):
         assoc_types = set()
         for rec in self.record_types:
             pks = set([attr.name for attr in rec._primary_keys()])
-            fks = set([attr.name for rel in rec._rels for attr in rel.fk_map.keys()])
+            fks = set(
+                [
+                    attr.name
+                    for rels in rec._rels.values()
+                    for rel in rels
+                    for attr in rel.fk_map.keys()
+                ]
+            )
             if pks in fks:
                 assoc_types.add(rec)
 
@@ -285,9 +293,10 @@ class DataBase(Generic[Name, DBS_contrav]):
         }
 
         for rec in self.record_types:
-            for rel in rec._rels:
-                rels[rec].add(rel)
-                rels[rel.target_type].add(rel)
+            for rel_list in rec._rels.values():
+                for rel in rel_list:
+                    rels[rec].add(rel)
+                    rels[rel.target_type].add(rel)
 
         return rels
 
@@ -358,10 +367,7 @@ class DataBase(Generic[Name, DBS_contrav]):
             }
 
         assert types is not None
-        tables = {
-            rec._sqla_table(self.meta, self.subs): required
-            for rec, required in types.items()
-        }
+        tables = {self._get_table(rec): required for rec, required in types.items()}
 
         inspector = sqla.inspect(self.engine)
 
@@ -415,7 +421,7 @@ class DataBase(Generic[Name, DBS_contrav]):
 
     def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
         """Return the dataset for given record type."""
-        table = key._sqla_table(self.meta, self.subs)
+        table = self._get_table(key)
         return DataSet(self, table, key)
 
     def __setitem__(  # noqa: D105
@@ -423,7 +429,7 @@ class DataBase(Generic[Name, DBS_contrav]):
         key: type[Rec],
         value: "DataSet[Name, Rec, Idx | None] | RecInput[Rec, Idx] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
-        table = self._ensure_table_exists(key._sqla_table(self.meta, self.subs))
+        table = self._ensure_table_exists(self._get_table(key))
         DataSet(self, table, key)[:] = value
 
     def dataset(
@@ -439,15 +445,15 @@ class DataBase(Generic[Name, DBS_contrav]):
         table = None
 
         if record_type is not None:
-            table = record_type._sqla_table(self.meta, self.subs)
+            table = self._get_table(record_type)
         elif isinstance(data, DataFrame):
             table = sqla.Table(table_name, self.meta, *cols_from_df(data).values())
         elif isinstance(data, Record):
-            table = data._sqla_table(self.meta, self.subs)
+            table = self._get_table(data)
         elif has_type(data, Iterable[Record]):
-            table = next(data.__iter__())._sqla_table(self.meta, self.subs)
+            table = self._get_table(next(data.__iter__()))
         elif has_type(data, Mapping[Any, Record]):
-            table = next(data.values().__iter__())._sqla_table(self.meta, self.subs)
+            table = self._get_table(next(data.values().__iter__()))
         elif isinstance(data, sqla.Select):
             table = sqla.Table(
                 table_name,
@@ -479,7 +485,7 @@ class DataBase(Generic[Name, DBS_contrav]):
             self._load_from_excel()
 
         for rec in self.record_types:
-            sqla_table = rec._sqla_table(self.meta, self.subs)
+            sqla_table = self._get_table(rec)
             pl.read_database(
                 f"SELECT * FROM {sqla_table}", other_db.engine
             ).write_database(str(sqla_table), str(other_db.backend.url))
@@ -517,7 +523,7 @@ class DataBase(Generic[Name, DBS_contrav]):
         for n in nodes:
             for at in self.assoc_types:
                 if len(at._rels) == 2:
-                    left, right = at._rels
+                    left, right = (v[0] for v in at._rels.values())
                     if left.target_type == n:
                         undirected_edges[n].add((left, right))
                     elif right.target_type == n:
@@ -588,6 +594,10 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         return node_df, edge_df
 
+    @cache
+    def _get_table(self, rec: type[Record]) -> sqla.Table:
+        return rec._table(self.meta, self.subs)
+
     def _ensure_table_exists(self, sqla_table: sqla.Table) -> sqla.Table:
         """Ensure that the table exists in the database, then return it."""
         if not sqla.inspect(self.engine).has_table(
@@ -623,9 +633,7 @@ class DataBase(Generic[Name, DBS_contrav]):
             for rec in record_types or self.record_types:
                 pl.read_excel(
                     file, sheet_name=rec._default_table_name()
-                ).write_database(
-                    str(rec._sqla_table(self.meta, self.subs)), str(self.engine.url)
-                )
+                ).write_database(str(self._get_table(rec)), str(self.engine.url))
 
     def _save_to_excel(self, record_types: Iterable[type[Record]] | None) -> None:
         """Save all tables to Excel."""
@@ -641,7 +649,7 @@ class DataBase(Generic[Name, DBS_contrav]):
         with ExcelWorkbook(file) as wb:
             for rec in record_types or self.record_types:
                 pl.read_database(
-                    f"SELECT * FROM {rec._sqla_table(self.meta, self.subs)}",
+                    f"SELECT * FROM {self._get_table(rec)}",
                     self.engine,
                 ).write_excel(wb, worksheet=rec._default_table_name())
 
@@ -650,18 +658,65 @@ class DataBase(Generic[Name, DBS_contrav]):
             self.backend.url.set(file)
 
 
-@dataclass
+class DefaultIdx:
+    """Singleton to make dataset index via default index."""
+
+
+@dataclass(frozen=True)
 class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     """Dataset selection."""
 
     db: DataBase[Name, Any]
     base_table: sqla.Table
     record_type: type[Rec_cov] | None = None
-    joins: list[tuple[sqla.Table, sqla.ColumnElement[bool]]] = field(
-        default_factory=list
-    )
+    path: Iterable[RelRef[Record, Record, Any]] = field(default_factory=list)
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
-    index: AttrRef[Any, Idx_cov] | None = None
+    index: AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | DefaultIdx | None = (
+        None
+    )
+    attr: AttrRef[Rec_cov, Any] | None = None
+
+    @cached_property
+    def joins(self) -> list[tuple[sqla.Table, sqla.ColumnElement[bool]]]:
+        """Return the joins required to produce this dataset from the base table."""
+        rels = [
+            rel
+            for relref in self.path
+            for rel in (
+                [relref.rel]
+                if relref.rel is not None
+                else relref.rec_type._rels.get(relref.val_type, [])
+            )
+        ]
+        return [
+            (
+                self.db._get_table(rec),
+                reduce(sqla.and_, (fk == tk for fk, tk in on_keys.items())),
+            )
+            for rel in rels
+            for rec, on_keys in rel.join_path
+        ]
+
+    @cached_property
+    def active_idx(self) -> list[list[AttrRef[Record, Any]]]:
+        """Optional, additional index of this dataset."""
+        if isinstance(self.index, DefaultIdx):
+            assert self.record_type is not None
+            return [self.record_type._primary_keys()]
+        elif self.index is not None:
+            return [
+                [self.index] if isinstance(self.index, AttrRef) else list(self.index)
+            ]
+        else:
+            return (
+                [
+                    relref.rec_type._primary_keys()
+                    for relref in self.path
+                    if relref.idx is not None
+                ]
+                if not any(relref.idx is Keyless for relref in self.path)
+                else []
+            )
 
     @overload
     def __getitem__(
@@ -683,6 +738,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(
         self, key: AttrRef[Any, Val]
     ) -> "DataSet[Name, Record[Val, None], IdxStart[Idx_cov]]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec, Idx]",
+        key: RelRef[Rec, Rec2, None],
+    ) -> "DataSet[Name, Rec2, Idx]": ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec, Any]",
+        key: RelRef[Rec, Rec2, Keyless],
+    ) -> "DataSet[Name, Rec2, None]": ...
 
     @overload
     def __getitem__(
@@ -720,11 +787,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]", key: Iterable[Idx2]
+        self: "DataSet[Name, Record[Val, Idx2], None]", key: list[Idx2]
     ) -> "DataSet[Name, Rec_cov, None]": ...
 
     @overload
-    def __getitem__(self, key: Iterable[Idx_cov]) -> Self: ...
+    def __getitem__(self, key: list[Idx_cov]) -> Self: ...
 
     @overload
     def __getitem__(
@@ -735,16 +802,58 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(self: "DataSet[Name, Record[Val, Any], Idx]", key: Idx) -> Val: ...
 
     @overload
-    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
+    def __getitem__(
+        self, key: slice | tuple[slice | tuple[slice, ...], ...]
+    ) -> Self: ...
 
     @overload
-    def __getitem__(self, key: slice) -> Self: ...
+    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
 
     def __getitem__(  # noqa: D105
         self,
-        key: AttrRef[Any, Val] | RelRef | Iterable[Hashable] | Hashable | slice,
+        key: (
+            AttrRef[Any, Val]
+            | RelRef
+            | list[Hashable]
+            | Hashable
+            | slice
+            | tuple[slice | tuple[slice, ...], ...]
+            | sqla.ColumnElement[bool]
+        ),
     ) -> "DataSet | Val":
-        raise NotImplementedError()
+        rec = None
+        path = []
+        filt = []
+        attr = None
+        match key:
+            case AttrRef():
+                # Attribute selection.
+                rec = Record
+                path = key.path
+                attr = key
+            case RelRef():
+                # Relational subgraph selection.
+                path = key.path
+            case list() | Hashable() | slice():
+                # Selection by index values.
+                filt.append(self._gen_idx_match_expr([[key]]))
+            case tuple():
+                # Selection by index values.
+                values = [list(v) if isinstance(v, tuple) else [v] for v in key]
+                filt.append(self._gen_idx_match_expr(values))
+            case sqla.ColumnElement():
+                filt.append(key)
+            case _:
+                raise TypeError("Unsupported key type.")
+
+        return DataSet(
+            self.db,
+            self.base_table,
+            rec or self.record_type,
+            [*self.path, *path],
+            [*self.filters, *filt],
+            attr if attr is not None else self.attr,
+        )
 
     @overload
     def __setitem__(
@@ -772,6 +881,20 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Any, Val],
         value: "DataSet[Name, Record[Val, IdxStart[Idx]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Rec, Idx]",
+        key: RelRef[Rec, Rec2, None],
+        value: "DataSet[Name, Rec2, Idx] | RecInput[Rec2, Idx]",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Rec, Any]",
+        key: RelRef[Rec, Rec2, Keyless],
+        value: "DataSet[Name, Rec2, None] | RecInput[Rec2, Any]",
     ) -> None: ...
 
     @overload
@@ -818,15 +941,15 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], Any]",
-        key: Iterable[Idx2],
+        self: "DataSet[Name, Record[Any, Idx2], None]",
+        key: list[Idx2],
         value: "DataSet[Name, Rec_cov, Idx2 | None] | Iterable[Rec_cov] | DataFrame",
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
-        key: Iterable[Idx_cov],
+        key: list[Idx_cov],
         value: "DataSet[Name, Rec_cov, Idx | None] | Iterable[Rec_cov] | DataFrame",
     ) -> None: ...
 
@@ -847,12 +970,21 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self, key: slice, value: Self | Iterable[Rec_cov] | DataFrame
+        self,
+        key: slice | tuple[slice | tuple[slice, ...], ...],
+        value: Self | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
     def __setitem__(  # noqa: D105
         self,
-        key: AttrRef[Any, Val] | RelRef | Iterable[Hashable] | Hashable | slice,
+        key: (
+            AttrRef[Any, Val]
+            | RelRef
+            | list[Hashable]
+            | Hashable
+            | slice
+            | tuple[slice | tuple[slice, ...], ...]
+        ),
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput[Val, Any] | Val",
     ) -> None:
         # if isinstance(value, pd.DataFrame):
@@ -903,3 +1035,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         #     with self.db.engine.connect() as con:
         #         return cast(Df, pd.read_sql(self.selection, con))
         raise NotImplementedError()
+
+    def _gen_idx_match_expr(
+        self, values: Sequence[Sequence[slice | list[Hashable] | Hashable]]
+    ) -> sqla.ColumnElement[bool] | None:
+        if values == slice(None):
+            return None
+
+        exprs = []
+
+        assert len(values) == len(self.active_idx)
+        for idx, val in zip(self.active_idx, values):
+            assert len(idx) == len(val)
+            for i, v in zip(idx, val):
+                exprs.append(
+                    i.in_(v)
+                    if isinstance(v, list)
+                    else i.between(v.start, v.stop) if isinstance(v, slice) else i == v
+                )
+
+        return reduce(sqla.and_, exprs)
