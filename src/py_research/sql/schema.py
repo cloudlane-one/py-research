@@ -3,6 +3,7 @@
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from functools import cached_property
+from itertools import zip_longest
 from secrets import token_hex
 from typing import (
     Any,
@@ -10,6 +11,7 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
+    TypeVarTuple,
     cast,
     get_args,
     get_origin,
@@ -17,6 +19,7 @@ from typing import (
     overload,
 )
 
+import numpy as np
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 from bidict import bidict
@@ -39,6 +42,8 @@ Recs = TypeVar("Recs", bound=RecordValue)
 
 Sch = TypeVar("Sch", bound="Schema")
 DBS = TypeVar("DBS", bound="Record | Schema")
+
+MergeTup = TypeVarTuple("MergeTup")
 
 
 def _extract_record_type(hint: Any) -> type["Record"]:
@@ -348,6 +353,31 @@ class PropRef(Generic[Rec_cov, Val]):
             *(parent.path if parent is not None else []),
             *([self] if isinstance(self, RelRef) else []),
         ]
+
+    def __add__(self, other: "PropRef[Any, Val2]") -> "PropMerge[Val, Val2]":
+        """Add another prop to the merge."""
+        return PropMerge([self]) + other
+
+
+@dataclass(frozen=True)
+class PropMerge(Generic[*MergeTup]):
+    """Represent merged properties."""
+
+    props: list[PropRef]
+
+    @property
+    def _longest(self) -> PropRef:
+        return self.props[np.argmax([len(p.path) for p in self.props])]
+
+    def __add__(self, other: PropRef[Any, Val]) -> "PropMerge[*MergeTup, Val]":
+        """Add another prop to the merge."""
+        if not all(
+            new == lon or new is None or lon is None
+            for new, lon in zip_longest(other.path, self._longest.path)
+        ):
+            raise NotImplementedError("Merging with branching paths not supported yet.")
+
+        return PropMerge(props=self.props + [other])
 
 
 class AttrRef(sqla.ColumnClause[Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Val]):

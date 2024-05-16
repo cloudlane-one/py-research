@@ -38,6 +38,9 @@ from py_research.sql.schema import (
     AttrRef,
     Idx,
     Keyless,
+    MergeTup,
+    PropMerge,
+    PropRef,
     Rec,
     Rec2,
     Rec_cov,
@@ -63,7 +66,8 @@ Idx2 = TypeVar("Idx2", bound=Hashable)
 Idx3 = TypeVar("Idx3", bound=Hashable)
 IdxTup = TypeVarTuple("IdxTup")
 
-DlType = TypeVar("DlType", bound=DataFrame | Record)
+Df = TypeVar("Df", bound=DataFrame)
+Dl = TypeVar("Dl", bound=DataFrame | Record)
 
 
 IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
@@ -845,29 +849,27 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         )
 
     @overload
-    def load(self, merge: None = ..., kind: type[DlType] = ...) -> DlType: ...
+    def load(self, merge: None = ..., kind: type[Dl] = ...) -> Dl: ...  # type: ignore
+
+    @overload
+    def load(self, merge: PropRef | PropMerge, kind: type[Df]) -> tuple[Df, ...]: ...
 
     @overload
     def load(
-        self, merge: RelRef | tuple[RelRef, ...] = ..., kind: type[DlType] = ...
-    ) -> tuple[DlType, ...]: ...
+        self, merge: PropRef[Any, Val] | PropMerge[*MergeTup], kind: type[Record] = ...
+    ) -> Sequence[tuple[*MergeTup]]: ...
 
     def load(
         self,
-        merge: RelRef | tuple[RelRef, ...] | None = None,
-        kind: type[DlType] = Record,
-    ) -> DlType | tuple[DlType, ...]:
+        merge: PropRef | PropMerge | None = None,
+        kind: type[Dl] = Record,
+    ) -> Dl | tuple[Dl, ...] | Sequence[tuple]:
         """Download table selection."""
         if issubclass(kind, Record):
             raise NotImplementedError("Downloading record instances not supported yet.")
 
-        merges = None
         if merge is not None:
-            merge = merge if isinstance(merge, tuple) else (merge,)
-
-            # todo: assert that all merge paths are sub-paths of each other
-
-            merges = [self[m].load(kind=kind) for m in merge]
+            raise NotImplementedError()
         # if kind is pl.DataFrame:
         #     return cast(DlType, pl.read_database(self.selection, self.db.engine))
         # else:
