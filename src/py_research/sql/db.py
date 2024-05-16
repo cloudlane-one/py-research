@@ -701,14 +701,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def active_idx(self) -> list[list[AttrRef[Record, Any]]]:
         """Optional, additional index of this dataset."""
         if isinstance(self.index, DefaultIdx):
-            assert self.record_type is not None
-            return [self.record_type._primary_keys()]
-        elif self.index is not None:
-            return [
-                [self.index] if isinstance(self.index, AttrRef) else list(self.index)
-            ]
-        else:
-            return (
+            path_idx = (
                 [
                     relref.rec_type._primary_keys()
                     for relref in self.path
@@ -717,10 +710,26 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 if not any(relref.idx is Keyless for relref in self.path)
                 else []
             )
+            if len(path_idx) > 0:
+                return path_idx
+            else:
+                assert self.record_type is not None
+                return [self.record_type._primary_keys()]
+        elif self.index is not None:
+            return [
+                [self.index] if isinstance(self.index, AttrRef) else list(self.index)
+            ]
+        else:
+            return []
+
+    @cached_property
+    def idx_type(self) -> list[list[type]]:
+        """Type hint for current index."""
+        return [[idx_ii.val_type for idx_ii in idx_i] for idx_i in self.active_idx]
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: AttrRef[Rec_cov, Val],
     ) -> "DataSet[Name, Record[Val, None], Idx2]": ...
 
@@ -731,7 +740,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]", key: AttrRef[Any, Val]
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]", key: AttrRef[Any, Val]
     ) -> "DataSet[Name, Record[Val, None], IdxStart[Idx2]]": ...
 
     @overload
@@ -749,11 +758,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(
         self: "DataSet[Name, Rec, Any]",
         key: RelRef[Rec, Rec2, Keyless],
-    ) -> "DataSet[Name, Rec2, None]": ...
+    ) -> "DataSet[Name, Rec2, DefaultIdx]": ...
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: RelRef[Rec_cov, Rec2, Idx3],
     ) -> "DataSet[Name, Rec2, tuple[Idx2, Idx3]]": ...
 
@@ -776,7 +785,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: RelRef[Any, Rec2, Idx3],
     ) -> "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]]": ...
 
@@ -787,19 +796,21 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]", key: list[Idx2]
-    ) -> "DataSet[Name, Rec_cov, None]": ...
+        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]", key: list[Idx2]
+    ) -> "DataSet[Name, Rec_cov, DefaultIdx]": ...
 
     @overload
     def __getitem__(self, key: list[Idx_cov]) -> Self: ...
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]", key: Idx2
-    ) -> Val: ...
+        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]", key: Idx2
+    ) -> "DataSet[Name, Rec_cov, None]": ...
 
     @overload
-    def __getitem__(self: "DataSet[Name, Record[Val, Any], Idx]", key: Idx) -> Val: ...
+    def __getitem__(
+        self: "DataSet[Name, Record[Val, Any], Idx]", key: Idx
+    ) -> "DataSet[Name, Rec_cov, None]": ...
 
     @overload
     def __getitem__(
@@ -820,67 +831,45 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | tuple[slice | tuple[slice, ...], ...]
             | sqla.ColumnElement[bool]
         ),
-    ) -> "DataSet | Val":
-        rec = None
-        path = []
-        filt = []
-        attr = None
-        match key:
-            case AttrRef():
-                # Attribute selection.
-                rec = Record
-                path = key.path
-                attr = key
-            case RelRef():
-                # Relational subgraph selection.
-                path = key.path
-            case list() | Hashable() | slice():
-                # Selection by index values.
-                filt.append(self._gen_idx_match_expr([[key]]))
-            case tuple():
-                # Selection by index values.
-                values = [list(v) if isinstance(v, tuple) else [v] for v in key]
-                filt.append(self._gen_idx_match_expr(values))
-            case sqla.ColumnElement():
-                filt.append(key)
-            case _:
-                raise TypeError("Unsupported key type.")
+    ) -> "DataSet":
+        rec, path, filt, attr, idx = self._parse_key(key)
 
         return DataSet(
             self.db,
             self.base_table,
-            rec or self.record_type,
-            [*self.path, *path],
-            [*self.filters, *filt],
-            attr if attr is not None else self.attr,
+            rec,
+            path,
+            filt,
+            idx,
+            attr,
         )
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]",
+        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx2], None] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx2], DefaultIdx] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx], None] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx], DefaultIdx] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]",
+        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | ValInput[Val, IdxStart[Idx2]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], DefaultIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | ValInput[Val, IdxStart[Idx2]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx]], None] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx]], DefaultIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
     ) -> None: ...
 
     @overload
@@ -894,12 +883,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __setitem__(
         self: "DataSet[Name, Rec, Any]",
         key: RelRef[Rec, Rec2, Keyless],
-        value: "DataSet[Name, Rec2, None] | RecInput[Rec2, Any]",
+        value: "DataSet[Name, Rec2, DefaultIdx] | RecInput[Rec2, Any]",
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: RelRef[Rec_cov, Rec2, Idx3],
         value: "DataSet[Name, Rec2, tuple[Idx2, Idx3]] | RecInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
@@ -920,7 +909,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: RelRef[Any, Rec2, Idx3],
         value: "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]] | RecInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
@@ -941,22 +930,25 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], None]",
+        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
         key: list[Idx2],
-        value: "DataSet[Name, Rec_cov, Idx2 | None] | Iterable[Rec_cov] | DataFrame",
+        value: "DataSet[Name, Rec_cov, Idx2 | DefaultIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
         key: list[Idx_cov],
-        value: "DataSet[Name, Rec_cov, Idx | None] | Iterable[Rec_cov] | DataFrame",
+        value: "DataSet[Name, Rec_cov, Idx | DefaultIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Val, Idx2], None]", key: Idx2, value: Val
+        self: "DataSet[Name, Record[Val, Idx2], None]", key: Idx2, value: Rec_cov | Val
     ) -> None: ...
+
+    @overload
+    def __setitem__(self: "DataSet[Name, Rec, Idx]", key: Idx, value: Rec) -> None: ...
 
     @overload
     def __setitem__(
@@ -965,7 +957,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self, key: sqla.ColumnElement[bool], value: Self | Iterable[Rec_cov] | DataFrame
+        self, key: sqla.ColumnElement[bool], value: Self | RecInput[Rec_cov, Any]
     ) -> None: ...
 
     @overload
@@ -978,15 +970,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __setitem__(  # noqa: D105
         self,
         key: (
-            AttrRef[Any, Val]
+            AttrRef
             | RelRef
             | list[Hashable]
             | Hashable
             | slice
             | tuple[slice | tuple[slice, ...], ...]
+            | sqla.ColumnElement[bool]
         ),
-        value: "DataSet | RecInput[Rec_cov, Any] | ValInput[Val, Any] | Val",
+        value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
     ) -> None:
+        rec, path, filt, attr, idx = self._parse_key(key)
+
         # if isinstance(value, pd.DataFrame):
         #     # Upload dataframe to SQL
         #     value.reset_index()[list(sqla_table.c.keys())].to_sql(
@@ -1055,3 +1050,54 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 )
 
         return reduce(sqla.and_, exprs)
+
+    def _is_singl_idx_type(
+        self, values: Sequence[Sequence[slice | list[Hashable] | Hashable]]
+    ) -> bool:
+        return all(
+            isinstance(v, i)
+            for val, idx in zip(values, self.idx_type)
+            for v, i in zip(val, idx)
+        )
+
+    def _parse_key(self, key: Any) -> tuple:
+        rec = self.record_type
+        path = self.path
+        filt = self.filters
+        attr = self.attr
+        idx = self.index
+
+        match key:
+            case AttrRef():
+                # Attribute selection.
+                rec = Record
+                path = [*path, *key.path]
+                attr = key
+            case RelRef():
+                # Relational subgraph selection.
+                path = [*path, *key.path]
+            case tuple():
+                # Selection by tuple of index values.
+                values = [list(v) if isinstance(v, tuple) else [v] for v in key]
+                expr = self._gen_idx_match_expr(values)
+                if expr is not None:
+                    filt.append(expr)
+                if self._is_singl_idx_type(values):
+                    idx = None
+            case list() | slice():
+                # Selection by list or slice of index values.
+                expr = self._gen_idx_match_expr([[key]])
+                if expr is not None:
+                    filt.append(expr)
+            case Hashable():
+                # Selection by single index value.
+                expr = self._gen_idx_match_expr([[key]])
+                if expr is not None:
+                    filt.append(expr)
+                idx = None
+            case sqla.ColumnElement():
+                filt.append(key)
+            case _:
+                raise TypeError("Unsupported key type.")
+
+        return rec, path, filt, attr, idx
