@@ -63,7 +63,7 @@ Idx2 = TypeVar("Idx2", bound=Hashable)
 Idx3 = TypeVar("Idx3", bound=Hashable)
 IdxTup = TypeVarTuple("IdxTup")
 
-Df = TypeVar("Df", bound=DataFrame)
+DlType = TypeVar("DlType", bound=DataFrame | Record)
 
 
 IdxStart: TypeAlias = Idx | tuple[Idx, *tuple[Any, ...]]
@@ -505,7 +505,7 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         # Concat all node tables into one.
         node_dfs = [
-            n.to_df().reset_index().assign(table=n.record_type._default_table_name())
+            n.load().reset_index().assign(table=n.record_type._default_table_name())
             for n in node_tables
             if n.record_type is not None
         ]
@@ -552,7 +552,7 @@ class DataBase(Generic[Name, DBS_contrav]):
                 ],
                 *[
                     self[assoc_table]
-                    .to_df()
+                    .load()
                     .merge(
                         node_df.loc[
                             node_df["table"]
@@ -845,6 +845,37 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         )
 
     @overload
+    def load(self, merge: None = ..., kind: type[DlType] = ...) -> DlType: ...
+
+    @overload
+    def load(
+        self, merge: RelRef | tuple[RelRef, ...] = ..., kind: type[DlType] = ...
+    ) -> tuple[DlType, ...]: ...
+
+    def load(
+        self,
+        merge: RelRef | tuple[RelRef, ...] | None = None,
+        kind: type[DlType] = Record,
+    ) -> DlType | tuple[DlType, ...]:
+        """Download table selection."""
+        if issubclass(kind, Record):
+            raise NotImplementedError("Downloading record instances not supported yet.")
+
+        merges = None
+        if merge is not None:
+            merge = merge if isinstance(merge, tuple) else (merge,)
+
+            # todo: assert that all merge paths are sub-paths of each other
+
+            merges = [self[m].load(kind=kind) for m in merge]
+        # if kind is pl.DataFrame:
+        #     return cast(DlType, pl.read_database(self.selection, self.db.engine))
+        # else:
+        #     with self.db.engine.connect() as con:
+        #         return cast(DlType, pd.read_sql(self.selection, con))
+        raise NotImplementedError()
+
+    @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]",
         key: AttrRef[Rec_cov, Val],
@@ -982,53 +1013,60 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     ) -> None:
         rec, path, filt, attr, idx = self._parse_key(key)
 
-        # if isinstance(value, pd.DataFrame):
-        #     # Upload dataframe to SQL
-        #     value.reset_index()[list(sqla_table.c.keys())].to_sql(
-        #         str(sqla_table),
-        #         self.engine,
-        #         if_exists="replace",
-        #         index=False,
-        #     )
-        # elif isinstance(value, pl.DataFrame):
-        #     # Upload dataframe to SQL
-        #     value[list(sqla_table.c.keys())].write_database(
-        #         str(sqla_table),
-        #         str(self.engine.url),
-        #         if_table_exists="replace",
-        #     )
-        # elif isinstance(value, Iterable):
-        #     pass
-        # else:
-        #     select = value if isinstance(value, sqla.Select) else value.selection
+        if len(path) == 0 and len(filt) == 0:
+            assert rec == self.record_type, "no path, so we should be at the base table"
+            assert idx is not None, "no filters, so we should not have a single-record"
+            if attr is not None:
+                raise NotImplementedError("Attribute assignment not implemented yet")
 
-        #     # Transfer table or query results to SQL table
-        #     with self.engine.begin() as con:
-        #         con.execute(
-        #             sqla.insert(sqla_table).from_select(
-        #                 select.selected_columns.keys(), select
-        #             )
-        #         )
-        raise NotImplementedError()
+            cols = list(self.base_table.c.keys())
+            table_fqn = str(self.base_table)
+            if isinstance(value, pd.DataFrame):
+                value.reset_index()[cols].to_sql(
+                    table_fqn,
+                    self.db.engine,
+                    if_exists="replace",
+                    index=False,
+                )
+            elif isinstance(value, pl.DataFrame):
+                value[cols].write_database(
+                    table_fqn,
+                    str(self.db.engine.url),
+                    if_table_exists="replace",
+                )
+            elif isinstance(value, Iterable):
+                raise NotImplementedError(
+                    "Assignment via Iterable of records not implemented yet."
+                )
+            elif isinstance(value, Record):
+                raise NotImplementedError(
+                    "Assignment via single record instance not implemented yet."
+                )
+            else:
+                select = (
+                    value
+                    if isinstance(value, sqla.Select)
+                    else sqla.select(value.base_table)
+                )
+
+                # Transfer table or query results to SQL table
+                with self.db.engine.begin() as con:
+                    con.execute(sqla.delete(self.base_table))
+                    con.execute(
+                        sqla.insert(self.base_table).from_select(
+                            self.base_table.c.keys(), select
+                        )
+                    )
+        else:
+            raise NotImplementedError(
+                "Assignment outside top-level or with filters not supported yet."
+            )
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
         # if self.selection is None:
         #     raise ValueError("Only a selected DB can be used as a clause element.")
         # return self.selection.subquery()
-        raise NotImplementedError()
-
-    def to_df(self, kind: type[Df] = pd.DataFrame) -> Df:
-        """Download table selection to dataframe.
-
-        Returns:
-            Dataframe containing the data.
-        """
-        # if kind is pl.DataFrame:
-        #     return cast(Df, pl.read_database(self.selection, self.db.engine))
-        # else:
-        #     with self.db.engine.connect() as con:
-        #         return cast(Df, pd.read_sql(self.selection, con))
         raise NotImplementedError()
 
     def _gen_idx_match_expr(
