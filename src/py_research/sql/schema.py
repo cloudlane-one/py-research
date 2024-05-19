@@ -1,9 +1,8 @@
 """Static schemas for SQL databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
-from itertools import zip_longest
 from secrets import token_hex
 from typing import (
     Any,
@@ -19,11 +18,11 @@ from typing import (
     overload,
 )
 
-import numpy as np
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 from bidict import bidict
 
+from py_research.hashing import gen_str_hash
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import has_type, is_subtype
@@ -35,6 +34,7 @@ Val2 = TypeVar("Val2")
 
 Rec = TypeVar("Rec", bound="Record")
 Rec2 = TypeVar("Rec2", bound="Record")
+Rec3 = TypeVar("Rec3", bound="Record")
 Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
 
 RecordValue: TypeAlias = Rec | Iterable[Rec] | Mapping[Any, Rec]
@@ -213,13 +213,13 @@ class Rel(Prop[Recs]):
 
     _target: type["Record"] | None = None
 
-    @property
+    @cached_property
     def target_type(self) -> type["Record"]:
         """Target record type."""
         assert self._target is not None, "Target record type not set."
         return self._target
 
-    @property
+    @cached_property
     def fk_map(self) -> bidict["AttrRef", "AttrRef"]:
         """Map source foreign keys to target attrs."""
         target = self.target_type
@@ -263,71 +263,6 @@ class Rel(Prop[Recs]):
                     }
                 )
 
-    @property
-    def join_path(self) -> list[tuple[type["Record"], Mapping["AttrRef", "AttrRef"]]]:
-        """Path to join target table."""
-        match self.via:
-            case RelRef():
-                # Relation is defined via other relation or relation table
-                other_rel = self.via.rel
-                assert isinstance(
-                    other_rel, Rel
-                ), "Back-reference must be an explicit relation"
-
-                if issubclass(other_rel.target_type, self.record_type):
-                    # Supplied record type object is a backlinking relation
-                    return [(self.target_type, self.fk_map.inverse)]
-                else:
-                    # Supplied record type object is a forward relation
-                    # on a relation table
-                    back_rel = [
-                        r
-                        for rs in other_rel.record_type._rels.values()
-                        for r in rs
-                        if issubclass(r.target_type, self.record_type)
-                    ][0]
-
-                    return [
-                        (back_rel.record_type, back_rel.fk_map.inverse),
-                        (other_rel.target_type, other_rel.fk_map),
-                    ]
-            case type():
-                # Relation is defined via relation table
-                fwd_rel = [
-                    r
-                    for rs in self.via._rels.values()
-                    for r in rs
-                    if issubclass(r.target_type, self.target_type)
-                ][0]
-                back_rel = [
-                    r
-                    for rs in self.via._rels.values()
-                    for r in rs
-                    if issubclass(r.target_type, self.record_type)
-                ][0]
-
-                return [
-                    (back_rel.record_type, back_rel.fk_map.inverse),
-                    (fwd_rel.target_type, fwd_rel.fk_map),
-                ]
-            case tuple():
-                # Relation is defined via back-rel + forward-rel on a relation table.
-                back_rel_target, fwd_rel_target = self.via
-
-                assert hasattr(back_rel_target, "_rel") and hasattr(
-                    fwd_rel_target, "_rel"
-                )
-                back_rel: Rel = getattr(back_rel_target, "_rel")
-                fwd_rel: Rel = getattr(fwd_rel_target, "_rel")
-
-                return [
-                    (back_rel.record_type, back_rel.fk_map.inverse),
-                    (fwd_rel.target_type, fwd_rel.fk_map),
-                ]
-            case _:
-                # Relation is defined via foreign key attributes
-                return [(self.target_type, self.fk_map)]
-
 
 @dataclass
 class PropRef(Generic[Rec_cov, Val]):
@@ -354,31 +289,6 @@ class PropRef(Generic[Rec_cov, Val]):
             *([self] if isinstance(self, RelRef) else []),
         ]
 
-    def __add__(self, other: "PropRef[Any, Val2]") -> "PropMerge[Val, Val2]":
-        """Add another prop to the merge."""
-        return PropMerge([self]) + other
-
-
-@dataclass(frozen=True)
-class PropMerge(Generic[*MergeTup]):
-    """Represent merged properties."""
-
-    props: list[PropRef]
-
-    @property
-    def _longest(self) -> PropRef:
-        return self.props[np.argmax([len(p.path) for p in self.props])]
-
-    def __add__(self, other: PropRef[Any, Val]) -> "PropMerge[*MergeTup, Val]":
-        """Add another prop to the merge."""
-        if not all(
-            new == lon or new is None or lon is None
-            for new, lon in zip_longest(other.path, self._longest.path)
-        ):
-            raise NotImplementedError("Merging with branching paths not supported yet.")
-
-        return PropMerge(props=self.props + [other])
-
 
 class AttrRef(sqla.ColumnClause[Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Val]):
     """Reference a property by its containing record type, name and value type."""
@@ -400,6 +310,20 @@ class AttrRef(sqla.ColumnClause[Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Va
         return AttrRef(rec_type=self.rec_type, name=self.name, val_type=value_type)
 
 
+@dataclass(frozen=True)
+class RelJoin:
+    """Define a join operation between two records."""
+
+    path: list["RelRef"]
+    rec: type["Record"]
+    on: Mapping["AttrRef", "AttrRef"]
+
+    @cached_property
+    def alias(self) -> str:
+        """Alias for the join target."""
+        return gen_str_hash((self.path, self.rec, self.on))
+
+
 @dataclass
 class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
     """Reference to related record type, optionally indexed."""
@@ -414,6 +338,161 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
     def r(self) -> type[Rec2]:
         """Reference props of the target record type."""
         return cast(type[Rec2], type(token_hex(5), (self.val_type,), {"_rel": self}))
+
+    @cached_property
+    def rels(self) -> list[Rel[RecordValue]]:
+        """All relations referenced."""
+        return (
+            [self.rel]
+            if self.rel is not None
+            else self.rec_type._rels.get(self.val_type, [])
+        )
+
+    @property
+    def path_str(self) -> str:
+        """Path to join target table."""
+        prefix = (
+            self.rec_type.__name__ if len(self.path) == 0 else self.path[-1].path_str
+        )
+
+        if self.rel is not None:
+            return f"{prefix}.{self.rel.name}"
+        else:
+            return f"{self.rec_type.__name__}->{self.val_type.__name__}"
+
+    @cached_property
+    def joins(self) -> set[tuple[RelJoin, RelJoin | None]]:
+        """All joins to the target record type."""
+        joins = set()
+        for rel in self.rels:
+            match rel.via:
+                case RelRef():
+                    # Relation is defined via other relation or relation table
+                    other_rel = rel.via.rel
+                    assert isinstance(
+                        other_rel, Rel
+                    ), "Back-reference must be an explicit relation"
+
+                    if issubclass(other_rel.target_type, rel.record_type):
+                        # Supplied record type object is a backlinking relation
+                        joins.add(
+                            (
+                                RelJoin(self.path, rel.target_type, rel.fk_map.inverse),
+                                None,
+                            )
+                        )
+                    else:
+                        # Supplied record type object is a forward relation
+                        # on a relation table
+                        back_rel = [
+                            r
+                            for rs in other_rel.record_type._rels.values()
+                            for r in rs
+                            if issubclass(r.target_type, rel.record_type)
+                        ][0]
+
+                        joins.add(
+                            (
+                                RelJoin(
+                                    self.path,
+                                    back_rel.record_type,
+                                    back_rel.fk_map.inverse,
+                                ),
+                                RelJoin(
+                                    self.path, other_rel.target_type, other_rel.fk_map
+                                ),
+                            )
+                        )
+                case type():
+                    # Relation is defined via relation table
+                    fwd_rel = [
+                        r
+                        for rs in rel.via._rels.values()
+                        for r in rs
+                        if issubclass(r.target_type, rel.target_type)
+                    ][0]
+                    back_rel = [
+                        r
+                        for rs in rel.via._rels.values()
+                        for r in rs
+                        if issubclass(r.target_type, rel.record_type)
+                    ][0]
+
+                    joins.add(
+                        (
+                            RelJoin(
+                                self.path, back_rel.record_type, back_rel.fk_map.inverse
+                            ),
+                            RelJoin(self.path, fwd_rel.target_type, fwd_rel.fk_map),
+                        )
+                    )
+                case tuple() if has_type(rel.via, tuple[RelRef, RelRef]):
+                    # Relation is defined via back-rel + forward-rel
+                    # on a relation table.
+                    back, fwd = rel.via
+
+                    assert isinstance(back.rel, Rel) and isinstance(fwd.rel, Rel)
+
+                    joins.add(
+                        (
+                            RelJoin(
+                                self.path, back.rel.record_type, back.rel.fk_map.inverse
+                            ),
+                            RelJoin(self.path, fwd.rel.target_type, fwd.rel.fk_map),
+                        )
+                    )
+                case _:
+                    # Relation is defined via foreign key attributes
+                    joins.add((RelJoin(self.path, rel.target_type, rel.fk_map), None))
+
+        return joins
+
+    def __add__(self, other: "RelRef[Any, Rec3, Any]") -> "RelMerge[Rec2, Rec3]":
+        """Add another prop to the merge."""
+        return RelMerge([self]) + other
+
+    @overload
+    def __truediv__(self, other: AttrRef[Rec2, Val]) -> AttrRef[Rec2, Val]: ...
+
+    @overload
+    def __truediv__(
+        self, other: "RelRef[Rec2, Rec3, Any]"
+    ) -> "RelRef[Rec2, Rec3, Any]": ...
+
+    @overload
+    def __truediv__(self, other: "PropRef[Rec2, Val]") -> "PropRef[Rec2, Val]": ...
+
+    def __truediv__(self, other: PropRef[Rec2, Val]) -> PropRef[Rec2, Val]:
+        """Append a prop to the relation path."""
+        return PropRef(rec_type=self.r, val_type=other.val_type)
+
+
+RelTree: TypeAlias = dict[RelRef, "RelTree"]
+
+
+@dataclass(frozen=True)
+class RelMerge(Generic[*MergeTup]):
+    """Tree of joined properties."""
+
+    rels: list[PropRef] = field(default_factory=list)
+
+    @cached_property
+    def rel_tree(self) -> RelTree:
+        """Tree representation of the merge."""
+        tree = {}
+
+        for rel in self.rels:
+            subtree = tree
+            for ref in rel.path:
+                if ref not in subtree:
+                    subtree[ref] = {}
+                subtree = subtree[ref]
+
+        return tree
+
+    def __add__(self, other: PropRef[Any, Val]) -> "RelMerge[*MergeTup, Val]":
+        """Add another prop to the merge."""
+        return RelMerge(rels=self.rels + [other])
 
 
 class Record(Generic[Idx, Val]):

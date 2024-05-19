@@ -39,14 +39,15 @@ from py_research.sql.schema import (
     Idx,
     Keyless,
     MergeTup,
-    PropMerge,
     PropRef,
     Rec,
     Rec2,
     Rec_cov,
     Record,
     Rel,
+    RelMerge,
     RelRef,
+    RelTree,
     Required,
     Schema,
     Val,
@@ -672,8 +673,8 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     db: DataBase[Name, Any]
     base_table: sqla.Table
-    record_type: type[Rec_cov] | None = None
-    path: Iterable[RelRef[Record, Record, Any]] = field(default_factory=list)
+    selection: type[Rec_cov] | PropRef[Rec_cov, Any] | None = None
+    merges: RelMerge = RelMerge()
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
     index: AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | DefaultIdx | None = (
         None
@@ -681,44 +682,85 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     attr: AttrRef[Rec_cov, Any] | None = None
 
     @cached_property
-    def joins(self) -> list[tuple[sqla.Table, sqla.ColumnElement[bool]]]:
-        """Return the joins required to produce this dataset from the base table."""
-        rels = [
-            rel
-            for relref in self.path
-            for rel in (
-                [relref.rel]
-                if relref.rel is not None
-                else relref.rec_type._rels.get(relref.val_type, [])
-            )
-        ]
-        return [
-            (
-                self.db._get_table(rec),
-                reduce(sqla.and_, (fk == tk for fk, tk in on_keys.items())),
-            )
-            for rel in rels
-            for rec, on_keys in rel.join_path
-        ]
+    def record_type(self) -> type[Rec_cov] | None:
+        """Record type of this dataset."""
+        return self.selection if isinstance(self.selection, type) else None
+
+    def _joins_from_tree(
+        self, tree: RelTree, parents: list[sqla.FromClause]
+    ) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
+        """Extract join operations from a relation tree."""
+        joins = []
+
+        for relref, subtree in tree.items():
+            parents = []
+            for fj, sj in relref.joins:
+                table = self.db._get_table(fj.rec).alias(fj.alias)
+                joins.append(
+                    (
+                        table,
+                        reduce(
+                            sqla.or_,
+                            (
+                                reduce(
+                                    sqla.and_,
+                                    (
+                                        parent.c[fk.name] == table.c[tk.name]
+                                        for fk, tk in fj.on.items()
+                                    ),
+                                )
+                                for parent in parents
+                            ),
+                        ),
+                    )
+                )
+                if sj is not None:
+                    target_table = self.db._get_table(sj.rec).alias(sj.alias)
+                    joins.append(
+                        (
+                            table,
+                            reduce(
+                                sqla.and_,
+                                (
+                                    table.c[fk.name] == target_table.c[tk.name]
+                                    for fk, tk in fj.on.items()
+                                ),
+                            ),
+                        )
+                    )
+                    parents.append(target_table)
+                else:
+                    parents.append(table)
+
+            joins.extend(self._joins_from_tree(subtree, parents))
+
+        return joins
+
+    @cached_property
+    def joins(self) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
+        """List of all join operations required to construct this tree."""
+        return self._joins_from_tree(self.merges.rel_tree, parents=[self.base_table])
 
     @cached_property
     def active_idx(self) -> list[list[AttrRef[Record, Any]]]:
         """Optional, additional index of this dataset."""
+        path = self.selection.path if isinstance(self.selection, PropRef) else []
+
         if isinstance(self.index, DefaultIdx):
             path_idx = (
                 [
                     relref.rec_type._primary_keys()
-                    for relref in self.path
+                    for relref in path
                     if relref.idx is not None
                 ]
-                if not any(relref.idx is Keyless for relref in self.path)
+                if not any(relref.idx is Keyless for relref in path)
                 else []
             )
             if len(path_idx) > 0:
                 return path_idx
             else:
-                assert self.record_type is not None
-                return [self.record_type._primary_keys()]
+                assert isinstance(self.selection, type)
+                return [self.selection._primary_keys()]
         elif self.index is not None:
             return [
                 [self.index] if isinstance(self.index, AttrRef) else list(self.index)
@@ -852,24 +894,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def load(self, merge: None = ..., kind: type[Dl] = ...) -> Dl: ...  # type: ignore
 
     @overload
-    def load(self, merge: PropRef | PropMerge, kind: type[Df]) -> tuple[Df, ...]: ...
+    def load(self, merge: PropRef | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
 
     @overload
     def load(
-        self, merge: PropRef[Any, Val] | PropMerge[*MergeTup], kind: type[Record] = ...
+        self, merge: PropRef[Any, Val] | RelMerge[*MergeTup], kind: type[Record] = ...
     ) -> Sequence[tuple[*MergeTup]]: ...
 
     def load(
         self,
-        merge: PropRef | PropMerge | None = None,
+        merge: PropRef | RelMerge | None = None,
         kind: type[Dl] = Record,
     ) -> Dl | tuple[Dl, ...] | Sequence[tuple]:
         """Download table selection."""
         if issubclass(kind, Record):
             raise NotImplementedError("Downloading record instances not supported yet.")
 
-        if merge is not None:
-            raise NotImplementedError()
+        merges = [] if merge is not None else None
         # if kind is pl.DataFrame:
         #     return cast(DlType, pl.read_database(self.selection, self.db.engine))
         # else:
@@ -1101,21 +1142,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         )
 
     def _parse_key(self, key: Any) -> tuple:
-        rec = self.record_type
-        path = self.path
+        sel = self.selection
         filt = self.filters
-        attr = self.attr
         idx = self.index
 
         match key:
-            case AttrRef():
-                # Attribute selection.
-                rec = Record
-                path = [*path, *key.path]
-                attr = key
-            case RelRef():
-                # Relational subgraph selection.
-                path = [*path, *key.path]
+            case PropRef():
+                # Property selection.
+                if isinstance(sel, type):
+                    assert key.rec_type == sel
+                    sel = key
+                elif isinstance(sel, RelRef):
+                    sel /= key
             case tuple():
                 # Selection by tuple of index values.
                 values = [list(v) if isinstance(v, tuple) else [v] for v in key]
@@ -1136,8 +1174,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                     filt.append(expr)
                 idx = None
             case sqla.ColumnElement():
+                # Filtering via SQL expression.
                 filt.append(key)
             case _:
                 raise TypeError("Unsupported key type.")
 
-        return rec, path, filt, attr, idx
+        return sel, filt, idx
