@@ -14,6 +14,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     TypeVarTuple,
+    cast,
     overload,
 )
 
@@ -686,6 +687,14 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         """Record type of this dataset."""
         return self.selection if isinstance(self.selection, type) else None
 
+    def _get_alias(
+        self, path: list[RelRef], rel: Rel, target: type[Record]
+    ) -> sqla.FromClause:
+        """Get alias for a relation."""
+        return self.db._get_table(rel.target_type).alias(
+            gen_str_hash((path, rel, target), 8)
+        )
+
     def _joins_from_tree(
         self, tree: RelTree, parents: list[sqla.FromClause]
     ) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
@@ -694,8 +703,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         for relref, subtree in tree.items():
             parents = []
-            for fj, sj in relref.joins:
-                table = self.db._get_table(fj.rec).alias(fj.alias)
+            for rel in relref.rels:
+                fj, sj = rel.joins
+                table = self._get_alias(relref.path, rel, fj.rec)
                 joins.append(
                     (
                         table,
@@ -715,7 +725,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                     )
                 )
                 if sj is not None:
-                    target_table = self.db._get_table(sj.rec).alias(sj.alias)
+                    target_table = self._get_alias(relref.path, rel, sj.rec)
                     joins.append(
                         (
                             table,
@@ -894,29 +904,67 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def load(self, merge: None = ..., kind: type[Dl] = ...) -> Dl: ...  # type: ignore
 
     @overload
-    def load(self, merge: PropRef | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
+    def load(self, merge: RelRef | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
 
     @overload
     def load(
-        self, merge: PropRef[Any, Val] | RelMerge[*MergeTup], kind: type[Record] = ...
-    ) -> Sequence[tuple[*MergeTup]]: ...
+        self, merge: RelRef[Any, Rec, Any], kind: type[Record] = ...
+    ) -> Sequence[tuple[Rec_cov, Rec]]: ...
+
+    @overload
+    def load(
+        self, merge: RelMerge[*MergeTup], kind: type[Record] = ...
+    ) -> Sequence[tuple[Rec_cov, *MergeTup]]: ...
 
     def load(
         self,
-        merge: PropRef | RelMerge | None = None,
+        merge: RelRef | RelMerge | None = None,
         kind: type[Dl] = Record,
     ) -> Dl | tuple[Dl, ...] | Sequence[tuple]:
         """Download table selection."""
         if issubclass(kind, Record):
             raise NotImplementedError("Downloading record instances not supported yet.")
 
-        merges = [] if merge is not None else None
-        # if kind is pl.DataFrame:
-        #     return cast(DlType, pl.read_database(self.selection, self.db.engine))
-        # else:
-        #     with self.db.engine.connect() as con:
-        #         return cast(DlType, pd.read_sql(self.selection, con))
-        raise NotImplementedError()
+        merge = (
+            merge
+            if isinstance(merge, RelMerge)
+            else RelMerge([merge]) if merge is not None else RelMerge()
+        )
+        abs_merge = (
+            self.selection / merge
+            if isinstance(self.selection, RelRef)
+            else (
+                self.selection.path[-1] / merge
+                if isinstance(self.selection, PropRef)
+                else merge
+            )
+        )
+        full_merge = self.merges + abs_merge
+
+        select = sqla.select(
+            *(
+                col.label(f"{relref.path_str}.{name}")
+                for relref in abs_merge.rels
+                for rel in relref.rels
+                for target in [j.rec for j in rel.joins if j is not None]
+                for name, col in self._get_alias(
+                    relref.path, rel, target
+                ).columns.items()
+            )
+        )
+        for join in self._joins_from_tree(
+            full_merge.rel_tree, parents=[self.base_table]
+        ):
+            select = select.join(*join)
+
+        for filt in self.filters:
+            select = select.where(filt)
+
+        if kind is pl.DataFrame:
+            return cast(Dl, pl.read_database(select, self.db.engine))
+        else:
+            with self.db.engine.connect() as con:
+                return cast(Dl, pd.read_sql(select, con))
 
     @overload
     def __setitem__(
