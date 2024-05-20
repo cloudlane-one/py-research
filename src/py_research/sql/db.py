@@ -687,69 +687,80 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         """Record type of this dataset."""
         return self.selection if isinstance(self.selection, type) else None
 
-    def _get_alias(
-        self, path: list[RelRef], rel: Rel, target: type[Record]
-    ) -> sqla.FromClause:
-        """Get alias for a relation."""
-        return self.db._get_table(rel.target_type).alias(
-            gen_str_hash((path, rel, target), 8)
-        )
+    def _get_alias(self, relref: RelRef) -> sqla.FromClause:
+        """Get alias for a relation reference."""
+        return self.db._get_table(relref.val_type).alias(gen_str_hash(relref, 8))
+
+    def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
+        """Get random alias for a type."""
+        return self.db._get_table(rec).alias(token_hex(4))
 
     def _joins_from_tree(
-        self, tree: RelTree, parents: list[sqla.FromClause]
+        self, tree: RelTree
     ) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
         """Extract join operations from a relation tree."""
         joins = []
 
-        for relref, subtree in tree.items():
-            parents = []
-            for rel in relref.rels:
-                fj, sj = rel.joins
-                table = self._get_alias(relref.path, rel, fj.rec)
-                joins.append(
-                    (
-                        table,
-                        reduce(
-                            sqla.or_,
-                            (
-                                reduce(
-                                    sqla.and_,
-                                    (
-                                        parent.c[fk.name] == table.c[tk.name]
-                                        for fk, tk in fj.on.items()
-                                    ),
-                                )
-                                for parent in parents
-                            ),
-                        ),
-                    )
-                )
-                if sj is not None:
-                    target_table = self._get_alias(relref.path, rel, sj.rec)
-                    joins.append(
+        for r, subtree in tree.items():
+            parent = (
+                self._get_alias(r.parent) if r.parent is not None else self.base_table
+            )
+
+            inter_alias_map = {
+                rec: self._get_random_alias(rec) for rec in r.inter_joins.keys()
+            }
+
+            joins.extend(
+                (
+                    inter_alias_map[rec],
+                    reduce(
+                        sqla.or_,
                         (
-                            table,
                             reduce(
                                 sqla.and_,
                                 (
-                                    table.c[fk.name] == target_table.c[tk.name]
-                                    for fk, tk in fj.on.items()
+                                    parent.c[lk.name] == inter_alias_map[rec].c[rk.name]
+                                    for lk, rk in inter_join_on.items()
                                 ),
-                            ),
-                        )
-                    )
-                    parents.append(target_table)
-                else:
-                    parents.append(table)
+                            )
+                            for inter_join_on in inter_join_ons
+                        ),
+                    ),
+                )
+                for rec, inter_join_ons in r.inter_joins.items()
+            )
 
-            joins.extend(self._joins_from_tree(subtree, parents))
+            target_table = self._get_alias(r)
+
+            joins.append(
+                (
+                    target_table,
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    inter_alias_map[lk.rec_type].c[lk.name]
+                                    == target_table.c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in r.join_ons
+                        ),
+                    ),
+                )
+            )
+
+            joins.extend(self._joins_from_tree(subtree))
 
         return joins
 
-    @cached_property
-    def joins(self) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
+    def joins(
+        self, extra_merges: RelMerge = RelMerge()
+    ) -> list[tuple[sqla.FromClause, sqla.ColumnElement[bool]]]:
         """List of all join operations required to construct this tree."""
-        return self._joins_from_tree(self.merges.rel_tree, parents=[self.base_table])
+        return self._joins_from_tree((self.merges + extra_merges).rel_tree)
 
     @cached_property
     def active_idx(self) -> list[list[AttrRef[Record, Any]]]:
@@ -943,28 +954,32 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         select = sqla.select(
             *(
-                col.label(f"{relref.path_str}.{name}")
+                col.label(f"{relref.path_str}.{col_name}")
                 for relref in abs_merge.rels
-                for rel in relref.rels
-                for target in [j.rec for j in rel.joins if j is not None]
-                for name, col in self._get_alias(
-                    relref.path, rel, target
-                ).columns.items()
+                for col_name, col in self._get_alias(relref).columns.items()
             )
         )
-        for join in self._joins_from_tree(
-            full_merge.rel_tree, parents=[self.base_table]
-        ):
+
+        for join in self.joins(extra_merges=full_merge):
             select = select.join(*join)
 
         for filt in self.filters:
             select = select.where(filt)
 
+        df = None
         if kind is pl.DataFrame:
-            return cast(Dl, pl.read_database(select, self.db.engine))
+            df = pl.read_database(select, self.db.engine)
         else:
             with self.db.engine.connect() as con:
-                return cast(Dl, pd.read_sql(select, con))
+                df = pd.read_sql(select, con)
+
+        return cast(
+            tuple[Dl, ...],
+            tuple(
+                df[list(col for col in df.columns if col.startswith(relref.path_str))]
+                for relref in abs_merge.rels
+            ),
+        )
 
     @overload
     def __setitem__(

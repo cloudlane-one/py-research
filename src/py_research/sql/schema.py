@@ -3,6 +3,7 @@
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from functools import cached_property, reduce
+from itertools import groupby
 from secrets import token_hex
 from typing import (
     Any,
@@ -196,14 +197,6 @@ class Attr(Prop[Val]):
         return self.attr_name or super().name
 
 
-@dataclass(frozen=True)
-class RelJoin:
-    """Define a join operation between two records."""
-
-    rec: type["Record"]
-    on: Mapping["AttrRef", "AttrRef"]
-
-
 @dataclass
 class Rel(Prop[Recs]):
     """Define relation to another record."""
@@ -271,8 +264,8 @@ class Rel(Prop[Recs]):
                 )
 
     @cached_property
-    def joins(self) -> tuple[RelJoin, RelJoin | None]:
-        """Join operations to reach target record type."""
+    def inter_join(self) -> tuple[type["Record"], Mapping["AttrRef", "AttrRef"]] | None:
+        """Intermediate joins required by this rel."""
         match self.via:
             case RelRef():
                 # Relation is defined via other relation or relation table
@@ -283,10 +276,7 @@ class Rel(Prop[Recs]):
 
                 if issubclass(other_rel.target_type, self.record_type):
                     # Supplied record type object is a backlinking relation
-                    return (
-                        RelJoin(self.target_type, self.fk_map.inverse),
-                        None,
-                    )
+                    return None
                 else:
                     # Supplied record type object is a forward relation
                     # on a relation table
@@ -298,12 +288,46 @@ class Rel(Prop[Recs]):
                     ][0]
 
                     return (
-                        RelJoin(
-                            back_rel.record_type,
-                            back_rel.fk_map.inverse,
-                        ),
-                        RelJoin(other_rel.target_type, other_rel.fk_map),
+                        back_rel.record_type,
+                        back_rel.fk_map.inverse,
                     )
+            case type():
+                # Relation is defined via relation table
+                back_rel = [
+                    r
+                    for rs in self.via._rels.values()
+                    for r in rs
+                    if issubclass(r.target_type, self.record_type)
+                ][0]
+
+                return (back_rel.record_type, back_rel.fk_map.inverse)
+            case tuple() if has_type(self.via, tuple[RelRef, RelRef]):
+                # Relation is defined via back-rel + forward-rel
+                # on a relation table.
+                back, _ = self.via
+
+                assert isinstance(back.rel, Rel)
+
+                return (back.rel.record_type, back.rel.fk_map.inverse)
+            case _:
+                # Relation is defined via foreign key attributes
+                return None
+
+    @cached_property
+    def join_on(self) -> Mapping["AttrRef", "AttrRef"]:
+        """Mapping of column keys to join the target on."""
+        match self.via:
+            case RelRef():
+                # Relation is defined via other relation or relation table
+                other_rel = self.via.rel
+                assert isinstance(
+                    other_rel, Rel
+                ), "Back-reference must be an explicit relation"
+
+                if issubclass(other_rel.target_type, self.record_type):
+                    return self.fk_map.inverse
+                else:
+                    return other_rel.fk_map
             case type():
                 # Relation is defined via relation table
                 fwd_rel = [
@@ -312,31 +336,19 @@ class Rel(Prop[Recs]):
                     for r in rs
                     if issubclass(r.target_type, self.target_type)
                 ][0]
-                back_rel = [
-                    r
-                    for rs in self.via._rels.values()
-                    for r in rs
-                    if issubclass(r.target_type, self.record_type)
-                ][0]
 
-                return (
-                    RelJoin(back_rel.record_type, back_rel.fk_map.inverse),
-                    RelJoin(fwd_rel.target_type, fwd_rel.fk_map),
-                )
+                return fwd_rel.fk_map
             case tuple() if has_type(self.via, tuple[RelRef, RelRef]):
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
-                back, fwd = self.via
+                _, fwd = self.via
 
-                assert isinstance(back.rel, Rel) and isinstance(fwd.rel, Rel)
+                assert isinstance(fwd.rel, Rel)
 
-                return (
-                    RelJoin(back.rel.record_type, back.rel.fk_map.inverse),
-                    RelJoin(fwd.rel.target_type, fwd.rel.fk_map),
-                )
+                return fwd.rel.fk_map
             case _:
                 # Relation is defined via foreign key attributes
-                return (RelJoin(self.target_type, self.fk_map), None)
+                return self.fk_map
 
 
 @dataclass
@@ -356,11 +368,15 @@ class PropRef(Generic[Rec_cov, Val]):
             return None
 
     @cached_property
+    def parent(self) -> "RelRef | None":
+        """Parent relation of this relref."""
+        return self.get_tag(self.rec_type)
+
+    @cached_property
     def path(self) -> list["RelRef"]:
         """Path from base record type to this relref."""
-        parent = self.get_tag(self.rec_type)
         return [
-            *(parent.path if parent is not None else []),
+            *(self.parent.path if self.parent is not None else []),
             *([self] if isinstance(self, RelRef) else []),
         ]
 
@@ -409,6 +425,25 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
             else self.rec_type._rels.get(self.val_type, [])
         )
 
+    @cached_property
+    def inter_joins(self) -> dict[type["Record"], list[dict["AttrRef", "AttrRef"]]]:
+        """Intermediate joins required for all of the rels."""
+        rel_grouped = groupby(
+            self.rels,
+            lambda rel: rel.inter_join[0] if rel.inter_join is not None else None,
+        )
+
+        return {
+            rec: [dict(rel.inter_join[1]) for rel in rels if rel.inter_join is not None]
+            for rec, rels in rel_grouped
+            if rec is not None
+        }
+
+    @cached_property
+    def join_ons(self) -> list[dict["AttrRef", "AttrRef"]]:
+        """Mapping of all column keys to join the target on."""
+        return [dict(rel.join_on) for rel in self.rels]
+
     @property
     def path_str(self) -> str:
         """Path to join target table."""
@@ -419,7 +454,7 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
         if self.rel is not None:
             return f"{prefix}.{self.rel.name}"
         else:
-            return f"{self.rec_type.__name__}->{self.val_type.__name__}"
+            return f"{self.rec_type.__name__}.rel({self.val_type.__name__})"
 
     def __add__(self, other: "RelRef[Any, Rec3, Any]") -> "RelMerge[Rec2, Rec3]":
         """Add another prop to the merge."""
