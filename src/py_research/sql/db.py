@@ -117,31 +117,6 @@ def map_df_dtype(c: pd.Series | pl.Series) -> sqla.types.TypeEngine:  # noqa: C9
     return sqla.types.BLOB()
 
 
-def cols_from_df(df: DataFrame) -> dict[str, sqla.Column]:
-    """Create columns from DataFrame."""
-    if isinstance(df, pd.DataFrame) and len(df.index.names) > 1:
-        raise NotImplementedError("Multi-index not supported yet.")
-
-    return {
-        **(
-            {
-                level: sqla.Column(
-                    level,
-                    map_df_dtype(df.index.get_level_values(level).to_series()),
-                    primary_key=True,
-                )
-                for level in df.index.names
-            }
-            if isinstance(df, pd.DataFrame)
-            else {}
-        ),
-        **{
-            str(df[col].name): sqla.Column(str(df[col].name), map_df_dtype(df[col]))
-            for col in df.columns
-        },
-    }
-
-
 def remove_external_fk(table: sqla.Table):
     """Dirty vodoo to remove external FKs from existing table."""
     for c in table.columns.values():
@@ -428,7 +403,7 @@ class DataBase(Generic[Name, DBS_contrav]):
     def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
         """Return the dataset for given record type."""
         table = self._get_table(key)
-        return DataSet(self, table, key)
+        return DataSet(self, table, selection=key)
 
     def __setitem__(  # noqa: D105
         self,
@@ -436,10 +411,13 @@ class DataBase(Generic[Name, DBS_contrav]):
         value: "DataSet[Name, Rec, Idx | None] | RecInput[Rec, Idx] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
         table = self._ensure_table_exists(self._get_table(key))
-        DataSet(self, table, key)[:] = value
+        DataSet(self, table, selection=key)[:] = value
 
     def dataset(
-        self, data: RecInput[Rec, Any], record_type: type[Rec] | None = None
+        self,
+        data: RecInput[Rec, Any],
+        record_type: type[Rec] | None = None,
+        foreign_keys: Mapping[str, AttrRef] | None = None,
     ) -> "DataSet[Name, Rec, None]":
         """Create a temporary dataset instance from a DataFrame or SQL query."""
         table_name = (
@@ -453,7 +431,11 @@ class DataBase(Generic[Name, DBS_contrav]):
         if record_type is not None:
             table = self._get_table(record_type)
         elif isinstance(data, DataFrame):
-            table = sqla.Table(table_name, self.meta, *cols_from_df(data).values())
+            table = sqla.Table(
+                table_name,
+                self.meta,
+                *self._cols_from_df(data, foreign_keys=foreign_keys).values(),
+            )
         elif isinstance(data, Record):
             table = self._get_table(data)
         elif has_type(data, Iterable[Record]):
@@ -474,7 +456,7 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         table = self._ensure_table_exists(table)
 
-        ds = DataSet(self, table, record_type)
+        ds = DataSet(self, table, selection=record_type)
         ds[:] = data
         return ds
 
@@ -600,6 +582,44 @@ class DataBase(Generic[Name, DBS_contrav]):
 
         return node_df, edge_df
 
+    def _cols_from_df(
+        self, df: DataFrame, foreign_keys: Mapping[str, AttrRef] | None = None
+    ) -> dict[str, sqla.Column]:
+        """Create columns from DataFrame."""
+        if isinstance(df, pd.DataFrame) and len(df.index.names) > 1:
+            raise NotImplementedError("Multi-index not supported yet.")
+
+        fks = foreign_keys or {}
+
+        def gen_fk(col: str) -> list[sqla.ForeignKey]:
+            return (
+                [sqla.ForeignKey(self._get_table(fks[col].rec_type).c[fks[col].name])]
+                if col in fks
+                else []
+            )
+
+        return {
+            **(
+                {
+                    level: sqla.Column(
+                        level,
+                        map_df_dtype(df.index.get_level_values(level).to_series()),
+                        *gen_fk(level),
+                        primary_key=True,
+                    )
+                    for level in df.index.names
+                }
+                if isinstance(df, pd.DataFrame)
+                else {}
+            ),
+            **{
+                str(df[col].name): sqla.Column(
+                    str(df[col].name), map_df_dtype(df[col]), *gen_fk(col)
+                )
+                for col in df.columns
+            },
+        }
+
     @cache
     def _get_table(self, rec: type[Record]) -> sqla.Table:
         return rec._table(self.meta, self.subs)
@@ -674,6 +694,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     db: DataBase[Name, Any]
     base_table: sqla.Table
+    base_query: sqla.Select | None = None
     selection: type[Rec_cov] | PropRef[Rec_cov, Any] | None = None
     merges: RelMerge = RelMerge()
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
@@ -885,7 +906,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     ) -> Self: ...
 
     @overload
-    def __getitem__(self, key: sqla.ColumnElement[bool]) -> Self: ...
+    def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series[bool]) -> Self: ...
 
     def __getitem__(  # noqa: D105
         self,
@@ -897,18 +918,19 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | slice
             | tuple[slice | tuple[slice, ...], ...]
             | sqla.ColumnElement[bool]
+            | Series
         ),
     ) -> "DataSet":
-        rec, path, filt, attr, idx = self._parse_key(key)
+        sel, filt, idx, merge, query = self._parse_key(key)
 
         return DataSet(
             self.db,
             self.base_table,
-            rec,
-            path,
+            query,
+            sel,
+            merge,
             filt,
             idx,
-            attr,
         )
 
     @overload
@@ -950,7 +972,6 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 else merge
             )
         )
-        full_merge = self.merges + abs_merge
 
         select = sqla.select(
             *(
@@ -958,9 +979,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 for relref in abs_merge.rels
                 for col_name, col in self._get_alias(relref).columns.items()
             )
+        ).select_from(
+            self.base_table if self.base_query is None else self.base_query.subquery()
         )
 
-        for join in self.joins(extra_merges=full_merge):
+        for join in self.joins(extra_merges=abs_merge):
             select = select.join(*join)
 
         for filt in self.filters:
@@ -1094,14 +1117,16 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self, key: sqla.ColumnElement[bool], value: Self | RecInput[Rec_cov, Any]
+        self,
+        key: slice | tuple[slice | tuple[slice, ...], ...],
+        value: Self | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
-        key: slice | tuple[slice | tuple[slice, ...], ...],
-        value: Self | Iterable[Rec_cov] | DataFrame,
+        key: sqla.ColumnElement[bool] | pd.Series[bool],
+        value: Self | RecInput[Rec_cov, Any],
     ) -> None: ...
 
     def __setitem__(  # noqa: D105
@@ -1114,15 +1139,15 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | slice
             | tuple[slice | tuple[slice, ...], ...]
             | sqla.ColumnElement[bool]
+            | pd.Series[bool]
         ),
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
     ) -> None:
-        rec, path, filt, attr, idx = self._parse_key(key)
+        sel, filt, idx, merge, query = self._parse_key(key)
 
-        if len(path) == 0 and len(filt) == 0:
-            assert rec == self.record_type, "no path, so we should be at the base table"
+        if len(merge.rels) == 0 and len(filt) == 0 and query is None:
             assert idx is not None, "no filters, so we should not have a single-record"
-            if attr is not None:
+            if isinstance(sel, AttrRef):
                 raise NotImplementedError("Attribute assignment not implemented yet")
 
             cols = list(self.base_table.c.keys())
@@ -1204,19 +1229,29 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             for v, i in zip(val, idx)
         )
 
-    def _parse_key(self, key: Any) -> tuple:
+    def _parse_key(self, key: Any) -> tuple[
+        type[Rec_cov] | PropRef[Rec_cov, Any] | None,
+        list[sqla.ColumnElement[bool]],
+        AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | DefaultIdx | None,
+        RelMerge,
+        sqla.Select | None,
+    ]:
         sel = self.selection
         filt = self.filters
         idx = self.index
+        merge = self.merges
+        query = self.base_query
 
         match key:
             case PropRef():
                 # Property selection.
-                if isinstance(sel, type):
-                    assert key.rec_type == sel
-                    sel = key
-                elif isinstance(sel, RelRef):
+                if isinstance(sel, RelRef):
                     sel /= key
+                else:
+                    if isinstance(sel, type):
+                        assert key.rec_type == sel
+                    sel = key
+                merge += key if isinstance(key, RelRef) else key.parent or RelMerge()
             case tuple():
                 # Selection by tuple of index values.
                 values = [list(v) if isinstance(v, tuple) else [v] for v in key]
@@ -1239,7 +1274,32 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             case sqla.ColumnElement():
                 # Filtering via SQL expression.
                 filt.append(key)
+            case pd.Series():
+                # Filtering via boolean Series.
+                series_name = token_hex(8)
+                uploaded = self.db.dataset(key.rename(series_name).to_frame())
+                assert all(
+                    n1 == n2
+                    for n1, n2 in zip(
+                        key.index.names, self.base_table.primary_key.columns
+                    )
+                )
+                filt.append(uploaded.base_table.c[series_name] == True)  # noqa: E712
+                query = (
+                    (query if query is not None else sqla.select(self.base_table))
+                    .join(
+                        uploaded,
+                        reduce(
+                            sqla.and_,
+                            (
+                                self.base_table.c[pk] == uploaded.base_table.c[pk]
+                                for pk in key.index.names
+                            ),
+                        ),
+                    )
+                    .where(uploaded.base_table.c[series_name] == True)  # noqa: E712
+                )
             case _:
                 raise TypeError("Unsupported key type.")
 
-        return sel, filt, idx
+        return sel, filt, idx, merge, query

@@ -677,9 +677,17 @@ class Required(Generic[DBS]):
     """Record type."""
 
 
-class a(Record):  # noqa: N801
+class DynRecordMeta(type):
+    """Metaclass for dynamically defined record types."""
+
+    def __getitem__(cls, name: str) -> AttrRef:
+        """Get dynamic attribute by dynamic name."""
+        return AttrRef(cls, name, Any)
+
+
+class a(Record, metaclass=DynRecordMeta):  # noqa: N801
     """Dynamically defined record type."""
 
-    def __getattribute__(self, name: str) -> Any:
+    def __getattribute__(self, name: str) -> AttrRef:
         """Get dynamic attribute by name."""
         return AttrRef(type(self), name, Any)
