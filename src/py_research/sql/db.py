@@ -37,6 +37,7 @@ from py_research.files import HttpFile
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import has_type
 from py_research.sql.schema import (
+    Agg,
     AttrRef,
     Idx,
     Keyless,
@@ -176,23 +177,30 @@ class Backend(Generic[Name]):
 
 
 @dataclass(frozen=True)
-class DataBase(Generic[Name, DBS_contrav]):
+class DataBase(Generic[Name]):
     """Active connection to a SQL server."""
 
     backend: Backend[Name]
     schema: (
-        type[DBS_contrav]
-        | Required[DBS_contrav]
-        | set[type[DBS_contrav] | Required[DBS_contrav]]
+        type[Record | Schema]
+        | Required[Record | Schema]
+        | set[type[Record | Schema] | Required[Record | Schema]]
         | Mapping[
-            type[DBS_contrav] | Required[DBS_contrav],
+            type[Record] | Required[Record],
             str | sqla.TableClause,
+        ]
+        | Mapping[
+            type[Schema] | Required[Schema],
+            str,
         ]
         | None
     ) = None
 
     validate_on_init: bool = True
     create_cross_fk: bool = True
+
+    overlay: str | None = None
+    _overlay_subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
 
     def __post_init__(self):  # noqa: D105
         if self.validate_on_init:
@@ -206,11 +214,13 @@ class DataBase(Generic[Name, DBS_contrav]):
     @cached_property
     def subs(self) -> Mapping[type[Record], sqla.TableClause]:
         """Substitutions for tables in this DB."""
+        subs = {}
+
         if has_type(
             self.schema,
             Mapping[type[Record] | Required[Record], str | sqla.TableClause],
         ):
-            return {
+            subs = {
                 (rec.type if isinstance(rec, Required) else rec): (
                     sub if isinstance(sub, sqla.TableClause) else sqla.table(sub)
                 )
@@ -218,7 +228,7 @@ class DataBase(Generic[Name, DBS_contrav]):
             }
 
         if has_type(self.schema, Mapping[type[Schema] | Required[Schema], str]):
-            return {
+            subs = {
                 rec: sqla.table(rec._table_name, schema=schema_name)
                 for schema, schema_name in self.schema.items()
                 for rec in (
@@ -226,7 +236,7 @@ class DataBase(Generic[Name, DBS_contrav]):
                 )._record_types
             }
 
-        return {}
+        return {**subs, **self._overlay_subs}
 
     @cached_property
     def record_types(self) -> set[type[Record]]:
@@ -411,6 +421,9 @@ class DataBase(Generic[Name, DBS_contrav]):
         key: type[Rec],
         value: "DataSet[Name, Rec, Idx | None] | RecInput[Rec, Idx] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
+        if key not in self._overlay_subs:
+            self._overlay_subs[key] = self._get_table(key)
+
         table = self._ensure_table_exists(self._get_table(key))
         DataSet(self, table, selection=key)[:] = value
 
@@ -461,7 +474,7 @@ class DataBase(Generic[Name, DBS_contrav]):
         ds[:] = data
         return ds
 
-    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2, DBS_contrav]":
+    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2]":
         """Transfer the DB to a different backend."""
         other_db = DataBase(
             backend,
@@ -474,10 +487,10 @@ class DataBase(Generic[Name, DBS_contrav]):
             self._load_from_excel()
 
         for rec in self.record_types:
-            sqla_table = self._get_table(rec)
-            pl.read_database(
-                f"SELECT * FROM {sqla_table}", other_db.engine
-            ).write_database(str(sqla_table), str(other_db.backend.url))
+            ds = self[rec]
+            ds.load(kind=pl.DataFrame).write_database(
+                str(ds.base_table), str(other_db.backend.url)
+            )
 
         return other_db
 
@@ -541,7 +554,7 @@ class DataBase(Generic[Name, DBS_contrav]):
                 ],
                 *[
                     self[assoc_table]
-                    .load()
+                    .load(kind=pd.DataFrame)
                     .merge(
                         node_df.loc[
                             node_df["table"]
@@ -693,7 +706,7 @@ class DefaultIdx:
 class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     """Dataset selection."""
 
-    db: DataBase[Name, Any]
+    db: DataBase[Name]
     base_table: sqla.Table
     base_query: sqla.Select | None = None
     selection: type[Rec_cov] | PropRef[Rec_cov, Any] | None = None
@@ -1193,6 +1206,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             raise NotImplementedError(
                 "Assignment outside top-level or with filters not supported yet."
             )
+
+    def extract(
+        self, aggs: Mapping[RelRef[Any, Rec, Any], Agg[Rec, Any]] | None = None
+    ) -> DataBase[Name]:
+        """Extract a new database from the current selection."""
+        raise NotImplementedError()
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""

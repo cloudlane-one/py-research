@@ -691,3 +691,20 @@ class a(Record, metaclass=DynRecordMeta):  # noqa: N801
     def __getattribute__(self, name: str) -> AttrRef:
         """Get dynamic attribute by name."""
         return AttrRef(type(self), name, Any)
+
+
+@dataclass(frozen=True)
+class AttrMap(Generic[Rec, Val]):
+    """Map an attribute to a function."""
+
+    attr: AttrRef[Rec, Val]
+    func: sqla.Function[Val]
+
+
+@dataclass(frozen=True)
+class Agg(Generic[Rec, Rec2]):
+    """Define an aggregation."""
+
+    base_type: type[Rec]
+    target_type: type[Rec2]
+    attrs: set[AttrMap[Rec2, Any]]
