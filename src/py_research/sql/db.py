@@ -2,7 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import cache, cached_property, reduce
+from functools import cache, cached_property, partial, reduce
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
@@ -21,6 +21,7 @@ from typing import (
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
+import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
 from cloudpathlib import CloudPath
 from pandas.api.types import (
@@ -1220,7 +1221,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         return reduce(sqla.and_, exprs)
 
-    def _is_singl_idx_type(
+    def _is_single_idx_type(
         self, values: Sequence[Sequence[slice | list[Hashable] | Hashable]]
     ) -> bool:
         return all(
@@ -1228,6 +1229,19 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             for val, idx in zip(values, self.idx_type)
             for v, i in zip(val, idx)
         )
+
+    def _replace_attrref(
+        self,
+        element: sqla_visitors.ExternallyTraversible,
+        reflist: list[RelRef] = [],
+        **kw: Any,
+    ) -> sqla.ColumnElement | None:
+        if isinstance(element, AttrRef):
+            if element.parent is not None:
+                reflist.append(element.parent)
+            return self.db._get_table(element.rec_type).c[element.name]
+
+        return None
 
     def _parse_key(self, key: Any) -> tuple[
         type[Rec_cov] | PropRef[Rec_cov, Any] | None,
@@ -1258,7 +1272,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 expr = self._gen_idx_match_expr(values)
                 if expr is not None:
                     filt.append(expr)
-                if self._is_singl_idx_type(values):
+                if self._is_single_idx_type(values):
                     idx = None
             case list() | slice():
                 # Selection by list or slice of index values.
@@ -1273,7 +1287,13 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 idx = None
             case sqla.ColumnElement():
                 # Filtering via SQL expression.
-                filt.append(key)
+                reflist = []
+                replace_func = partial(self._replace_attrref, reflist=reflist)
+                mapped_expr = sqla_visitors.replacement_traverse(
+                    key, {}, replace=replace_func
+                )
+                filt.append(mapped_expr)
+                merge += RelMerge(reflist)
             case pd.Series():
                 # Filtering via boolean Series.
                 series_name = token_hex(8)
