@@ -1,6 +1,6 @@
 """Abstract Python interface for SQL databases."""
 
-from collections.abc import Hashable, Iterable, Mapping, Sequence
+from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
 from functools import cache, cached_property, partial, reduce
 from io import BytesIO
@@ -79,10 +79,10 @@ IdxStartEnd: TypeAlias = tuple[Idx, *tuple[Any, ...], Idx2]
 IdxTupEnd: TypeAlias = tuple[*IdxTup, *tuple[Any], Idx2]
 
 RecInput: TypeAlias = (
-    DataFrame | Iterable[Rec] | Mapping[Idx, Rec] | sqla.Select[tuple[Rec]] | Rec
+    DataFrame | Iterable[Rec] | Mapping[Idx, Rec] | sqla.Select[tuple[Idx, Rec]] | Rec
 )
 ValInput: TypeAlias = (
-    Series | Iterable[Val] | Mapping[Idx, Val] | sqla.Select[tuple[Val]] | Val
+    Series | Iterable[Val] | Mapping[Idx, Val] | sqla.Select[tuple[Idx, Val]] | Val
 )
 
 
@@ -425,7 +425,49 @@ class DataBase(Generic[Name]):
             self._overlay_subs[key] = self._get_table(key)
 
         table = self._ensure_table_exists(self._get_table(key))
-        DataSet(self, table, selection=key)[:] = value
+        cols = list(table.c.keys())
+        table_fqn = str(table)
+
+        if isinstance(value, pd.DataFrame):
+            value.reset_index()[cols].to_sql(
+                table_fqn,
+                self.engine,
+                if_exists="replace",
+                index=False,
+            )
+        elif isinstance(value, pl.DataFrame):
+            value[cols].write_database(
+                table_fqn,
+                str(self.engine.url),
+                if_table_exists="replace",
+            )
+        elif isinstance(value, Iterable):
+            raise NotImplementedError(
+                "Assignment via Iterable of records not implemented yet."
+            )
+        elif isinstance(value, Record):
+            raise NotImplementedError(
+                "Assignment via single record instance not implemented yet."
+            )
+        else:
+            select = (
+                value
+                if isinstance(value, sqla.Select)
+                else sqla.select(value.base_table)
+            )
+
+            # Transfer table or query results to SQL table
+            with self.engine.begin() as con:
+                con.execute(sqla.delete(table))
+                con.execute(sqla.insert(table).from_select(table.c.keys(), select))
+
+    def __delitem__(self, key: type[Rec]) -> None:  # noqa: D105
+        if key not in self._overlay_subs:
+            self._overlay_subs[key] = self._get_table(key)
+
+        table = self._ensure_table_exists(self._get_table(key))
+        with self.engine.begin() as con:
+            table.drop(con)
 
     def dataset(
         self,
@@ -507,7 +549,9 @@ class DataBase(Generic[Name]):
 
         # Concat all node tables into one.
         node_dfs = [
-            n.load().reset_index().assign(table=n.record_type._default_table_name())
+            n.load(kind=pd.DataFrame)
+            .reset_index()
+            .assign(table=n.record_type._default_table_name())
             for n in node_tables
             if n.record_type is not None
         ]
@@ -698,8 +742,12 @@ class DataBase(Generic[Name]):
             self.backend.url.set(file)
 
 
-class DefaultIdx:
-    """Singleton to make dataset index via default index."""
+class BaseIdx:
+    """Singleton to mark dataset index as default index."""
+
+
+class FilteredIdx(BaseIdx):
+    """Singleton to mark dataset index as filtered default index."""
 
 
 @dataclass(frozen=True)
@@ -712,10 +760,13 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     selection: type[Rec_cov] | PropRef[Rec_cov, Any] | None = None
     merges: RelMerge = RelMerge()
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
-    index: AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | DefaultIdx | None = (
-        None
-    )
+    index: AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | BaseIdx | None = None
     attr: AttrRef[Rec_cov, Any] | None = None
+
+    @cached_property
+    def base_set(self) -> "DataSet[Name, Rec_cov, Idx_cov]":
+        """Base dataset for this dataset."""
+        return DataSet(self.db, self.base_table)
 
     @cached_property
     def record_type(self) -> type[Rec_cov] | None:
@@ -802,7 +853,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         """Optional, additional index of this dataset."""
         path = self.selection.path if isinstance(self.selection, PropRef) else []
 
-        if isinstance(self.index, DefaultIdx):
+        if isinstance(self.index, BaseIdx):
             path_idx = (
                 [
                     relref.rec_type._primary_keys()
@@ -831,7 +882,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: AttrRef[Rec_cov, Val],
     ) -> "DataSet[Name, Record[Val, None], Idx2]": ...
 
@@ -842,7 +893,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]", key: AttrRef[Any, Val]
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]", key: AttrRef[Any, Val]
     ) -> "DataSet[Name, Record[Val, None], IdxStart[Idx2]]": ...
 
     @overload
@@ -860,11 +911,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(
         self: "DataSet[Name, Rec, Any]",
         key: RelRef[Rec, Rec2, Keyless],
-    ) -> "DataSet[Name, Rec2, DefaultIdx]": ...
+    ) -> "DataSet[Name, Rec2, FilteredIdx]": ...
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: RelRef[Rec_cov, Rec2, Idx3],
     ) -> "DataSet[Name, Rec2, tuple[Idx2, Idx3]]": ...
 
@@ -887,7 +938,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: RelRef[Any, Rec2, Idx3],
     ) -> "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]]": ...
 
@@ -898,15 +949,15 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]", key: list[Idx2]
-    ) -> "DataSet[Name, Rec_cov, DefaultIdx]": ...
+        self: "DataSet[Name, Record[Val, Idx2], BaseIdx]", key: list[Idx2]
+    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
 
     @overload
     def __getitem__(self, key: list[Idx_cov]) -> Self: ...
 
     @overload
     def __getitem__(
-        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]", key: Idx2
+        self: "DataSet[Name, Record[Val, Idx2], BaseIdx]", key: Idx2
     ) -> "DataSet[Name, Rec_cov, None]": ...
 
     @overload
@@ -916,11 +967,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __getitem__(
+        self: "DataSet[Name, Rec_cov, BaseIdx]",
+        key: slice | tuple[slice | tuple[slice, ...], ...],
+    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
+
+    @overload
+    def __getitem__(
         self, key: slice | tuple[slice | tuple[slice, ...], ...]
     ) -> Self: ...
 
     @overload
     def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series[bool]) -> Self: ...
+
+    @overload
+    def __getitem__(
+        self: "DataSet[Name, Rec_cov, BaseIdx]",
+        key: sqla.ColumnElement[bool] | pd.Series[bool],
+    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
 
     def __getitem__(  # noqa: D105
         self,
@@ -935,49 +998,26 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | Series
         ),
     ) -> "DataSet":
-        sel, filt, idx, merge, query = self._parse_key(key)
+        sel, filt, single_idx, merge, query = self._parse_key(key)
 
         return DataSet(
             self.db,
             self.base_table,
-            query,
-            sel,
-            merge,
-            filt,
-            idx,
+            self.base_query if query is None else query,
+            sel if sel is not None else self.selection,
+            self.merges + merge,
+            self.filters + [filt] if filt is not None else self.filters,
+            None if single_idx else self.index,
         )
 
-    @overload
-    def load(self, merge: None = ..., kind: type[Dl] = ...) -> Dl: ...  # type: ignore
-
-    @overload
-    def load(self, merge: RelRef | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
-
-    @overload
-    def load(
-        self, merge: RelRef[Any, Rec, Any], kind: type[Record] = ...
-    ) -> Sequence[tuple[Rec_cov, Rec]]: ...
-
-    @overload
-    def load(
-        self, merge: RelMerge[*MergeTup], kind: type[Record] = ...
-    ) -> Sequence[tuple[Rec_cov, *MergeTup]]: ...
-
-    def load(
-        self,
-        merge: RelRef | RelMerge | None = None,
-        kind: type[Dl] = Record,
-    ) -> Dl | tuple[Dl, ...] | Sequence[tuple]:
-        """Download table selection."""
-        if issubclass(kind, Record):
-            raise NotImplementedError("Downloading record instances not supported yet.")
-
+    def _parse_merge(self, merge: RelRef | RelMerge | None) -> RelMerge:
+        """Parse merge argument and prefix with current selection."""
         merge = (
             merge
             if isinstance(merge, RelMerge)
             else RelMerge([merge]) if merge is not None else RelMerge()
         )
-        abs_merge = (
+        return (
             self.selection / merge
             if isinstance(self.selection, RelRef)
             else (
@@ -986,6 +1026,26 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 else merge
             )
         )
+
+    @overload
+    def select(self, merge: None = ...) -> sqla.Select[tuple[Rec_cov]]: ...
+
+    @overload
+    def select(
+        self, merge: RelRef[Any, Rec, Any]
+    ) -> sqla.Select[tuple[Rec_cov, Rec]]: ...
+
+    @overload
+    def select(
+        self, merge: RelMerge[*MergeTup]
+    ) -> sqla.Select[tuple[Rec_cov, *MergeTup]]: ...
+
+    def select(
+        self,
+        merge: RelRef | RelMerge | None = None,
+    ) -> sqla.Select:
+        """Return select statement for this dataset."""
+        abs_merge = self._parse_merge(merge)
 
         select = sqla.select(
             *(
@@ -1003,6 +1063,68 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         for filt in self.filters:
             select = select.where(filt)
 
+        return select
+
+    @overload
+    def load(
+        self: "DataSet[Name, Rec_cov, None]",
+        merge: None = ...,
+        kind: type[Record] = ...,
+    ) -> Rec_cov: ...
+
+    @overload
+    def load(
+        self: "DataSet[Name, Rec_cov, None]",
+        merge: RelRef[Any, Rec, Any],
+        kind: type[Record] = ...,
+    ) -> tuple[Rec_cov, Rec]: ...
+
+    @overload
+    def load(
+        self: "DataSet[Name, Rec_cov, None]",
+        merge: RelMerge[*MergeTup],
+        kind: type[Record] = ...,
+    ) -> tuple[Rec_cov, *MergeTup]: ...
+
+    @overload
+    def load(self, merge: None = ..., kind: type[Df] = ...) -> Df: ...  # type: ignore
+
+    @overload
+    def load(self, merge: RelRef | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
+
+    @overload
+    def load(
+        self, merge: None = ..., kind: type[Record] = ...
+    ) -> Sequence[Rec_cov]: ...
+
+    @overload
+    def load(
+        self, merge: RelRef[Any, Rec, Any], kind: type[Record] = ...
+    ) -> Sequence[tuple[Rec_cov, Rec]]: ...
+
+    @overload
+    def load(
+        self, merge: RelMerge[*MergeTup], kind: type[Record] = ...
+    ) -> Sequence[tuple[Rec_cov, *MergeTup]]: ...
+
+    def load(
+        self,
+        merge: RelRef | RelMerge | None = None,
+        kind: type[Record | Df] = Record,
+    ) -> (
+        Rec_cov
+        | tuple[Rec_cov, *tuple[Any, ...]]
+        | Df
+        | tuple[Df, ...]
+        | Sequence[Rec_cov | tuple[Rec_cov, *tuple[Any, ...]]]
+    ):
+        """Download table selection."""
+        if issubclass(kind, Record):
+            raise NotImplementedError("Downloading record instances not supported yet.")
+
+        abs_merge = self._parse_merge(merge)
+        select = self.select(merge)
+
         df = None
         if kind is pl.DataFrame:
             df = pl.read_database(select, self.db.engine)
@@ -1011,7 +1133,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 df = pd.read_sql(select, con)
 
         return cast(
-            tuple[Dl, ...],
+            tuple[Df, ...],
             tuple(
                 df[list(col for col in df.columns if col.startswith(relref.path_str))]
                 for relref in abs_merge.rels
@@ -1020,30 +1142,30 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Val, Idx2], BaseIdx]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx2], DefaultIdx] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx2], BaseIdx] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Rec_cov, Val],
-        value: "DataSet[Name, Record[Val, Idx], DefaultIdx] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, Idx], BaseIdx] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Val, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Val, Idx2], BaseIdx]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], DefaultIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | ValInput[Val, IdxStart[Idx2]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx2]], BaseIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx2]] | ValInput[Val, IdxStart[Idx2]]",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self: "DataSet[Name, Record[Val, Any], Idx]",
         key: AttrRef[Any, Val],
-        value: "DataSet[Name, Record[Val, IdxStart[Idx]], DefaultIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
+        value: "DataSet[Name, Record[Val, IdxStart[Idx]], BaseIdx] | DataSet[Name, Record[Val, Any], IdxStart[Idx]] | ValInput[Val, IdxStart[Idx]]",  # noqa: E501
     ) -> None: ...
 
     @overload
@@ -1057,12 +1179,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __setitem__(
         self: "DataSet[Name, Rec, Any]",
         key: RelRef[Rec, Rec2, Keyless],
-        value: "DataSet[Name, Rec2, DefaultIdx] | RecInput[Rec2, Any]",
+        value: "DataSet[Name, Rec2, BaseIdx] | RecInput[Rec2, Any]",
     ) -> None: ...
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: RelRef[Rec_cov, Rec2, Idx3],
         value: "DataSet[Name, Rec2, tuple[Idx2, Idx3]] | RecInput[Rec2, tuple[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
@@ -1083,7 +1205,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: RelRef[Any, Rec2, Idx3],
         value: "DataSet[Name, Rec2, IdxStartEnd[Idx2, Idx3]] | RecInput[Rec2, IdxStartEnd[Idx2, Idx3]]",  # noqa: E501
     ) -> None: ...
@@ -1104,16 +1226,16 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self: "DataSet[Name, Record[Any, Idx2], DefaultIdx]",
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: list[Idx2],
-        value: "DataSet[Name, Rec_cov, Idx2 | DefaultIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
+        value: "DataSet[Name, Rec_cov, Idx2 | BaseIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
     ) -> None: ...
 
     @overload
     def __setitem__(
         self,
         key: list[Idx_cov],
-        value: "DataSet[Name, Rec_cov, Idx | DefaultIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
+        value: "DataSet[Name, Rec_cov, Idx | BaseIdx] | Iterable[Rec_cov] | DataFrame",  # noqa: E501
     ) -> None: ...
 
     @overload
@@ -1138,9 +1260,16 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def __setitem__(
-        self,
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
         key: sqla.ColumnElement[bool] | pd.Series[bool],
-        value: Self | RecInput[Rec_cov, Any],
+        value: "DataSet[Name, Rec_cov, Idx2] | RecInput[Rec_cov, Idx2]",
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: "DataSet[Name, Rec, Idx]",
+        key: sqla.ColumnElement[bool] | pd.Series[bool],
+        value: "DataSet[Name, Rec, Idx] | RecInput[Rec, Idx]",
     ) -> None: ...
 
     def __setitem__(  # noqa: D105
@@ -1157,68 +1286,82 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         ),
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
     ) -> None:
-        sel, filt, idx, merge, query = self._parse_key(key)
+        sel, filt, single_idx, merge, query = self._parse_key(key)
 
-        if len(merge.rels) == 0 and len(filt) == 0 and query is None:
-            assert idx is not None, "no filters, so we should not have a single-record"
-            if isinstance(sel, AttrRef):
-                raise NotImplementedError("Attribute assignment not implemented yet")
+        if isinstance(key, list):
+            # Ensure that index is alignable.
 
-            cols = list(self.base_table.c.keys())
-            table_fqn = str(self.base_table)
+            if isinstance(value, Sized):
+                assert len(value) == len(key), "Length mismatch."
+
             if isinstance(value, pd.DataFrame):
-                value.reset_index()[cols].to_sql(
-                    table_fqn,
-                    self.db.engine,
-                    if_exists="replace",
-                    index=False,
-                )
-            elif isinstance(value, pl.DataFrame):
-                value[cols].write_database(
-                    table_fqn,
-                    str(self.db.engine.url),
-                    if_table_exists="replace",
-                )
-            elif isinstance(value, Iterable):
-                raise NotImplementedError(
-                    "Assignment via Iterable of records not implemented yet."
-                )
-            elif isinstance(value, Record):
-                raise NotImplementedError(
-                    "Assignment via single record instance not implemented yet."
-                )
-            else:
-                select = (
-                    value
-                    if isinstance(value, sqla.Select)
-                    else sqla.select(value.base_table)
-                )
+                assert set(value.index.to_list()) == set(key), "Index mismatch."
+            elif isinstance(value, Mapping):
+                assert set(value.keys()) == set(key), "Index mismatch."
 
-                # Transfer table or query results to SQL table
-                with self.db.engine.begin() as con:
-                    con.execute(sqla.delete(self.base_table))
-                    con.execute(
-                        sqla.insert(self.base_table).from_select(
-                            self.base_table.c.keys(), select
-                        )
-                    )
-        else:
-            raise NotImplementedError(
-                "Assignment outside top-level or with filters not supported yet."
-            )
+        # 1. Load data into a temporary table.
+        # 2. Inner-join current select statement with the temporary table.
+        # 3. Use update-from or correlated update to update the base table.
+        #    Update-from for Postgres, DuckDB, MySQL, and MariaDB: https://docs.sqlalchemy.org/en/20/tutorial/data_update.html#update-from
+        #    Correlated update for rest: https://docs.sqlalchemy.org/en/20/tutorial/data_update.html#correlated-updates
+        # 4. Drop the temporary table.
+
+    @overload
+    def __ilshift__(
+        self: "DataSet[Name, Rec_cov, FilteredIdx]",
+        value: None,
+    ) -> None: ...
+
+    @overload
+    def __ilshift__(
+        self: "DataSet[Name, Record[Val, Idx2], BaseIdx]",
+        value: "DataSet[Name, Record[Val, Idx2], BaseIdx] | DataSet[Name, Record[Val, Any], Idx2] | ValInput[Val, Idx2]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __ilshift__(
+        self: "DataSet[Name, Record[Val, Any], Idx]",
+        value: "DataSet[Name, Record[Val, Idx], BaseIdx] | DataSet[Name, Record[Val, Any], Idx] | ValInput[Val, Idx]",  # noqa: E501
+    ) -> None: ...
+
+    @overload
+    def __ilshift__(
+        self: "DataSet[Name, Record[Any, Idx2], BaseIdx]",
+        value: "DataSet[Name, Rec_cov, Idx2] | RecInput[Rec_cov, Idx2]",
+    ) -> None: ...
+
+    @overload
+    def __ilshift__(
+        self: "DataSet[Name, Rec, Idx]",
+        value: "DataSet[Name, Rec, Idx] | RecInput[Rec, Idx]",
+    ) -> None: ...
+
+    def __ilshift__(
+        self,
+        value: "DataSet | RecInput[Rec_cov, Any] | ValInput | None",
+    ) -> None:
+        """Merge update into unfiltered dataset."""
+        # Do an insert-from-select operation, which updates on conflict.
+        # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
+        # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
+        # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
+        raise NotImplementedError()
 
     def extract(
         self, aggs: Mapping[RelRef[Any, Rec, Any], Agg[Rec, Any]] | None = None
     ) -> DataBase[Name]:
         """Extract a new database from the current selection."""
+        # For now implement on-recursively.
+        # This means that given another table in the schema,
+        # joins along all direct routes from this selection to the table
+        # are performed. Their results are then unioned and distincted.
+        # Empty results are filtered out.
+        # Functionality to whitelist certain recursive loops can be added later.
         raise NotImplementedError()
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
-        # if self.selection is None:
-        #     raise ValueError("Only a selected DB can be used as a clause element.")
-        # return self.selection.subquery()
-        raise NotImplementedError()
+        return self.select().subquery()
 
     def _gen_idx_match_expr(
         self, values: Sequence[Sequence[slice | list[Hashable] | Hashable]]
@@ -1262,59 +1405,57 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         return None
 
-    def _parse_key(self, key: Any) -> tuple[
-        type[Rec_cov] | PropRef[Rec_cov, Any] | None,
-        list[sqla.ColumnElement[bool]],
-        AttrRef[Record, Any] | Iterable[AttrRef[Record, Any]] | DefaultIdx | None,
+    def _parse_key(
+        self,
+        key: (
+            AttrRef
+            | RelRef
+            | list[Hashable]
+            | Hashable
+            | slice
+            | tuple[slice | tuple[slice, ...], ...]
+            | sqla.ColumnElement[bool]
+            | Series
+        ),
+    ) -> tuple[
+        PropRef[Rec_cov, Any] | None,
+        sqla.ColumnElement[bool] | None,
+        bool,
         RelMerge,
         sqla.Select | None,
     ]:
-        sel = self.selection
-        filt = self.filters
-        idx = self.index
-        merge = self.merges
-        query = self.base_query
+        sel = None
+        filt = None
+        single_idx = self.index is None
+        merge = RelMerge()
+        query = None
 
         match key:
             case PropRef():
                 # Property selection.
-                if isinstance(sel, RelRef):
-                    sel /= key
-                else:
-                    if isinstance(sel, type):
-                        assert key.rec_type == sel
-                    sel = key
+                sel = key
                 merge += key if isinstance(key, RelRef) else key.parent or RelMerge()
             case tuple():
                 # Selection by tuple of index values.
                 values = [list(v) if isinstance(v, tuple) else [v] for v in key]
-                expr = self._gen_idx_match_expr(values)
-                if expr is not None:
-                    filt.append(expr)
-                if self._is_single_idx_type(values):
-                    idx = None
+                filt = self._gen_idx_match_expr(values)
+                single_idx = self._is_single_idx_type(values)
             case list() | slice():
                 # Selection by list or slice of index values.
-                expr = self._gen_idx_match_expr([[key]])
-                if expr is not None:
-                    filt.append(expr)
+                filt = self._gen_idx_match_expr([[key]])
             case Hashable():
                 # Selection by single index value.
-                expr = self._gen_idx_match_expr([[key]])
-                if expr is not None:
-                    filt.append(expr)
-                idx = None
+                filt = self._gen_idx_match_expr([[key]])
+                single_idx = True
             case sqla.ColumnElement():
                 # Filtering via SQL expression.
                 reflist = []
                 replace_func = partial(self._replace_attrref, reflist=reflist)
-                mapped_expr = sqla_visitors.replacement_traverse(
-                    key, {}, replace=replace_func
-                )
-                filt.append(mapped_expr)
+                filt = sqla_visitors.replacement_traverse(key, {}, replace=replace_func)
                 merge += RelMerge(reflist)
             case pd.Series():
                 # Filtering via boolean Series.
+
                 series_name = token_hex(8)
                 uploaded = self.db.dataset(key.rename(series_name).to_frame())
                 assert all(
@@ -1323,9 +1464,14 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                         key.index.names, self.base_table.primary_key.columns
                     )
                 )
-                filt.append(uploaded.base_table.c[series_name] == True)  # noqa: E712
+
+                filt = uploaded.base_table.c[series_name] == True  # noqa: E712
                 query = (
-                    (query if query is not None else sqla.select(self.base_table))
+                    (
+                        self.base_query
+                        if self.base_query is not None
+                        else sqla.select(self.base_table)
+                    )
                     .join(
                         uploaded,
                         reduce(
@@ -1341,4 +1487,4 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             case _:
                 raise TypeError("Unsupported key type.")
 
-        return sel, filt, idx, merge, query
+        return sel, filt, single_idx, merge, query

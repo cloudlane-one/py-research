@@ -412,7 +412,7 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
     """Index type."""
 
     @cached_property
-    def r(self) -> type[Rec2]:
+    def a(self) -> type[Rec2]:
         """Reference props of the target record type."""
         return cast(type[Rec2], type(token_hex(5), (self.val_type,), {"_rel": self}))
 
@@ -473,7 +473,7 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
 
     def __truediv__(self, other: PropRef[Rec2, Val]) -> PropRef[Rec2, Val]:
         """Append a prop to the relation path."""
-        return PropRef(rec_type=self.r, val_type=other.val_type)
+        return PropRef(rec_type=self.a, val_type=other.val_type)
 
 
 RelTree: TypeAlias = dict[RelRef, "RelTree"]
@@ -513,7 +513,7 @@ class RelMerge(Generic[*MergeTup]):
     def __rtruediv__(self, prefix: RelRef) -> "RelMerge[*MergeTup]":
         """Prepend a relref to the merge."""
         rels = [
-            reduce(lambda r1, r2: RelRef(r1.r, r2.val_type, r2.rel), rel.path, prefix)
+            reduce(lambda r1, r2: RelRef(r1.a, r2.val_type, r2.rel), rel.path, prefix)
             for rel in self.rels
         ]
         return RelMerge(rels)
