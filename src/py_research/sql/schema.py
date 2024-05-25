@@ -210,6 +210,7 @@ class Rel(Prop[Recs]):
         | tuple["RelRef", "RelRef"]
         | None
     ) = None
+    index_by: "AttrRef | None" = None
 
     _target: type["Record"] | None = None
 
@@ -352,10 +353,10 @@ class Rel(Prop[Recs]):
 
 
 @dataclass
-class PropRef(Generic[Rec_cov, Val]):
+class PropRef(Generic[Rec, Val]):
     """Reference to related record type, optionally indexed."""
 
-    rec_type: type[Rec_cov]
+    rec_type: type[Rec]
     val_type: type[Val]
 
     @staticmethod
@@ -380,12 +381,16 @@ class PropRef(Generic[Rec_cov, Val]):
             *([self] if isinstance(self, RelRef) else []),
         ]
 
+    def __rrshift__(self, left: type[Rec]) -> Self:
+        """Append a prop to the relation path."""
+        return cast(Self, PropRef(rec_type=left, val_type=self.val_type))
 
-class AttrRef(sqla.ColumnClause[Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Val]):
+
+class AttrRef(sqla.ColumnClause[Val], PropRef[Rec, Val], Generic[Rec, Val]):
     """Reference a property by its containing record type, name and value type."""
 
     def __init__(  # noqa: D107
-        self, rec_type: type[Rec_cov], name: str, val_type: type[Val]
+        self, rec_type: type[Rec], name: str, val_type: type[Val]
     ) -> None:
         self.rec_type = rec_type
         self.name = name
@@ -396,9 +401,15 @@ class AttrRef(sqla.ColumnClause[Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Va
             type_=self.record_type._table.c[self.name].type,
         )
 
-    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec_cov, Val2]":
+    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec, Val2]":
         """Specialize the value type of this attribute."""
         return AttrRef(rec_type=self.rec_type, name=self.name, val_type=value_type)
+
+    def __rrshift__(self, left: type[Rec]) -> Self:
+        """Append a prop to the relation path."""
+        return cast(
+            Self, AttrRef(rec_type=left, name=self.name, val_type=self.val_type)
+        )
 
 
 @dataclass
@@ -410,6 +421,23 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
 
     idx: type[Idx] | None = None
     """Index type."""
+
+    @cached_property
+    def idx_attr(self) -> AttrRef[Any, Idx] | None:
+        """Index attr."""
+        if self.idx is None:
+            return None
+
+        assert (
+            self.rel is not None
+            and self.rel.index_by is not None
+            and issubclass(self.rel.index_by.val_type, self.idx)
+        )
+        return (
+            self.parent >> self.rel.index_by
+            if self.parent is not None
+            else self.rel.index_by
+        )
 
     @cached_property
     def a(self) -> type[Rec2]:
@@ -461,19 +489,26 @@ class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
         return RelMerge([self]) + other
 
     @overload
-    def __truediv__(self, other: AttrRef[Rec2, Val]) -> AttrRef[Rec2, Val]: ...
+    def __rshift__(self, other: AttrRef[Rec2, Val]) -> AttrRef[Rec2, Val]: ...
 
     @overload
-    def __truediv__(
+    def __rshift__(
         self, other: "RelRef[Rec2, Rec3, Any]"
     ) -> "RelRef[Rec2, Rec3, Any]": ...
 
     @overload
-    def __truediv__(self, other: "PropRef[Rec2, Val]") -> "PropRef[Rec2, Val]": ...
+    def __rshift__(self, other: "PropRef[Rec2, Val]") -> "PropRef[Rec2, Val]": ...
 
-    def __truediv__(self, other: PropRef[Rec2, Val]) -> PropRef[Rec2, Val]:
+    def __rshift__(self, other: PropRef[Rec2, Val]) -> PropRef[Rec2, Val]:
         """Append a prop to the relation path."""
         return PropRef(rec_type=self.a, val_type=other.val_type)
+
+    def __rrshift__(self, left: type[Rec]) -> Self:
+        """Append a prop to the relation path."""
+        return cast(
+            Self,
+            RelRef(rec_type=left, val_type=self.val_type, rel=self.rel, idx=self.idx),
+        )
 
 
 RelTree: TypeAlias = dict[RelRef, "RelTree"]
@@ -510,7 +545,7 @@ class RelMerge(Generic[*MergeTup]):
         ), "Invalid relation merge."
         return RelMerge([*self.rels, *other.rels])
 
-    def __rtruediv__(self, prefix: RelRef) -> "RelMerge[*MergeTup]":
+    def __rrshift__(self, prefix: RelRef) -> "RelMerge[*MergeTup]":
         """Prepend a relref to the merge."""
         rels = [
             reduce(lambda r1, r2: RelRef(r1.a, r2.val_type, r2.rel), rel.path, prefix)
