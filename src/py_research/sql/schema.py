@@ -7,6 +7,7 @@ from itertools import groupby
 from secrets import token_hex
 from typing import (
     Any,
+    ClassVar,
     Generic,
     Self,
     TypeAlias,
@@ -27,7 +28,23 @@ from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import has_type, is_subtype
 
-Idx = TypeVar("Idx", bound="Hashable")
+
+class BaseIdx:
+    """Singleton to mark dataset index as default index."""
+
+    __hash__: ClassVar[None]  # type: ignore[assignment]
+
+
+class FilteredIdx(BaseIdx):
+    """Singleton to mark dataset index as filtered default index."""
+
+
+class SingleIdx(BaseIdx):
+    """Singleton to mark dataset index as a single value."""
+
+
+Idx = TypeVar("Idx", bound="Hashable | BaseIdx")
+Key = TypeVar("Key", bound=Hashable)
 
 Val = TypeVar("Val")
 Val2 = TypeVar("Val2")
@@ -57,10 +74,6 @@ def _extract_record_type(hint: Any) -> type["Record"]:
         return get_args(hint)[0]
 
     raise ValueError("Invalid record value.")
-
-
-class Keyless:
-    """Singleton to mark a plural relational prop as keyless."""
 
 
 @dataclass
@@ -112,12 +125,12 @@ class Prop(Generic[Val]):
     @overload
     def __get__(
         self: "Rel[Rec2]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, None]": ...
+    ) -> "RelRef[Rec, Rec2, SingleIdx]": ...
 
     @overload
     def __get__(
         self: "Rel[Iterable[Rec2]]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, Keyless]": ...
+    ) -> "RelRef[Rec, Rec2, BaseIdx]": ...
 
     @overload
     def __get__(
@@ -165,7 +178,7 @@ class Prop(Generic[Val]):
                 rec_type=owner,
                 val_type=_extract_record_type(self.value_type),
                 rel=self,
-                idx=Keyless,
+                idx=None,
             )
 
         if isinstance(self, Rel) and is_subtype(
@@ -612,10 +625,18 @@ class Record(Generic[Idx, Val]):
 
         return super().__init_subclass__()
 
+    @overload
+    @classmethod
+    def rel(cls, other: type[Rec], index: None = ...) -> RelRef[Self, Rec, BaseIdx]: ...
+
+    @overload
+    @classmethod
+    def rel(cls, other: type[Rec], index: type[Key]) -> RelRef[Self, Rec, Key]: ...
+
     @classmethod
     def rel(
-        cls, other: type[Rec], index: type[Idx] | None = None
-    ) -> RelRef[Self, Rec, Idx]:
+        cls, other: type[Rec], index: type[Key] | None = None
+    ) -> RelRef[Self, Rec, Key] | RelRef[Self, Rec, BaseIdx]:
         """Dynamically define a relation to another record type."""
         return RelRef(cls, other, idx=index)
 
