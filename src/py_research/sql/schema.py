@@ -35,10 +35,6 @@ class BaseIdx:
     __hash__: ClassVar[None]  # type: ignore[assignment]
 
 
-class FilteredIdx(BaseIdx):
-    """Singleton to mark dataset index as filtered default index."""
-
-
 class SingleIdx(BaseIdx):
     """Singleton to mark dataset index as a single value."""
 
@@ -750,7 +746,7 @@ class a(Record, metaclass=DynRecordMeta):  # noqa: N801
 
 
 @dataclass(frozen=True)
-class AttrMap(Generic[Rec, Val]):
+class DynAttrMap(Generic[Rec, Val]):
     """Map an attribute to a function."""
 
     attr: AttrRef[Rec, Val]
@@ -763,4 +759,4 @@ class Agg(Generic[Rec, Rec2]):
 
     base_type: type[Rec]
     target_type: type[Rec2]
-    attrs: set[AttrMap[Rec2, Any]]
+    attrs: set[DynAttrMap[Rec2, Any]]

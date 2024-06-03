@@ -18,9 +18,12 @@ from typing import (
     overload,
 )
 
+import openpyxl
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
+import sqlalchemy.dialects.mysql as mysql
+import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
 from cloudpathlib import CloudPath
@@ -40,7 +43,6 @@ from py_research.sql.schema import (
     Agg,
     AttrRef,
     BaseIdx,
-    FilteredIdx,
     Idx,
     Key,
     MergeTup,
@@ -150,11 +152,13 @@ class Backend(Generic[Name]):
     name: Name
     """Unique name to identify this backend by."""
 
-    url: sqla.URL | CloudPath | HttpFile | Path
+    url: sqla.URL | CloudPath | HttpFile | Path | None = None
     """Connection URL or path."""
 
     @cached_property
-    def type(self) -> Literal["sql-connection", "sqlite-file", "excel-file"]:
+    def type(
+        self,
+    ) -> Literal["sql-connection", "sqlite-file", "excel-file", "in-memory"]:
         """Type of the backend."""
         match self.url:
             case Path() | CloudPath():
@@ -175,6 +179,8 @@ class Backend(Generic[Name]):
                 if typ is None:
                     raise ValueError(f"Unsupported URL scheme: {url.scheme}")
                 return typ
+            case None:
+                return "in-memory"
 
 
 @dataclass(frozen=True)
@@ -414,6 +420,8 @@ class DataBase(Generic[Name]):
 
     def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
         """Return the dataset for given record type."""
+        if self.backend.type == "excel-file":
+            self._load_from_excel([key])
         table = self._get_table(key)
         return DataSet(self, table, selection=key)
 
@@ -422,6 +430,9 @@ class DataBase(Generic[Name]):
         key: type[Rec],
         value: "DataSet[Name, Rec, Key] | RecInput[Rec, Key] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
+        if self.backend.type == "excel-file":
+            self._load_from_excel([key])
+
         if key not in self._overlay_subs:
             self._overlay_subs[key] = self._get_table(key)
 
@@ -451,16 +462,15 @@ class DataBase(Generic[Name]):
                 "Assignment via single record instance not implemented yet."
             )
         else:
-            select = (
-                value
-                if isinstance(value, sqla.Select)
-                else sqla.select(value.base_table)
-            )
+            select = value if isinstance(value, sqla.Select) else value.select()
 
             # Transfer table or query results to SQL table
             with self.engine.begin() as con:
                 con.execute(sqla.delete(table))
                 con.execute(sqla.insert(table).from_select(table.c.keys(), select))
+
+        if self.backend.type == "excel-file":
+            self._save_to_excel([key])
 
     def __delitem__(self, key: type[Rec]) -> None:  # noqa: D105
         if key not in self._overlay_subs:
@@ -469,6 +479,23 @@ class DataBase(Generic[Name]):
         table = self._ensure_table_exists(self._get_table(key))
         with self.engine.begin() as con:
             table.drop(con)
+
+        if self.backend.type == "excel-file":
+            self._delete_from_excel([key])
+
+    def __or__(self, other: "DataBase[Name]") -> "DataBase[Name]":
+        """Merge two databases."""
+        new_db = DataBase(
+            self.backend,
+            create_cross_fk=self.create_cross_fk,
+            validate_on_init=False,
+            overlay=token_hex(5),
+        )
+
+        for rec in self.record_types | other.record_types:
+            new_db[rec] = self[rec] | other[rec]
+
+        return new_db
 
     def dataset(
         self,
@@ -526,13 +553,10 @@ class DataBase(Generic[Name]):
             validate_on_init=False,
         )
 
-        if self.backend.type == "excel-file":
-            self._load_from_excel()
-
         for rec in self.record_types:
             ds = self[rec]
             ds.load(kind=pl.DataFrame).write_database(
-                str(ds.base_table), str(other_db.backend.url)
+                str(ds.base), str(other_db.backend.url)
             )
 
         return other_db
@@ -720,8 +744,10 @@ class DataBase(Generic[Name]):
                     file, sheet_name=rec._default_table_name()
                 ).write_database(str(self._get_table(rec)), str(self.engine.url))
 
-    def _save_to_excel(self, record_types: Iterable[type[Record]] | None) -> None:
-        """Save all tables to Excel."""
+    def _save_to_excel(
+        self, record_types: Iterable[type[Record]] | None = None
+    ) -> None:
+        """Save all (or selected) tables to Excel."""
         assert self.backend.type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
 
@@ -742,7 +768,27 @@ class DataBase(Generic[Name]):
             assert isinstance(file, BytesIO)
             self.backend.url.set(file)
 
+    def _delete_from_excel(self, record_types: Iterable[type[Record]]) -> None:
+        """Delete selected table from Excel."""
+        assert self.backend.type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.backend.url, Path | CloudPath | HttpFile)
 
+        file = (
+            BytesIO()
+            if isinstance(self.backend.url, HttpFile)
+            else self.backend.url.open("wb")
+        )
+
+        wb = openpyxl.load_workbook(file)
+        for rec in record_types or self.record_types:
+            del wb[rec._default_table_name()]
+
+        if isinstance(self.backend.url, HttpFile):
+            assert isinstance(file, BytesIO)
+            self.backend.url.set(file)
+
+
+Union: TypeAlias = sqla.FromClause
 Join: TypeAlias = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
 
 
@@ -751,8 +797,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     """Dataset selection."""
 
     db: DataBase[Name]
-    base_table: sqla.Table
-    base_joins: list[Join] = field(default_factory=list)
+    base: sqla.FromClause
     selection: type[Rec_cov] | PropRef[Rec_cov, Any] | None = None
     merges: RelMerge = RelMerge()
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
@@ -763,81 +808,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     @cached_property
     def base_set(self) -> "DataSet[Name, Rec_cov, Idx_cov]":
         """Base dataset for this dataset."""
-        return DataSet(self.db, self.base_table)
-
-    def _get_alias(self, relref: RelRef) -> sqla.FromClause:
-        """Get alias for a relation reference."""
-        return self.db._get_table(relref.val_type).alias(gen_str_hash(relref, 8))
-
-    def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
-        """Get random alias for a type."""
-        return self.db._get_table(rec).alias(token_hex(4))
-
-    def _joins_from_tree(self, tree: RelTree) -> list[Join]:
-        """Extract join operations from a relation tree."""
-        joins = []
-
-        for r, subtree in tree.items():
-            parent = (
-                self._get_alias(r.parent) if r.parent is not None else self.base_table
-            )
-
-            inter_alias_map = {
-                rec: self._get_random_alias(rec) for rec in r.inter_joins.keys()
-            }
-
-            joins.extend(
-                (
-                    inter_alias_map[rec],
-                    reduce(
-                        sqla.or_,
-                        (
-                            reduce(
-                                sqla.and_,
-                                (
-                                    parent.c[lk.name] == inter_alias_map[rec].c[rk.name]
-                                    for lk, rk in inter_join_on.items()
-                                ),
-                            )
-                            for inter_join_on in inter_join_ons
-                        ),
-                    ),
-                )
-                for rec, inter_join_ons in r.inter_joins.items()
-            )
-
-            target_table = self._get_alias(r)
-
-            joins.append(
-                (
-                    target_table,
-                    reduce(
-                        sqla.or_,
-                        (
-                            reduce(
-                                sqla.and_,
-                                (
-                                    inter_alias_map[lk.rec_type].c[lk.name]
-                                    == target_table.c[rk.name]
-                                    for lk, rk in join_on.items()
-                                ),
-                            )
-                            for join_on in r.join_ons
-                        ),
-                    ),
-                )
-            )
-
-            joins.extend(self._joins_from_tree(subtree))
-
-        return joins
-
-    def joins(self, extra_merges: RelMerge = RelMerge()) -> list[Join]:
-        """List of all join operations required to construct this tree."""
-        return [
-            *self.base_joins,
-            *self._joins_from_tree((self.merges + extra_merges).rel_tree),
-        ]
+        return DataSet(self.db, self.base)
 
     @cached_property
     def main_idx(self) -> list[AttrRef[Rec_cov, Any]] | None:
@@ -898,7 +869,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(
         self: "DataSet[Name, Record[Any, Key2], Key | BaseIdx]",
         key: RelRef[Rec_cov, Rec2, BaseIdx],
-    ) -> "DataSet[Name, Rec2, FilteredIdx]": ...
+    ) -> "DataSet[Name, Rec2, BaseIdx]": ...
 
     # 6. Top-level relation selection, indexed, tuple case
     @overload
@@ -929,49 +900,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         self: "DataSet[Name, Record[Any, Key2], Key]", key: RelRef[Any, Rec2, Key3]
     ) -> "DataSet[Name, Rec2, IdxStartEnd[Key | Key2, Key3]]": ...
 
-    # Overloads: index list selection:
-
-    # 10. List selection, mark base index as filtered
-    @overload
-    def __getitem__(
-        self: "DataSet[Name, Record[Val, Key2], BaseIdx]", key: list[Key2]
-    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
-
-    # 11. List selection, keep index
+    # 10. List selection, keep index
     @overload
     def __getitem__(
         self: "DataSet[Name, Record[Val, Key2], Key]", key: list[Key | Key2]
     ) -> "DataSet[Name, Rec_cov, Key]": ...
 
-    # 12. Index value selection:
+    # 11. Index value selection
     @overload
     def __getitem__(
         self: "DataSet[Name, Record[Val, Key2], Key]", key: Key | Key2
     ) -> "DataSet[Name, Rec_cov, SingleIdx]": ...
 
-    # Overloads: index slice selection:
-
-    # 13. Slice selection, mark base index as filtered
-    @overload
-    def __getitem__(
-        self: "DataSet[Name, Rec_cov, BaseIdx]",
-        key: slice | tuple[slice, ...],
-    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
-
-    # 14. Slice selection, keep index
+    # 12. Slice selection, keep index
     @overload
     def __getitem__(self, key: slice | tuple[slice, ...]) -> Self: ...
 
-    # Overloads: filtering:
-
-    # 15. Expression filtering, mark base index as filtered
-    @overload
-    def __getitem__(
-        self: "DataSet[Name, Rec_cov, BaseIdx]",
-        key: sqla.ColumnElement[bool] | pd.Series[bool],
-    ) -> "DataSet[Name, Rec_cov, FilteredIdx]": ...
-
-    # 16. Expression filtering, keep index
+    # 13. Expression filtering, keep index
     @overload
     def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series[bool]) -> Self: ...
 
@@ -1008,8 +953,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         return DataSet(
             self.db,
-            self.base_table,
-            self.base_joins + [join] if isinstance(join, tuple) else self.base_joins,
+            self.base.join(*join) if isinstance(join, tuple) else self.base,
             (
                 self.selection >> key
                 if isinstance(self.selection, type | RelRef)
@@ -1019,23 +963,6 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             self.merges + join if isinstance(join, RelMerge) else self.merges,
             self.filters + [filt] if filt is not None else self.filters,
             keys if keys is not None else self.keys,
-        )
-
-    def _parse_merge(self, merge: RelRef | RelMerge | None) -> RelMerge:
-        """Parse merge argument and prefix with current selection."""
-        merge = (
-            merge
-            if isinstance(merge, RelMerge)
-            else RelMerge([merge]) if merge is not None else RelMerge()
-        )
-        return (
-            self.selection >> merge
-            if isinstance(self.selection, RelRef)
-            else (
-                self.selection.path[-1] >> merge
-                if isinstance(self.selection, PropRef)
-                else merge
-            )
         )
 
     @overload
@@ -1081,13 +1008,13 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                         .c[pk.name]
                         .label(f"{relref.path_str}.{pk.name}")
                         for relref in abs_merge.rels
-                        for pk in self.base_table.primary_key.columns
+                        for pk in self.base.primary_key
                     )
                 )
             )
-        ).select_from(self.base_table)
+        ).select_from(self.base)
 
-        for join in self.joins(extra_merges=abs_merge):
+        for join in self._joins_from_tree(self.merges.rel_tree):
             select = select.join(*join)
 
         for filt in self.filters:
@@ -1169,82 +1096,6 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 for relref in abs_merge.rels
             ),
         )
-
-    def _set(  # noqa: D105
-        self,
-        value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
-    ) -> None:
-        # Load data into a temporary table, if vectorized.
-        upload_df = (
-            value
-            if isinstance(value, DataFrame)
-            else (
-                (value if isinstance(value, pd.Series) else pd.Series(dict(value)))
-                .rename("_value")
-                .to_frame()
-                if isinstance(value, Mapping | pd.Series)
-                else None
-            )
-        )
-        value_set = (
-            self.db.dataset(upload_df)
-            if upload_df is not None
-            else (
-                self.db.dataset(value)
-                if isinstance(value, sqla.Select)
-                else value if isinstance(value, DataSet) else None
-            )
-        )
-
-        # Derive current select statement and join with value table, if exists.
-        select = self.select()
-        if value_set is not None:
-            select = select.join(
-                value_set.base_table,
-                reduce(
-                    sqla.and_,
-                    (
-                        idx_col == self.base_table.c[idx_col.name]
-                        for idx_col in value_set.base_table.primary_key.columns
-                    ),
-                ),
-            )
-
-        single_attr = (
-            self.selection.name if isinstance(self.selection, AttrRef) else None
-        )
-
-        # Prepare update statement.
-        if self.db.engine.dialect.name in ("postgresql", "duckdb", "mysql", "mariadb"):
-            # Update-from.
-            update_stmt = (
-                self.base_table.update()
-                .values(
-                    {col.name: col for col in value_set.base_table.columns}
-                    if value_set is not None
-                    else {single_attr: value}
-                )
-                .where(
-                    reduce(
-                        sqla.and_,
-                        (
-                            self.base_table.c[col.name] == select.c[col.name]
-                            for col in self.base_table.primary_key.columns
-                        ),
-                    )
-                )
-            )
-        else:
-            # Correlated update.
-            raise NotImplementedError("Correlated update not supported yet.")
-
-        # Execute update statement.
-        with self.db.engine.begin() as con:
-            con.execute(update_stmt)
-
-        # 4. Drop the temporary table, if any.
-        if value_set is not None:
-            value_set.base_table.drop(self.db.engine)
 
     # 1. Top-level attribute assignment
     @overload
@@ -1380,13 +1231,6 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         ),
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
     ) -> None:
-        if (
-            has_type(value, Record)
-            or has_type(value, Iterable[Record])
-            or has_type(value, Mapping[Any, Record])
-        ):
-            raise NotImplementedError("Inserting record instances not supported yet.")
-
         if isinstance(key, list):
             # Ensure that index is alignable.
 
@@ -1400,50 +1244,118 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         cast(Self, self[key])._set(value)  # type: ignore
 
-    @overload
     def __ilshift__(
-        self: "DataSet[Name, Rec_cov, FilteredIdx | Key]",
-        value: None,  # Insertion not allowed for filtered or relational indexes.
-    ) -> None: ...
-
-    @overload
-    def __ilshift__(
-        self: "DataSet[Name, Record[Any, Key2], Key | BaseIdx]",
-        value: "DataSet[Name, Rec_cov, Key | BaseIdx] | RecInput[Rec_cov, Key | Key2]",
-    ) -> None: ...
-
-    @overload
-    def __ilshift__(
-        self: "DataSet[Name, Record[Val, Key2], Key | BaseIdx]",
-        value: "DataSet[Name, Record[Val, Key | Key2], BaseIdx] | DataSet[Name, Record[Val, Any], Key | Key2] | ValInput[Val, Key | Key2]",  # noqa: E501
-    ) -> None: ...
-
-    def __ilshift__(
-        self,
-        value: "DataSet | RecInput[Rec_cov, Any] | ValInput | None",
+        self: "DataSet[Name, Record[Any, Key2], BaseIdx]",
+        value: "DataSet[Name, Rec_cov, Key2 | BaseIdx] | RecInput[Rec_cov, Key2]",
     ) -> None:
         """Merge update into unfiltered dataset."""
-        # Do an insert-from-select operation, which updates on conflict.
-        # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
-        # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
-        # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
-        raise NotImplementedError()
+        self._set(value, insert=True)
+
+    def __or__(
+        self, other: "DataSet[Name, Rec_cov, Idx]"
+    ) -> "DataSet[Name, Rec_cov, Idx_cov | Idx]":
+        """Union two datasets."""
+        return DataSet(self.db, sqla.union(self.select(), other.select()).subquery())
 
     def extract(
         self, aggs: Mapping[RelRef[Any, Rec, Any], Agg[Rec, Any]] | None = None
     ) -> DataBase[Name]:
-        """Extract a new database from the current selection."""
+        """Extract a new database instance from the current selection."""
         # For now implement non-recursively.
-        # This means that given another table in the schema,
-        # joins along all direct routes from this selection to the table
-        # are performed. Their results are then unioned and distincted.
-        # Empty results are filtered out.
         # Functionality to whitelist certain recursive loops can be added later.
+        # Implementation:
+        # 1. Get all tables in the schema.
+        # 2. For each table, get all direct routes from the selection to that table.
+        # 3. For each table, create a union of all results from the direct routes.
+        # 4. For all tables with no routes, create an empty overlay table.
+        # 5. Create a new database overlay with the results.
         raise NotImplementedError()
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
         return self.select().subquery()
+
+    def _get_alias(self, relref: RelRef) -> sqla.FromClause:
+        """Get alias for a relation reference."""
+        return self.db._get_table(relref.val_type).alias(gen_str_hash(relref, 8))
+
+    def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
+        """Get random alias for a type."""
+        return self.db._get_table(rec).alias(token_hex(4))
+
+    def _joins_from_tree(self, tree: RelTree) -> list[Join]:
+        """Extract join operations from a relation tree."""
+        joins = []
+
+        for r, subtree in tree.items():
+            parent = self._get_alias(r.parent) if r.parent is not None else self.base
+
+            inter_alias_map = {
+                rec: self._get_random_alias(rec) for rec in r.inter_joins.keys()
+            }
+
+            joins.extend(
+                (
+                    inter_alias_map[rec],
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    parent.c[lk.name] == inter_alias_map[rec].c[rk.name]
+                                    for lk, rk in inter_join_on.items()
+                                ),
+                            )
+                            for inter_join_on in inter_join_ons
+                        ),
+                    ),
+                )
+                for rec, inter_join_ons in r.inter_joins.items()
+            )
+
+            target_table = self._get_alias(r)
+
+            joins.append(
+                (
+                    target_table,
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    inter_alias_map[lk.rec_type].c[lk.name]
+                                    == target_table.c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in r.join_ons
+                        ),
+                    ),
+                )
+            )
+
+            joins.extend(self._joins_from_tree(subtree))
+
+        return joins
+
+    def _parse_merge(self, merge: RelRef | RelMerge | None) -> RelMerge:
+        """Parse merge argument and prefix with current selection."""
+        merge = (
+            merge
+            if isinstance(merge, RelMerge)
+            else RelMerge([merge]) if merge is not None else RelMerge()
+        )
+        return (
+            self.selection >> merge
+            if isinstance(self.selection, RelRef)
+            else (
+                self.selection.path[-1] >> merge
+                if isinstance(self.selection, PropRef)
+                else merge
+            )
+        )
 
     def _gen_idx_match_expr(
         self,
@@ -1514,22 +1426,144 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 series_name = token_hex(8)
                 uploaded = self.db.dataset(key.rename(series_name).to_frame())
                 assert all(
-                    n1 == n2
-                    for n1, n2 in zip(
-                        key.index.names, self.base_table.primary_key.columns
-                    )
+                    n1 == n2 for n1, n2 in zip(key.index.names, self.base.primary_key)
                 )
 
-                filt = uploaded.base_table.c[series_name] == True  # noqa: E712
+                filt = uploaded.base.c[series_name] == True  # noqa: E712
                 join = (
-                    uploaded.base_table,
+                    uploaded.base,
                     reduce(
                         sqla.and_,
                         (
-                            self.base_table.c[pk] == uploaded.base_table.c[pk]
+                            self.base.c[pk] == uploaded.base.c[pk]
                             for pk in key.index.names
                         ),
                     ),
                 )
 
         return filt, join or merge
+
+    def _set(  # noqa: D105
+        self,
+        value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
+        insert: bool = False,
+    ) -> None:
+        if (
+            has_type(value, Record)
+            or has_type(value, Iterable[Record])
+            or has_type(value, Mapping[Any, Record])
+        ):
+            raise NotImplementedError(
+                "Inserting / updating via record instances not supported yet."
+            )
+
+        # Load data into a temporary table, if vectorized.
+        upload_df = (
+            value
+            if isinstance(value, DataFrame)
+            else (
+                (value if isinstance(value, pd.Series) else pd.Series(dict(value)))
+                .rename("_value")
+                .to_frame()
+                if isinstance(value, Mapping | pd.Series)
+                else None
+            )
+        )
+        value_set = (
+            self.db.dataset(upload_df)
+            if upload_df is not None
+            else (
+                self.db.dataset(value)
+                if isinstance(value, sqla.Select)
+                else value if isinstance(value, DataSet) else None
+            )
+        )
+
+        # Construct the insert / update statement.
+        if insert:
+            assert (
+                isinstance(self.selection, Record)
+                and isinstance(self.base, sqla.Table)
+                and len(self.filters) == 0
+            ), "Can only upsert into unfiltered base datasets."
+            assert value_set is not None
+
+            # Do an insert-from-select operation, which updates on conflict:
+            statement = self.base.insert().from_select(
+                [col.name for col in self.base.columns],
+                value_set.select().subquery(),
+            )
+
+            if isinstance(statement, postgresql.Insert):
+                # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
+                statement = statement.on_conflict_do_update(
+                    index_elements=[col.name for col in self.base.primary_key.columns],
+                    set_=dict(statement.excluded),
+                )
+            elif isinstance(statement, mysql.Insert):
+                # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
+                statement = statement.prefix_with("INSERT INTO")
+                statement = statement.on_duplicate_key_update(**statement.inserted)
+            else:
+                # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
+                raise NotImplementedError(
+                    "Upsert not supported for this database dialect."
+                )
+        else:
+            assert isinstance(self.base, sqla.Table), "Base must be a table."
+
+            # Derive current select statement and join with value table, if exists.
+            select = self.select()
+            if value_set is not None:
+                select = select.join(
+                    value_set.base,
+                    reduce(
+                        sqla.and_,
+                        (
+                            idx_col == self.base.c[idx_col.name]
+                            for idx_col in value_set.base.primary_key
+                        ),
+                    ),
+                )
+
+            selected_attr = (
+                self.selection.name if isinstance(self.selection, AttrRef) else None
+            )
+
+            # Prepare update statement.
+            if self.db.engine.dialect.name in (
+                "postgres",
+                "postgresql",
+                "duckdb",
+                "mysql",
+                "mariadb",
+            ):
+                # Update-from.
+                statement = (
+                    self.base.update()
+                    .values(
+                        {col.name: col for col in value_set.base.columns}
+                        if value_set is not None
+                        else {selected_attr: value}
+                    )
+                    .where(
+                        reduce(
+                            sqla.and_,
+                            (
+                                self.base.c[col.name] == select.c[col.name]
+                                for col in self.base.primary_key.columns
+                            ),
+                        )
+                    )
+                )
+            else:
+                # Correlated update.
+                raise NotImplementedError("Correlated update not supported yet.")
+
+        # Execute insert / update statement.
+        with self.db.engine.begin() as con:
+            con.execute(statement)
+
+        # Drop the temporary table, if any.
+        if value_set is not None:
+            cast(sqla.Table, value_set.base).drop(self.db.engine)
