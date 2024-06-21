@@ -1,14 +1,14 @@
 """Static schemas for SQL databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from functools import cached_property, reduce
-from itertools import groupby
 from secrets import token_hex
 from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Self,
     TypeAlias,
     TypeVar,
@@ -22,11 +22,13 @@ from typing import (
 
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
+import sqlalchemy.sql.type_api as sqla_types
 from bidict import bidict
 
+from py_research.hashing import gen_int_hash
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
-from py_research.reflect.types import has_type, is_subtype
+from py_research.reflect.types import has_type
 
 
 class BaseIdx:
@@ -72,8 +74,8 @@ def _extract_record_type(hint: Any) -> type["Record"]:
     raise ValueError("Invalid record value.")
 
 
-@dataclass
-class Prop(Generic[Val]):
+@dataclass(kw_only=True, eq=False)
+class Prop(Generic[Rec, Val]):
     """Define property of a record."""
 
     primary_key: bool = False
@@ -115,132 +117,162 @@ class Prop(Generic[Val]):
 
     @overload
     def __get__(
-        self: "Attr[Val]", instance: None, owner: type[Rec]
-    ) -> "AttrRef[Rec, Val]": ...
+        self: "Attr[Any, Val]", instance: None, owner: type[Rec]
+    ) -> "Attr[Rec, Val]": ...
 
     @overload
     def __get__(
-        self: "Rel[Rec2]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, SingleIdx]": ...
+        self: "Rel[Any, Rec2, Any]", instance: None, owner: type[Rec]
+    ) -> "Rel[Rec, Rec2, Rec2]": ...
 
     @overload
     def __get__(
-        self: "Rel[Iterable[Rec2]]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, BaseIdx]": ...
+        self: "Rel[Any, Iterable[Rec2], Any]", instance: None, owner: type[Rec]
+    ) -> "Rel[Rec, Iterable[Rec2], Rec2]": ...
 
     @overload
     def __get__(
-        self: "Rel[Sequence[Rec2]]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, int]": ...
+        self: "Rel[Any, Sequence[Rec2], Any]", instance: None, owner: type[Rec]
+    ) -> "Rel[Rec, Sequence[Rec2], Rec2]": ...
 
     @overload
     def __get__(
-        self: "Rel[Mapping[Idx, Rec2]]", instance: None, owner: type[Rec]
-    ) -> "RelRef[Rec, Rec2, Idx]": ...
+        self: "Rel[Any, Mapping[Idx, Rec2], Any]", instance: None, owner: type[Rec]
+    ) -> "Rel[Rec, Mapping[Idx, Rec2], Rec2]": ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
 
     def __get__(  # noqa: D105
-        self, instance: "object | None", owner: type[Rec] | None
-    ) -> "Val | AttrRef[Rec, Val] | type[Record] | RelRef | Self":
-        if owner is None or not issubclass(owner, Record):
-            return self
+        self, instance: "object | None", owner: type["Record"] | None
+    ) -> "Val | Attr | type[Record] | Rel | Self":
+        if owner is not None:
+            self._record_type = owner
+            self._value_type = owner._value_types[self.name]
 
         if instance is not None:
             return self.value
 
-        if isinstance(self, Attr):
-            return cast(AttrRef[Rec, Val], owner._all_attrs()[self.name])
-
-        if has_type(self, Rel[Record]):
-            return RelRef(
-                rec_type=owner,
-                val_type=_extract_record_type(self.value_type),
-                rel=self,
-                idx=None,
-            )
-
-        if has_type(self, Rel[Sequence[Record]]):
-            return RelRef(
-                rec_type=owner,
-                val_type=_extract_record_type(self.value_type),
-                rel=self,
-                idx=int,
-            )
-
-        if has_type(self, Rel[Iterable[Record]]):
-            return RelRef(
-                rec_type=owner,
-                val_type=_extract_record_type(self.value_type),
-                rel=self,
-                idx=None,
-            )
-
-        if isinstance(self, Rel) and is_subtype(
-            self.value_type, Mapping[Hashable, Record]
-        ):
-            return RelRef(
-                rec_type=owner,
-                val_type=_extract_record_type(self.value_type),
-                rel=self,
-                idx=None,
-            )
-
-        raise NotImplementedError()
+        return self
 
     def __set__(self, instance: "Record", value: Val) -> None:
         """Set the value of the property."""
         self._value = value
 
+    @staticmethod
+    def get_tag(rec_type: type["Record"]) -> "Rel | None":
+        """Retrieve relation-tag of a record type, if any."""
+        try:
+            rel = getattr(rec_type, "_rel")
+            return rel if isinstance(rel, Rel) else None
+        except AttributeError:
+            return None
 
-@dataclass
-class Attr(Prop[Val]):
+    @cached_property
+    def parent(self) -> "Rel | None":
+        """Parent relation of this Rel."""
+        return self.get_tag(self.record_type)
+
+    @cached_property
+    def path(self) -> list["Rel"]:
+        """Path from base record type to this Rel."""
+        return [
+            *(self.parent.path if self.parent is not None else []),
+            *([self] if isinstance(self, Rel) else []),
+        ]
+
+    def __rrshift__(self, left: "type[Record] | Rel") -> Self:
+        """Append a prop to the relation path."""
+        current_root = self.path[0]
+        new_root = left if isinstance(left, Rel) else left.rel(current_root.record_type)
+
+        prefixed_rel = reduce(
+            lambda r1, r2: cast(Rel, getattr(r1.a, r2.name)), self.path, new_root
+        )
+
+        return cast(
+            Self,
+            (
+                prefixed_rel
+                if isinstance(self, Rel)
+                else getattr(prefixed_rel.a, self.name)
+            ),
+        )
+
+    def __hash__(self) -> int:
+        """Hash the Prop."""
+        return gen_int_hash(self)
+
+
+@dataclass(kw_only=True, eq=False)
+class Attr(Prop[Rec, Val], sqla.ColumnClause[Val]):
     """Define attribute of a record."""
 
     attr_name: str | None = None
 
+    def __post_init__(self) -> None:  # noqa: D105
+        # Initialize fields required by SQLAlchemy superclass.
+        self.table = None
+        self.is_literal = False
+
+    # Replace fields of SQLAlchemy superclass with properties:
+
     @property
     def name(self) -> str:
         """Column name."""
-        return self.attr_name or super().name
+        assert self._name is not None, "Prop name not set."
+        return self.attr_name or self._name
+
+    @property
+    def key(self) -> str:
+        """Column key."""
+        return self.name
+
+    @cached_property
+    def type(self) -> sqla_types.TypeEngine:
+        """Column key."""
+        return sqla_types.to_instance(self._value_type)  # type: ignore
 
 
 @dataclass
-class Rel(Prop[Recs]):
+class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
     """Define relation to another record."""
 
     via: (
         Attr
         | Iterable[Attr]
-        | dict[Attr, "AttrRef"]
+        | dict[Attr, "Attr"]
         | type["Record"]
-        | "RelRef"
-        | tuple["RelRef", "RelRef"]
+        | "Rel"
+        | tuple["Rel", "Rel"]
         | None
     ) = None
-    index_by: "AttrRef | None" = None
+    index_by: "Attr | None" = None
 
-    _target: type["Record"] | None = None
+    _target_type: type["Record"] | None = None
 
     @cached_property
     def target_type(self) -> type["Record"]:
         """Target record type."""
-        assert self._target is not None, "Target record type not set."
-        return self._target
+        assert self._target_type is not None, "Target record type not set."
+        return self._target_type
 
     @cached_property
-    def fk_map(self) -> bidict["AttrRef", "AttrRef"]:
+    def fk_map(self) -> bidict["Attr", "Attr"]:
         """Map source foreign keys to target attrs."""
         target = self.target_type
 
         match self.via:
-            case type() | RelRef() | tuple():
+            case type() | Rel() | tuple():
                 return bidict()
             case dict():
                 return bidict(
                     {
-                        AttrRef(self.record_type, fk.name, fk.value_type): pk
+                        Attr(
+                            _record_type=self.record_type,
+                            _name=fk.attr_name,
+                            _value_type=fk.value_type,
+                        ): pk
                         for fk, pk in self.via.items()
                     }
                 )
@@ -264,270 +296,175 @@ class Rel(Prop[Recs]):
             case None:
                 return bidict(
                     {
-                        AttrRef(
-                            rec_type=self.record_type,
-                            name=f"{self._name}.{target_attr.name}",
-                            val_type=target_attr.value_type,
+                        Attr(
+                            _record_type=self.record_type,
+                            _name=f"{self._name}.{target_attr.name}",
+                            _value_type=target_attr.value_type,
                         ): target_attr
                         for target_attr in target._primary_keys()
                     }
                 )
 
     @cached_property
-    def inter_join(self) -> tuple[type["Record"], Mapping["AttrRef", "AttrRef"]] | None:
+    def inter_joins(self) -> list[tuple[type["Record"], Mapping["Attr", "Attr"]]]:
         """Intermediate joins required by this rel."""
         match self.via:
-            case RelRef():
-                # Relation is defined via other relation or relation table
-                other_rel = self.via.rel
+            case Rel():
+                # Relation is defined via other, backlinking relation
+                other_rel = self.via
                 assert isinstance(
                     other_rel, Rel
                 ), "Back-reference must be an explicit relation"
 
                 if issubclass(other_rel.target_type, self.record_type):
                     # Supplied record type object is a backlinking relation
-                    return None
+                    return []
                 else:
                     # Supplied record type object is a forward relation
                     # on a relation table
-                    back_rel = [
-                        r
-                        for rs in other_rel.record_type._rels.values()
-                        for r in rs
-                        if issubclass(r.target_type, self.record_type)
-                    ][0]
+                    back_rels = [
+                        rel
+                        for rel in other_rel.record_type._rels
+                        if issubclass(rel.target_type, self.record_type)
+                    ]
 
-                    return (
-                        back_rel.record_type,
-                        back_rel.fk_map.inverse,
-                    )
+                    return [
+                        (
+                            back_rel.record_type,
+                            back_rel.fk_map.inverse,
+                        )
+                        for back_rel in back_rels
+                    ]
             case type():
-                # Relation is defined via relation table
-                back_rel = [
-                    r
-                    for rs in self.via._rels.values()
-                    for r in rs
-                    if issubclass(r.target_type, self.record_type)
-                ][0]
+                if issubclass(self.via, self.target_type):
+                    # Relation is defined via all direct backlinks of given record type.
+                    return []
 
-                return (back_rel.record_type, back_rel.fk_map.inverse)
-            case tuple() if has_type(self.via, tuple[RelRef, RelRef]):
+                # Relation is defined via relation table
+                back_rels = [
+                    rel
+                    for rel in self.via._rels
+                    if issubclass(rel.target_type, self.record_type)
+                ]
+
+                return [
+                    (back_rel.record_type, back_rel.fk_map.inverse)
+                    for back_rel in back_rels
+                ]
+            case tuple() if has_type(self.via, tuple[Rel, Rel]):
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
                 back, _ = self.via
-
-                assert isinstance(back.rel, Rel)
-
-                return (back.rel.record_type, back.rel.fk_map.inverse)
+                return [(back.record_type, back.fk_map.inverse)]
             case _:
                 # Relation is defined via foreign key attributes
-                return None
+                return []
 
     @cached_property
-    def join_on(self) -> Mapping["AttrRef", "AttrRef"]:
-        """Mapping of column keys to join the target on."""
+    def joins(self) -> list[Mapping["Attr", "Attr"]]:
+        """Mappings of column keys to join the target on."""
         match self.via:
-            case RelRef():
+            case Rel():
                 # Relation is defined via other relation or relation table
-                other_rel = self.via.rel
+                other_rel = self.via
                 assert isinstance(
                     other_rel, Rel
                 ), "Back-reference must be an explicit relation"
 
                 if issubclass(other_rel.target_type, self.record_type):
-                    return self.fk_map.inverse
+                    return [self.fk_map.inverse]
                 else:
-                    return other_rel.fk_map
-            case type():
-                # Relation is defined via relation table
-                fwd_rel = [
-                    r
-                    for rs in self.via._rels.values()
-                    for r in rs
-                    if issubclass(r.target_type, self.target_type)
-                ][0]
+                    return [other_rel.fk_map]
 
-                return fwd_rel.fk_map
-            case tuple() if has_type(self.via, tuple[RelRef, RelRef]):
+            case type():
+                if issubclass(self.via, self.target_type):
+                    # Relation is defined via all direct backlinks of given record type.
+                    back_rels = [
+                        rel
+                        for rel in self.via._rels
+                        if issubclass(rel.target_type, self.record_type)
+                    ]
+                    return [back_rel.fk_map for back_rel in back_rels]
+
+                # Relation is defined via relation table
+                fwd_rels = [
+                    rel
+                    for rel in self.via._rels
+                    if issubclass(rel.target_type, self.record_type)
+                ]
+                return [fwd_rel.fk_map for fwd_rel in fwd_rels]
+
+            case tuple() if has_type(self.via, tuple[Rel, Rel]):
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
                 _, fwd = self.via
+                return [fwd.fk_map]
 
-                assert isinstance(fwd.rel, Rel)
-
-                return fwd.rel.fk_map
             case _:
                 # Relation is defined via foreign key attributes
-                return self.fk_map
-
-
-@dataclass
-class PropRef(Generic[Rec, Val]):
-    """Reference to related record type, optionally indexed."""
-
-    rec_type: type[Rec]
-    val_type: type[Val]
-
-    @staticmethod
-    def get_tag(rec_type: type["Record"]) -> "RelRef | None":
-        """Retrieve relation-tag of a record type, if any."""
-        try:
-            rel = getattr(rec_type, "_rel")
-            return rel if isinstance(rel, RelRef) else None
-        except AttributeError:
-            return None
-
-    @cached_property
-    def parent(self) -> "RelRef | None":
-        """Parent relation of this relref."""
-        return self.get_tag(self.rec_type)
-
-    @cached_property
-    def path(self) -> list["RelRef"]:
-        """Path from base record type to this relref."""
-        return [
-            *(self.parent.path if self.parent is not None else []),
-            *([self] if isinstance(self, RelRef) else []),
-        ]
-
-    def __rrshift__(self, left: type[Rec]) -> Self:
-        """Append a prop to the relation path."""
-        return cast(Self, PropRef(rec_type=left, val_type=self.val_type))
-
-
-class AttrRef(sqla.ColumnClause[Val], PropRef[Rec, Val], Generic[Rec, Val]):
-    """Reference a property by its containing record type, name and value type."""
-
-    def __init__(  # noqa: D107
-        self, rec_type: type[Rec], name: str, val_type: type[Val]
-    ) -> None:
-        self.rec_type = rec_type
-        self.name = name
-        self.val_type = val_type
-
-        super().__init__(
-            self.name,
-            type_=self.record_type._table.c[self.name].type,
-        )
-
-    def __getitem__(self, value_type: type[Val2]) -> "AttrRef[Rec, Val2]":
-        """Specialize the value type of this attribute."""
-        return AttrRef(rec_type=self.rec_type, name=self.name, val_type=value_type)
-
-    def __rrshift__(self, left: type[Rec]) -> Self:
-        """Append a prop to the relation path."""
-        return cast(
-            Self, AttrRef(rec_type=left, name=self.name, val_type=self.val_type)
-        )
-
-
-@dataclass
-class RelRef(PropRef[Rec, Rec2], Generic[Rec, Rec2, Idx]):
-    """Reference to related record type, optionally indexed."""
-
-    rel: Rel[RecordValue[Rec2]] | None = None
-    """Relation prop on source record."""
-
-    idx: type[Idx] | None = None
-    """Index type."""
-
-    @cached_property
-    def idx_attr(self) -> AttrRef[Any, Idx] | None:
-        """Index attr."""
-        if self.idx is None:
-            return None
-
-        assert (
-            self.rel is not None
-            and self.rel.index_by is not None
-            and issubclass(self.rel.index_by.val_type, self.idx)
-        )
-        return (
-            self.parent >> self.rel.index_by
-            if self.parent is not None
-            else self.rel.index_by
-        )
+                return [self.fk_map]
 
     @cached_property
     def a(self) -> type[Rec2]:
         """Reference props of the target record type."""
-        return cast(type[Rec2], type(token_hex(5), (self.val_type,), {"_rel": self}))
-
-    @cached_property
-    def rels(self) -> list[Rel[RecordValue]]:
-        """All relations referenced."""
-        return (
-            [self.rel]
-            if self.rel is not None
-            else self.rec_type._rels.get(self.val_type, [])
-        )
-
-    @cached_property
-    def inter_joins(self) -> dict[type["Record"], list[dict["AttrRef", "AttrRef"]]]:
-        """Intermediate joins required for all of the rels."""
-        rel_grouped = groupby(
-            self.rels,
-            lambda rel: rel.inter_join[0] if rel.inter_join is not None else None,
-        )
-
-        return {
-            rec: [dict(rel.inter_join[1]) for rel in rels if rel.inter_join is not None]
-            for rec, rels in rel_grouped
-            if rec is not None
-        }
-
-    @cached_property
-    def join_ons(self) -> list[dict["AttrRef", "AttrRef"]]:
-        """Mapping of all column keys to join the target on."""
-        return [dict(rel.join_on) for rel in self.rels]
+        return cast(type[Rec2], type(token_hex(5), (self.target_type,), {"_rel": self}))
 
     @property
     def path_str(self) -> str:
-        """Path to join target table."""
+        """String representation of the relation path."""
         prefix = (
-            self.rec_type.__name__ if len(self.path) == 0 else self.path[-1].path_str
+            self.record_type.__name__ if len(self.path) == 0 else self.path[-1].path_str
         )
+        return f"{prefix}.{self.name}"
 
-        if self.rel is not None:
-            return f"{prefix}.{self.rel.name}"
-        else:
-            return f"{self.rec_type.__name__}.rel({self.val_type.__name__})"
+    def get_subdag(
+        self,
+        backlink_schemas: set[type["Schema"]] | None = None,
+        _traversed: set["Rel"] | None = None,
+    ) -> set["Rel"]:
+        """Find all paths to the target record type."""
+        backlink_schemas = backlink_schemas or set()
+        _traversed = _traversed or set()
 
-    def __add__(self, other: "RelRef[Any, Rec3, Any]") -> "RelMerge[Rec2, Rec3]":
+        # Get relations of the target type as next relations
+        next_rels = self.record_type._rels
+
+        for backlink_schema in backlink_schemas:
+            next_rels |= backlink_schema._backrels_to_rels(self.record_type)
+
+        # Filter out already traversed relations
+        next_rels = {rel for rel in next_rels if rel not in _traversed}
+
+        # Add next relations to traversed set
+        _traversed |= next_rels
+
+        # Prefix next relations with current relation
+        prefixed_rels = {self >> rel for rel in next_rels}
+
+        # Return next relations + recurse
+        return prefixed_rels | {
+            rel
+            for next_rel in next_rels
+            for rel in next_rel.get_subdag(backlink_schemas, _traversed)
+        }
+
+    def __add__(self, other: "Rel[Any, Any, Rec3]") -> "RelMerge[Rec2, Rec3]":
         """Add another prop to the merge."""
         return RelMerge([self]) + other
 
-    @overload
-    def __rshift__(self, other: AttrRef[Rec2, Val]) -> AttrRef[Rec2, Val]: ...
-
-    @overload
-    def __rshift__(
-        self, other: "RelRef[Rec2, Rec3, Any]"
-    ) -> "RelRef[Rec2, Rec3, Any]": ...
-
-    @overload
-    def __rshift__(self, other: "PropRef[Rec2, Val]") -> "PropRef[Rec2, Val]": ...
-
-    def __rshift__(self, other: PropRef[Rec2, Val]) -> PropRef[Rec2, Val]:
-        """Append a prop to the relation path."""
-        return PropRef(rec_type=self.a, val_type=other.val_type)
-
-    def __rrshift__(self, left: type[Rec]) -> Self:
-        """Append a prop to the relation path."""
-        return cast(
-            Self,
-            RelRef(rec_type=left, val_type=self.val_type, rel=self.rel, idx=self.idx),
-        )
+    def __hash__(self) -> int:
+        """Hash the Rel."""
+        return gen_int_hash(self)
 
 
-RelTree: TypeAlias = dict[RelRef, "RelTree"]
+RelTree: TypeAlias = dict[Rel, "RelTree"]
 
 
 @dataclass(frozen=True)
 class RelMerge(Generic[*MergeTup]):
     """Tree of joined properties."""
 
-    rels: list[RelRef] = field(default_factory=list)
+    rels: list[Rel] = field(default_factory=list)
 
     @cached_property
     def rel_tree(self) -> RelTree:
@@ -544,22 +481,19 @@ class RelMerge(Generic[*MergeTup]):
         return tree
 
     def __add__(
-        self, other: "RelRef[Any, Rec, Any] | RelMerge"
+        self, other: "Rel[Any, Any, Rec] | RelMerge"
     ) -> "RelMerge[*MergeTup, Rec]":
-        """Add another relref to the merge."""
+        """Add another Rel to the merge."""
         other = other if isinstance(other, RelMerge) else RelMerge([other])
         assert all(
-            self.rels[-1].path[0].rec_type == other_rel.path[0].rec_type
+            self.rels[-1].path[0].record_type == other_rel.path[0].record_type
             for other_rel in other.rels
         ), "Invalid relation merge."
         return RelMerge([*self.rels, *other.rels])
 
-    def __rrshift__(self, prefix: RelRef) -> "RelMerge[*MergeTup]":
-        """Prepend a relref to the merge."""
-        rels = [
-            reduce(lambda r1, r2: RelRef(r1.a, r2.val_type, r2.rel), rel.path, prefix)
-            for rel in self.rels
-        ]
+    def __rrshift__(self, prefix: Rel) -> "RelMerge[*MergeTup]":
+        """Prepend a Rel to the merge."""
+        rels = [prefix >> rel for rel in self.rels]
         return RelMerge(rels)
 
 
@@ -574,8 +508,8 @@ class Record(Generic[Idx, Val]):
     }
 
     _value_types: dict[str, type]
-    _defined_attrs: list[Attr]
-    _rels: dict[type["Record"], list[Rel[RecordValue]]]
+    _defined_attrs: set[Attr]
+    _rels: set[Rel]
     _rel_types: set[type["Record"]]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
@@ -586,55 +520,48 @@ class Record(Generic[Idx, Val]):
             if issubclass(get_origin(hint) or type, Attr)
         }
 
-        cls._defined_attrs = [
-            Attr(
-                **{
-                    **(asdict(attr) if isinstance(attr, Attr) else {}),
-                    "_name": name,
-                    "_record": cls,
-                    "_value_type": cls._value_types[name],
-                }
-            )
+        cls._defined_attrs = {
+            getattr(cls, name)
             for name, attr in cls.__dict__.items()
             if isinstance(attr, Attr)
-        ]
+        }
 
-        cls._rels = {}
-        for name, rel in cls.__dict__.items():
-            if isinstance(rel, Rel):
-                target = _extract_record_type(cls._value_types[name])
-                cls._rels[target] = [
-                    *cls._rels.get(target, {}),
-                    Rel(via=rel.via, _target=target),
-                ]
+        cls._rels = {
+            getattr(cls, name)
+            for name, rel in cls.__dict__.items()
+            if isinstance(rel, Rel)
+        }
 
-        # Crawl through relational tree, visiting each not at most once,
+        # Crawl through relational tree, visiting each node at most once,
         # to get all related record types.
-        cls._rel_types = set(cls._rels.keys())
+        cls._rel_types = set(rel.target_type for rel in cls._rels)
         crawled = set()
         while remaining := cls._rel_types - crawled:
             rel_type = remaining.pop()
-            cls._rel_types |= set(
-                rel.target_type for rels in rel_type._rels.values() for rel in rels
-            )
+            cls._rel_types |= set(rel.target_type for rel in rel_type._rels)
             crawled |= {rel_type}
 
         return super().__init_subclass__()
 
     @overload
     @classmethod
-    def rel(cls, other: type[Rec], index: None = ...) -> RelRef[Self, Rec, BaseIdx]: ...
+    def rel(
+        cls, other: type[Rec], index: None = ...
+    ) -> Rel[Self, Iterable[Rec], Rec]: ...
 
     @overload
     @classmethod
-    def rel(cls, other: type[Rec], index: type[Key]) -> RelRef[Self, Rec, Key]: ...
+    def rel(
+        cls, other: type[Rec], index: type[Key]
+    ) -> Rel[Self, Mapping[Key, Rec], Rec]: ...
 
     @classmethod
-    def rel(
-        cls, other: type[Rec], index: type[Key] | None = None
-    ) -> RelRef[Self, Rec, Key] | RelRef[Self, Rec, BaseIdx]:
+    def rel(cls, other: type[Rec], index: type[Key] | None = None) -> Rel:
         """Dynamically define a relation to another record type."""
-        return RelRef(cls, other, idx=index)
+        value_type = Mapping[index, other] if index is not None else Iterable[other]
+        return Rel(
+            _record_type=cls, _value_type=value_type, _target_type=other, via=other
+        )
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -646,20 +573,15 @@ class Record(Generic[Idx, Val]):
         )
 
     @classmethod
-    def _all_attrs(cls) -> dict[str, AttrRef]:
+    def _all_attrs(cls) -> dict[str, Attr]:
         """Return all data attributes of this schema."""
         return {
-            **{a.name: AttrRef(cls, a.name, a.value_type) for a in cls._defined_attrs},
-            **{
-                c.name: AttrRef(cls, c.name, c.value_type)
-                for rels in cls._rels.values()
-                for rel in rels
-                for c in rel.fk_map.keys()
-            },
+            **{a.name: a for a in cls._defined_attrs},
+            **{a.name: a for rel in cls._rels for a in rel.fk_map.keys()},
         }
 
     @classmethod
-    def _primary_keys(cls) -> list[AttrRef]:
+    def _primary_keys(cls) -> list[Attr]:
         """Return the primary key attributes of this schema."""
         return [p for p in cls._all_attrs().values() if p.primary_key]
 
@@ -697,8 +619,7 @@ class Record(Generic[Idx, Val]):
                     table=(rel.target_type._table(metadata, subs)),
                     name=f"{cls._default_table_name()}_{rel._name}_fk",
                 )
-                for rels in cls._rels.values()
-                for rel in rels
+                for rel in cls._rels
             ),
             schema=(sub.schema if sub is not None else None),
         )
@@ -720,43 +641,44 @@ class Schema:
         cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
         super().__init_subclass__()
 
+    @classmethod
+    def _backrels_to_rels(cls, target: type[Rec]) -> set[Rel[Any, Any, Rec]]:
+        """Get all direct relations to a target record type."""
+        return {
+            Rel(
+                _record_type=target,
+                _value_type=Iterable[record],
+                _target_type=record,
+                via=record,
+            )
+            for record in cls._record_types
+            for rel in record._rels
+            if issubclass(target, rel.target_type)
+        }
 
-@dataclass(frozen=True)
-class Required(Generic[DBS]):
-    """Define required record type in a schema."""
 
-    type: type[DBS]
-    """Record type."""
+@dataclass
+class Require:
+    """Mark schema or record type as required."""
+
+    present: bool = True
 
 
 class DynRecordMeta(type):
     """Metaclass for dynamically defined record types."""
 
-    def __getitem__(cls, name: str) -> AttrRef:
+    def __getitem__(cls, name: str) -> Attr:
         """Get dynamic attribute by dynamic name."""
-        return AttrRef(cls, name, Any)
+        return Attr(_record_type=cls, _name=name, _value_type=Any)
 
 
 class a(Record, metaclass=DynRecordMeta):  # noqa: N801
     """Dynamically defined record type."""
 
-    def __getattribute__(self, name: str) -> AttrRef:
+    def __getattribute__(self, name: str) -> Attr:
         """Get dynamic attribute by name."""
-        return AttrRef(type(self), name, Any)
+        return Attr(_record_type=type(self), _name=name, _value_type=Any)
 
 
-@dataclass(frozen=True)
-class DynAttrMap(Generic[Rec, Val]):
-    """Map an attribute to a function."""
-
-    attr: AttrRef[Rec, Val]
-    func: sqla.Function[Val]
-
-
-@dataclass(frozen=True)
-class Agg(Generic[Rec, Rec2]):
-    """Define an aggregation."""
-
-    base_type: type[Rec]
-    target_type: type[Rec2]
-    attrs: set[DynAttrMap[Rec2, Any]]
+Agg: TypeAlias = dict[Attr[Rec, Val], Literal["group-key"] | sqla.Function[Val]]
+"""Define an aggregation."""
