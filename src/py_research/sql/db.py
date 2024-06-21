@@ -1222,9 +1222,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def extract(
         self,
         use_schema: bool | type[Schema] = False,
-        aggs: Mapping[Rel[Any, Any, Rec], Agg[Rec, Any]] | None = None,
+        aggs: Mapping[Rel, Agg] | None = None,
     ) -> DataBase[Name]:
         """Extract a new database instance from the current selection."""
+        assert self.record_type is not None, "Record type must be defined."
+
         # Get all rec types in the schema.
         schemas = (
             {use_schema}
@@ -1242,24 +1244,63 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         rec_types = (
             {rec for schema in schemas for rec in schema._record_types}
             if schemas
-            else (
-                {self.record_type, *self.record_type._rel_types}
-                if self.record_type is not None
-                else set()
-            )
+            else ({self.record_type, *self.record_type._rel_types})
         )
+
+        # Get the entire subdag from this selection.
+        all_paths_rels = {
+            r for rel in self.record_type._rels for r in rel.get_subdag(rec_types)
+        }
+
+        # Extract rel paths, which contain an aggregated rel.
+        aggs_per_type: dict[type[Record], list[tuple[Rel, Agg]]] = {}
+        if aggs is not None:
+            for rel, agg in aggs.items():
+                for path_rel in all_paths_rels:
+                    if rel in path_rel.path:
+                        aggs_per_type[rel.record_type] = [
+                            *aggs_per_type.get(rel.record_type, []),
+                            (rel, agg),
+                        ]
+                        all_paths_rels.remove(path_rel)
 
         replacements: dict[type[Record], sqla.Select] = {}
         for rec in rec_types:
-            # For each table, get all direct routes from the selection to that table.
-            all_paths_rels = {r for rel in rec._rels for r in rel.get_subdag(schemas)}
-
-            if len(all_paths_rels) == 0:
-                continue
-
             # For each table, create a union of all results from the direct routes.
-            selects = [self[rel].select() for rel in all_paths_rels]
+            selects = [
+                self[rel].select()
+                for rel in all_paths_rels
+                if issubclass(rec, rel.target_type)
+            ]
             replacements[rec] = sqla.union(*selects).select()
+
+        aggregations: dict[type[Record], sqla.Select] = {}
+        for rec, rec_aggs in aggs_per_type.items():
+            selects = []
+            for rel, agg in rec_aggs:
+                src_select = self[rel].select()
+                selects.append(
+                    sqla.select(
+                        *[
+                            (
+                                src_select.c[sa.name]
+                                if isinstance(sa, Attr)
+                                else sqla_visitors.replacement_traverse(
+                                    sa,
+                                    {},
+                                    replace=lambda element, **kw: (
+                                        src_select.c[element.name]
+                                        if isinstance(element, Attr)
+                                        else None
+                                    ),
+                                )
+                            ).label(ta.name)
+                            for ta, sa in agg.map.items()
+                        ]
+                    )
+                )
+
+            aggregations[rec] = sqla.union(*selects).select()
 
         # Create a new database overlay for the results.
         new_db = DataBase(self.db.backend, overlay=f"temp_{token_hex(10)}")
@@ -1270,6 +1311,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 new_db[rec] = replacements[rec]
             else:
                 new_db[rec] = pd.DataFrame()  # Empty table.
+
+        for rec, agg_select in aggregations.items():
+            new_db[rec] = agg_select
 
         return new_db
 
@@ -1388,7 +1432,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         return reduce(sqla.and_, exprs)
 
-    def _replace_attrref(
+    def _replace_attr(
         self,
         element: sqla_visitors.ExternallyTraversible,
         reflist: list[Rel] = [],
@@ -1397,7 +1441,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         if isinstance(element, Attr):
             if element.parent is not None:
                 reflist.append(element.parent)
-            return self.db._get_table(element.rec_type).c[element.name]
+            return self.db._get_table(element.record_type).c[element.name]
 
         return None
 
@@ -1413,7 +1457,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             case sqla.ColumnElement():
                 # Filtering via SQL expression.
                 reflist = []
-                replace_func = partial(self._replace_attrref, reflist=reflist)
+                replace_func = partial(self._replace_attr, reflist=reflist)
                 filt = sqla_visitors.replacement_traverse(key, {}, replace=replace_func)
                 merge += RelMerge(reflist)
             case pd.Series():

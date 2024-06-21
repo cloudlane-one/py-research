@@ -8,7 +8,6 @@ from typing import (
     Any,
     ClassVar,
     Generic,
-    Literal,
     Self,
     TypeAlias,
     TypeVar,
@@ -419,18 +418,18 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
 
     def get_subdag(
         self,
-        backlink_schemas: set[type["Schema"]] | None = None,
+        backlink_records: set[type["Record"]] | None = None,
         _traversed: set["Rel"] | None = None,
     ) -> set["Rel"]:
         """Find all paths to the target record type."""
-        backlink_schemas = backlink_schemas or set()
+        backlink_records = backlink_records or set()
         _traversed = _traversed or set()
 
         # Get relations of the target type as next relations
         next_rels = self.record_type._rels
 
-        for backlink_schema in backlink_schemas:
-            next_rels |= backlink_schema._backrels_to_rels(self.record_type)
+        for backlink_record in backlink_records:
+            next_rels |= backlink_record._backrels_to_rels(self.record_type)
 
         # Filter out already traversed relations
         next_rels = {rel for rel in next_rels if rel not in _traversed}
@@ -445,7 +444,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
         return prefixed_rels | {
             rel
             for next_rel in next_rels
-            for rel in next_rel.get_subdag(backlink_schemas, _traversed)
+            for rel in next_rel.get_subdag(backlink_records, _traversed)
         }
 
     def __add__(self, other: "Rel[Any, Any, Rec3]") -> "RelMerge[Rec2, Rec3]":
@@ -624,9 +623,24 @@ class Record(Generic[Idx, Val]):
             schema=(sub.schema if sub is not None else None),
         )
 
-    def __clause_element__(self) -> sqla.TableClause:  # noqa: D105
-        assert self._default_table_name() is not None
-        return sqla.table(self._default_table_name())
+    @classmethod
+    def _backrels_to_rels(cls, target: type[Rec]) -> set[Rel[Any, Any, Rec]]:
+        """Get all direct relations to a target record type."""
+        return {
+            Rel(
+                _record_type=target,
+                _value_type=Iterable[cls],
+                _target_type=cls,
+                via=cls,
+            )
+            for rel in cls._rels
+            if issubclass(target, rel.target_type)
+        }
+
+    @classmethod
+    def __clause_element__(cls) -> sqla.TableClause:  # noqa: D105
+        assert cls._default_table_name() is not None
+        return sqla.table(cls._default_table_name())
 
 
 class Schema:
@@ -640,21 +654,6 @@ class Schema:
         cls._record_types = {s for s in subclasses if isinstance(s, Record)}
         cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
         super().__init_subclass__()
-
-    @classmethod
-    def _backrels_to_rels(cls, target: type[Rec]) -> set[Rel[Any, Any, Rec]]:
-        """Get all direct relations to a target record type."""
-        return {
-            Rel(
-                _record_type=target,
-                _value_type=Iterable[record],
-                _target_type=record,
-                via=record,
-            )
-            for record in cls._record_types
-            for rel in record._rels
-            if issubclass(target, rel.target_type)
-        }
 
 
 @dataclass
@@ -680,5 +679,12 @@ class a(Record, metaclass=DynRecordMeta):  # noqa: N801
         return Attr(_record_type=type(self), _name=name, _value_type=Any)
 
 
-Agg: TypeAlias = dict[Attr[Rec, Val], Literal["group-key"] | sqla.Function[Val]]
-"""Define an aggregation."""
+AggMap: TypeAlias = dict[Attr[Rec, Any], Attr | sqla.Function]
+
+
+@dataclass(frozen=True)
+class Agg(Generic[Rec]):
+    """Define an aggregation map."""
+
+    target: type[Rec]
+    map: AggMap[Rec]
