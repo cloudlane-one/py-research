@@ -264,8 +264,8 @@ class DataBase(Generic[Name]):
         """Set of all association tables in this DB."""
         assoc_types = set()
         for rec in self.record_types:
-            pks = set([attr.name for attr in rec._primary_keys()])
-            fks = set([attr.name for rel in rec._rels for attr in rel.fk_map.keys()])
+            pks = set([attr.name for attr in rec._indexes()])
+            fks = set([attr.name for rel in rec._rels() for attr in rel.fk_map.keys()])
             if pks in fks:
                 assoc_types.add(rec)
 
@@ -279,7 +279,7 @@ class DataBase(Generic[Name]):
         }
 
         for rec in self.record_types:
-            for rel in rec._rels:
+            for rel in rec._rels():
                 rels[rec].add(rel)
                 rels[rel.target_type].add(rel)
 
@@ -545,8 +545,8 @@ class DataBase(Generic[Name]):
         }
         for n in nodes:
             for at in self.assoc_types:
-                if len(at._rels) == 2:
-                    left, right = (r for r in at._rels)
+                if len(at._rels()) == 2:
+                    left, right = (r for r in at._rels())
                     assert left is not None and right is not None
                     if left.target_type == n:
                         undirected_edges[n].add((left, right))
@@ -601,7 +601,10 @@ class DataBase(Generic[Name]):
                             {
                                 "source",
                                 "target",
-                                *(left_rel._record_type or Record)._all_attrs().keys(),
+                                *(
+                                    a.name
+                                    for a in (left_rel._record_type or Record)._attrs()
+                                ),
                             }
                         )
                     ]
@@ -659,6 +662,10 @@ class DataBase(Generic[Name]):
     @cache
     def _get_table(self, rec: type[Record]) -> sqla.Table:
         return rec._table(self.meta, self.subs)
+
+    @cache
+    def _get_joined_table(self, rec: type[Record]) -> sqla.Table | sqla.Join:
+        return rec._joined_table(self.meta, self.subs)
 
     def _ensure_table_exists(self, sqla_table: sqla.Table) -> sqla.Table:
         """Ensure that the table exists in the database, then return it."""
@@ -776,15 +783,15 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         return DataSet(self.db, self.base)
 
     @cached_property
-    def main_idx(self) -> list[Attr[Rec_cov, Any]] | None:
+    def main_idx(self) -> set[Attr[Rec_cov, Any]] | None:
         """Main index of this dataset."""
         match self.selection:
             case type():
-                return self.selection._primary_keys()
+                return self.selection._indexes()
             case Rel():
-                return self.selection.target_type._primary_keys()
+                return self.selection.target_type._indexes()
             case Prop():
-                return self.selection.record_type._primary_keys()
+                return self.selection.record_type._indexes()
             case None:
                 return None
 
@@ -948,35 +955,36 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         """Return select statement for this dataset."""
         abs_merge = self._parse_merge(merge)
 
-        select = sqla.select(
-            *(
-                (
-                    col.label(f"{relref.path_str}.{col_name}")
-                    for relref in abs_merge.rels
-                    for col_name, col in self._get_alias(relref).columns.items()
-                )
-                if not index_only
+        selection_table = (
+            self._get_alias(self.selection)
+            if isinstance(self.selection, Rel)
+            else (
+                self._get_alias(self.selection.parent)
+                if isinstance(self.selection, Prop)
+                and self.selection.parent is not None
                 else (
-                    (
-                        self._get_alias(relref)
-                        .c[attr.name]
-                        .label(f"{relref.path_str}.{attr.name}")
-                        for relref in abs_merge.rels
-                        for attr in idx_attrs
-                    )
-                    if (idx_attrs := self.main_idx) is not None
-                    else (
-                        self._get_alias(relref)
-                        .c[pk.name]
-                        .label(f"{relref.path_str}.{pk.name}")
-                        for relref in abs_merge.rels
-                        for pk in self.base.primary_key
-                    )
+                    self.db._get_joined_table(self.record_type)
+                    if self.record_type is not None
+                    else self.base
                 )
             )
+        )
+
+        select = sqla.select(
+            *(
+                col
+                for col in selection_table.columns
+                if not index_only or col.primary_key
+            ),
+            *(
+                col.label(f"{rel.path_str}.{col_name}")
+                for rel in abs_merge.rels
+                for col_name, col in self._get_alias(rel).columns.items()
+                if not index_only or col.primary_key
+            ),
         ).select_from(self.base)
 
-        for join in self._joins_from_tree(self.merges.rel_tree):
+        for join in self._get_joins():
             select = select.join(*join)
 
         for filt in self.filters:
@@ -1244,12 +1252,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         rec_types = (
             {rec for schema in schemas for rec in schema._record_types}
             if schemas
-            else ({self.record_type, *self.record_type._rel_types})
+            else ({self.record_type, *self.record_type._rel_types()})
         )
 
         # Get the entire subdag from this selection.
         all_paths_rels = {
-            r for rel in self.record_type._rels for r in rel.get_subdag(rec_types)
+            r for rel in self.record_type._rels() for r in rel.get_subdag(rec_types)
         }
 
         # Extract rel paths, which contain an aggregated rel.
@@ -1323,38 +1331,47 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     def _get_alias(self, rel: Rel) -> sqla.FromClause:
         """Get alias for a relation reference."""
-        return self.db._get_table(rel.target_type).alias(gen_str_hash(rel, 8))
+        return self.db._get_joined_table(rel.target_type).alias(gen_str_hash(rel, 8))
 
     def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
         """Get random alias for a type."""
-        return self.db._get_table(rec).alias(token_hex(4))
+        return self.db._get_joined_table(rec).alias(token_hex(4))
 
-    def _joins_from_tree(self, tree: RelTree) -> list[Join]:
-        """Extract join operations from a relation tree."""
+    def _get_joins(self, _subtree: RelTree | None = None) -> list[Join]:
+        """Extract join operations from the relation tree."""
+        _subtree = _subtree or self.merges.rel_tree
         joins = []
 
-        for r, subtree in tree.items():
-            parent = self._get_alias(r.parent) if r.parent is not None else self.base
+        for rel, next_subtree in _subtree.items():
+            parent = (
+                self._get_alias(rel.parent) if rel.parent is not None else self.base
+            )
 
-            inter_alias_map = {
-                rec: self._get_random_alias(rec) for rec, _ in r.inter_joins
+            temp_alias_map = {
+                rec: self._get_random_alias(rec) for rec in rel.inter_joins.keys()
             }
 
             joins.extend(
                 (
-                    inter_alias_map[rec],
+                    temp_alias_map[rec],
                     reduce(
-                        sqla.and_,
+                        sqla.or_,
                         (
-                            parent.c[lk.name] == inter_alias_map[rec].c[rk.name]
-                            for lk, rk in inter_join_on.items()
+                            reduce(
+                                sqla.and_,
+                                (
+                                    parent.c[lk.name] == temp_alias_map[rec].c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in joins
                         ),
                     ),
                 )
-                for rec, inter_join_on in r.inter_joins
+                for rec, joins in rel.inter_joins.items()
             )
 
-            target_table = self._get_alias(r)
+            target_table = self._get_alias(rel)
 
             joins.append(
                 (
@@ -1365,18 +1382,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                             reduce(
                                 sqla.and_,
                                 (
-                                    inter_alias_map[lk.record_type].c[lk.name]
+                                    temp_alias_map[lk.record_type].c[lk.name]
                                     == target_table.c[rk.name]
                                     for lk, rk in join_on.items()
                                 ),
                             )
-                            for join_on in r.joins
+                            for join_on in rel.joins
                         ),
                     ),
                 )
             )
 
-            joins.extend(self._joins_from_tree(subtree))
+            joins.extend(self._get_joins(next_subtree))
 
         return joins
 
@@ -1385,7 +1402,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         merge = (
             merge
             if isinstance(merge, RelMerge)
-            else RelMerge([merge]) if merge is not None else RelMerge()
+            else RelMerge({merge}) if merge is not None else RelMerge()
         )
         return (
             self.selection >> merge
@@ -1435,13 +1452,24 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def _replace_attr(
         self,
         element: sqla_visitors.ExternallyTraversible,
-        reflist: list[Rel] = [],
+        reflist: set[Rel] = set(),
         **kw: Any,
     ) -> sqla.ColumnElement | None:
         if isinstance(element, Attr):
             if element.parent is not None:
-                reflist.append(element.parent)
-            return self.db._get_table(element.record_type).c[element.name]
+                reflist.add(element.parent)
+
+            if isinstance(self.selection, Rel):
+                element = self.selection >> element
+            elif isinstance(self.selection, Prop) and self.selection.parent is not None:
+                element = self.selection.parent >> element
+
+            table = (
+                self._get_alias(element.parent)
+                if element.parent is not None
+                else self.db._get_table(element.record_type)
+            )
+            return table.c[element.name]
 
         return None
 
@@ -1456,7 +1484,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         match key:
             case sqla.ColumnElement():
                 # Filtering via SQL expression.
-                reflist = []
+                reflist = set()
                 replace_func = partial(self._replace_attr, reflist=reflist)
                 filt = sqla_visitors.replacement_traverse(key, {}, replace=replace_func)
                 merge += RelMerge(reflist)

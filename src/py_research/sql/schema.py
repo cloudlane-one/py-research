@@ -1,7 +1,7 @@
 """Static schemas for SQL databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import cached_property, reduce
 from secrets import token_hex
 from typing import (
@@ -99,8 +99,10 @@ class Prop(Generic[Rec, Val]):
     @property
     def value_type(self) -> type[Val]:
         """Property value type."""
-        assert self._value_type is not None, "Property value type not set."
-        return self._value_type
+        return cast(
+            type[Val],
+            self._value_type or self.record_type._value_types.get(self.name) or Any,
+        )
 
     @property
     def value(self) -> Val:
@@ -147,7 +149,6 @@ class Prop(Generic[Rec, Val]):
     ) -> "Val | Attr | type[Record] | Rel | Self":
         if owner is not None:
             self._record_type = owner
-            self._value_type = owner._value_types[self.name]
 
         if instance is not None:
             return self.value
@@ -186,7 +187,7 @@ class Prop(Generic[Rec, Val]):
         new_root = left if isinstance(left, Rel) else left.rel(current_root.record_type)
 
         prefixed_rel = reduce(
-            lambda r1, r2: cast(Rel, getattr(r1.a, r2.name)), self.path, new_root
+            lambda r1, r2: Rel(**asdict(r2), _record_type=r1.a), self.path, new_root
         )
 
         return cast(
@@ -269,7 +270,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                     {
                         Attr(
                             _record_type=self.record_type,
-                            _name=fk.attr_name,
+                            _name=fk.name,
                             _value_type=fk.value_type,
                         ): pk
                         for fk, pk in self.via.items()
@@ -278,9 +279,14 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
             case Attr() | Iterable():
                 attrs = self.via if isinstance(self.via, Iterable) else [self.via]
                 source_attrs = [
-                    self.record_type._all_attrs()[attr.name] for attr in attrs
+                    Attr(
+                        _record_type=self.record_type,
+                        _name=attr.name,
+                        _value_type=attr.value_type,
+                    )
+                    for attr in attrs
                 ]
-                target_attrs = target._primary_keys()
+                target_attrs = target._indexes()
                 fk_map = dict(zip(source_attrs, target_attrs))
 
                 assert all(
@@ -300,12 +306,12 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                             _name=f"{self._name}.{target_attr.name}",
                             _value_type=target_attr.value_type,
                         ): target_attr
-                        for target_attr in target._primary_keys()
+                        for target_attr in target._indexes()
                     }
                 )
 
     @cached_property
-    def inter_joins(self) -> list[tuple[type["Record"], Mapping["Attr", "Attr"]]]:
+    def inter_joins(self) -> dict[type["Record"], list[Mapping["Attr", "Attr"]]]:
         """Intermediate joins required by this rel."""
         match self.via:
             case Rel():
@@ -317,47 +323,42 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
 
                 if issubclass(other_rel.target_type, self.record_type):
                     # Supplied record type object is a backlinking relation
-                    return []
+                    return {}
                 else:
                     # Supplied record type object is a forward relation
                     # on a relation table
                     back_rels = [
                         rel
-                        for rel in other_rel.record_type._rels
+                        for rel in other_rel.record_type._rels()
                         if issubclass(rel.target_type, self.record_type)
                     ]
 
-                    return [
-                        (
-                            back_rel.record_type,
-                            back_rel.fk_map.inverse,
-                        )
-                        for back_rel in back_rels
-                    ]
+                    return {
+                        other_rel.record_type: [
+                            back_rel.fk_map.inverse for back_rel in back_rels
+                        ]
+                    }
             case type():
                 if issubclass(self.via, self.target_type):
                     # Relation is defined via all direct backlinks of given record type.
-                    return []
+                    return {}
 
                 # Relation is defined via relation table
                 back_rels = [
                     rel
-                    for rel in self.via._rels
+                    for rel in self.via._rels()
                     if issubclass(rel.target_type, self.record_type)
                 ]
 
-                return [
-                    (back_rel.record_type, back_rel.fk_map.inverse)
-                    for back_rel in back_rels
-                ]
+                return {self.via: [back_rel.fk_map.inverse for back_rel in back_rels]}
             case tuple() if has_type(self.via, tuple[Rel, Rel]):
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
                 back, _ = self.via
-                return [(back.record_type, back.fk_map.inverse)]
+                return {back.record_type: [back.fk_map.inverse]}
             case _:
                 # Relation is defined via foreign key attributes
-                return []
+                return {}
 
     @cached_property
     def joins(self) -> list[Mapping["Attr", "Attr"]]:
@@ -380,7 +381,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                     # Relation is defined via all direct backlinks of given record type.
                     back_rels = [
                         rel
-                        for rel in self.via._rels
+                        for rel in self.via._rels()
                         if issubclass(rel.target_type, self.record_type)
                     ]
                     return [back_rel.fk_map for back_rel in back_rels]
@@ -388,7 +389,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                 # Relation is defined via relation table
                 fwd_rels = [
                     rel
-                    for rel in self.via._rels
+                    for rel in self.via._rels()
                     if issubclass(rel.target_type, self.record_type)
                 ]
                 return [fwd_rel.fk_map for fwd_rel in fwd_rels]
@@ -426,7 +427,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
         _traversed = _traversed or set()
 
         # Get relations of the target type as next relations
-        next_rels = self.record_type._rels
+        next_rels = self.record_type._rels()
 
         for backlink_record in backlink_records:
             next_rels |= backlink_record._backrels_to_rels(self.record_type)
@@ -449,10 +450,10 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
 
     def __add__(self, other: "Rel[Any, Any, Rec3]") -> "RelMerge[Rec2, Rec3]":
         """Add another prop to the merge."""
-        return RelMerge([self]) + other
+        return RelMerge({self}) + other
 
     def __hash__(self) -> int:
-        """Hash the Rel."""
+        """Hash the rel."""
         return gen_int_hash(self)
 
 
@@ -463,7 +464,7 @@ RelTree: TypeAlias = dict[Rel, "RelTree"]
 class RelMerge(Generic[*MergeTup]):
     """Tree of joined properties."""
 
-    rels: list[Rel] = field(default_factory=list)
+    rels: set[Rel] = field(default_factory=set)
 
     @cached_property
     def rel_tree(self) -> RelTree:
@@ -483,16 +484,16 @@ class RelMerge(Generic[*MergeTup]):
         self, other: "Rel[Any, Any, Rec] | RelMerge"
     ) -> "RelMerge[*MergeTup, Rec]":
         """Add another Rel to the merge."""
-        other = other if isinstance(other, RelMerge) else RelMerge([other])
+        other = other if isinstance(other, RelMerge) else RelMerge({other})
         assert all(
-            self.rels[-1].path[0].record_type == other_rel.path[0].record_type
+            list(self.rels)[-1].path[0].record_type == other_rel.path[0].record_type
             for other_rel in other.rels
         ), "Invalid relation merge."
-        return RelMerge([*self.rels, *other.rels])
+        return RelMerge({*self.rels, *other.rels})
 
-    def __rrshift__(self, prefix: Rel) -> "RelMerge[*MergeTup]":
+    def __rrshift__(self, prefix: type["Record"] | Rel) -> "RelMerge[*MergeTup]":
         """Prepend a Rel to the merge."""
-        rels = [prefix >> rel for rel in self.rels]
+        rels = {prefix >> rel for rel in self.rels}
         return RelMerge(rels)
 
 
@@ -508,8 +509,7 @@ class Record(Generic[Idx, Val]):
 
     _value_types: dict[str, type]
     _defined_attrs: set[Attr]
-    _rels: set[Rel]
-    _rel_types: set[type["Record"]]
+    _defined_rels: set[Rel]
 
     def __init_subclass__(cls) -> None:  # noqa: D105
         # Retrieve property type definitions from class annotations
@@ -525,22 +525,174 @@ class Record(Generic[Idx, Val]):
             if isinstance(attr, Attr)
         }
 
-        cls._rels = {
+        cls._defined_rels = {
             getattr(cls, name)
             for name, rel in cls.__dict__.items()
             if isinstance(rel, Rel)
         }
 
-        # Crawl through relational tree, visiting each node at most once,
-        # to get all related record types.
-        cls._rel_types = set(rel.target_type for rel in cls._rels)
-        crawled = set()
-        while remaining := cls._rel_types - crawled:
-            rel_type = remaining.pop()
-            cls._rel_types |= set(rel.target_type for rel in rel_type._rels)
-            crawled |= {rel_type}
-
         return super().__init_subclass__()
+
+    @classmethod
+    def _record_bases(cls) -> list[type["Record"]]:
+        """Get all direct record superclasses of this class."""
+        return [
+            c
+            for c in cls.__bases__
+            if issubclass(c, Record) and c is not Record and c is not cls
+        ]
+
+    @classmethod
+    def _base_pks(cls) -> dict[type["Record"], dict[Attr, Attr]]:
+        return {
+            base: {
+                Attr(
+                    _record_type=cls,
+                    attr_name=pk.name,
+                    _value_type=pk.value_type,
+                    primary_key=True,
+                ): pk
+                for pk in base._indexes()
+            }
+            for base in cls._record_bases()
+        }
+
+    @classmethod
+    def _rels(cls) -> set[Rel]:
+        return reduce(
+            set.union, (c._rels() for c in cls._record_bases()), cls._defined_rels
+        )
+
+    @classmethod
+    def _attrs(cls) -> set[Attr]:
+        return reduce(
+            set.union, (c._attrs() for c in cls._record_bases()), cls._defined_attrs
+        )
+
+    @classmethod
+    def _rel_types(cls) -> set[type["Record"]]:
+        """Return all record types that are related to this record."""
+        return {rel.target_type for rel in cls._rels()}
+
+    @classmethod
+    def _default_table_name(cls) -> str:
+        """Return the name of the table for this schema."""
+        return (
+            cls._table_name
+            if hasattr(cls, "_table_name")
+            else PyObjectRef.reference(cls).fqn.replace(".", "_")
+        )
+
+    @classmethod
+    def _indexes(cls) -> set[Attr]:
+        """Return the primary key attributes of this schema."""
+        return {p for p in cls._attrs() if p.primary_key}
+
+    @classmethod
+    def _columns(cls, registry: orm.registry) -> list[sqla.Column]:
+        """Columns of this record type's table."""
+        base_pk_cols = {pk for pks in cls._base_pks().values() for pk in pks.keys()}
+        table_attrs = (
+            cls._defined_attrs
+            | base_pk_cols
+            | {a for rel in cls._defined_rels for a in rel.fk_map.keys()}
+        )
+
+        return [
+            sqla.Column(
+                attr.name,
+                (registry._resolve_type(attr.value_type) if attr.value_type else None),
+                primary_key=attr.primary_key,
+            )
+            for attr in table_attrs
+        ]
+
+    @classmethod
+    def _foreign_keys(
+        cls, metadata: sqla.MetaData, subs: Mapping[type["Record"], sqla.TableClause]
+    ) -> list[sqla.ForeignKeyConstraint]:
+        """Foreign key constraints for this record type's table."""
+        return [
+            *(
+                sqla.ForeignKeyConstraint(
+                    [attr.name for attr in rel.fk_map.keys()],
+                    [attr.name for attr in rel.target_type._indexes()],
+                    table=(rel.target_type._table(metadata, subs)),
+                    name=f"{cls._default_table_name()}_{rel._name}_fk",
+                )
+                for rel in cls._defined_rels
+            ),
+            *(
+                sqla.ForeignKeyConstraint(
+                    [attr.name for attr in pks.keys()],
+                    [attr.name for attr in pks.values()],
+                    table=(base._table(metadata, subs)),
+                    name=f"{cls._default_table_name()}_{base._default_table_name()}_inheritance_fk",
+                )
+                for base, pks in cls._base_pks().items()
+            ),
+        ]
+
+    @classmethod
+    def _table(
+        cls,
+        metadata: sqla.MetaData,
+        subs: Mapping[type["Record"], sqla.TableClause],
+    ) -> sqla.Table:
+        """Return a SQLAlchemy table object for this schema."""
+        registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
+
+        sub = subs.get(cls)
+
+        # Create a SQLAlchemy table object from the class definition
+        return sqla.Table(
+            sub.name if sub is not None else cls._default_table_name(),
+            registry.metadata,
+            *cls._columns(registry),
+            *cls._foreign_keys(metadata, subs),
+            schema=(sub.schema if sub is not None else None),
+        )
+
+    @classmethod
+    def _joined_table(
+        cls,
+        metadata: sqla.MetaData,
+        subs: Mapping[type["Record"], sqla.TableClause],
+    ) -> sqla.Table | sqla.Join:
+        """Recursively join all bases of this record to get the full data."""
+        table = cls._table(metadata, subs)
+
+        base_joins = [
+            (base._joined_table(metadata, subs), pk_map)
+            for base, pk_map in cls._base_pks().items()
+        ]
+        for target, pk_map in base_joins:
+            table = table.join(
+                target,
+                reduce(
+                    sqla.and_,
+                    (
+                        table.c[pk.name] == target.c[target_pk.name]
+                        for pk, target_pk in pk_map.items()
+                    ),
+                ),
+            )
+
+        return table
+
+    @classmethod
+    def _backrels_to_rels(cls, target: type[Rec]) -> set[Rel[Any, Any, Rec]]:
+        """Get all direct relations to a target record type."""
+        return {
+            Rel(
+                _record_type=target,
+                _value_type=Iterable[cls],
+                _target_type=cls,
+                via=cls,
+            )
+            for rel in cls._rels()
+            if issubclass(target, rel.target_type)
+        }
 
     @overload
     @classmethod
@@ -563,81 +715,6 @@ class Record(Generic[Idx, Val]):
         )
 
     @classmethod
-    def _default_table_name(cls) -> str:
-        """Return the name of the table for this schema."""
-        return (
-            cls._table_name
-            if hasattr(cls, "_table_name")
-            else PyObjectRef.reference(cls).fqn.replace(".", "_")
-        )
-
-    @classmethod
-    def _all_attrs(cls) -> dict[str, Attr]:
-        """Return all data attributes of this schema."""
-        return {
-            **{a.name: a for a in cls._defined_attrs},
-            **{a.name: a for rel in cls._rels for a in rel.fk_map.keys()},
-        }
-
-    @classmethod
-    def _primary_keys(cls) -> list[Attr]:
-        """Return the primary key attributes of this schema."""
-        return [p for p in cls._all_attrs().values() if p.primary_key]
-
-    @classmethod
-    def _table(
-        cls,
-        metadata: sqla.MetaData,
-        subs: Mapping[type["Record"], sqla.TableClause],
-    ) -> sqla.Table:
-        """Return a SQLAlchemy table object for this schema."""
-        registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
-
-        sub = subs.get(cls)
-
-        # Create a SQLAlchemy table object from the class definition
-        return sqla.Table(
-            sub.name if sub is not None else cls._default_table_name(),
-            registry.metadata,
-            *(
-                sqla.Column(
-                    attr.name,
-                    (
-                        registry._resolve_type(attr.value_type)
-                        if attr.value_type
-                        else None
-                    ),
-                    primary_key=attr.primary_key,
-                )
-                for attr in cls._all_attrs().values()
-            ),
-            *(
-                sqla.ForeignKeyConstraint(
-                    [attr.name for attr in rel.fk_map.keys()],
-                    [attr.name for attr in rel.target_type._primary_keys()],
-                    table=(rel.target_type._table(metadata, subs)),
-                    name=f"{cls._default_table_name()}_{rel._name}_fk",
-                )
-                for rel in cls._rels
-            ),
-            schema=(sub.schema if sub is not None else None),
-        )
-
-    @classmethod
-    def _backrels_to_rels(cls, target: type[Rec]) -> set[Rel[Any, Any, Rec]]:
-        """Get all direct relations to a target record type."""
-        return {
-            Rel(
-                _record_type=target,
-                _value_type=Iterable[cls],
-                _target_type=cls,
-                via=cls,
-            )
-            for rel in cls._rels
-            if issubclass(target, rel.target_type)
-        }
-
-    @classmethod
     def __clause_element__(cls) -> sqla.TableClause:  # noqa: D105
         assert cls._default_table_name() is not None
         return sqla.table(cls._default_table_name())
@@ -652,7 +729,7 @@ class Schema:
     def __init_subclass__(cls) -> None:  # noqa: D105
         subclasses = get_subclasses(cls, max_level=1)
         cls._record_types = {s for s in subclasses if isinstance(s, Record)}
-        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
+        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types()}
         super().__init_subclass__()
 
 
