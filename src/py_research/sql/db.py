@@ -1546,7 +1546,14 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             )
         )
 
-        raise NotImplementedError("Inserting / updating not supported yet.")
+        attrs_by_table = {
+            self.db._get_table(rec): {
+                a for a in self.record_type._attrs() if a.record_type is rec
+            }
+            for rec in self.record_type._record_bases()
+        }
+
+        statements = []
 
         # Construct the insert / update statement.
         if insert:
@@ -1555,29 +1562,30 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             ), "Can only upsert into unfiltered base datasets."
             assert value_set is not None
 
-            # Do an insert-from-select operation, which updates on conflict:
-            statement = self.base_table.insert().from_select(
-                [col.name for col in self.base_table.columns],
-                value_set.select().subquery(),
-            )
+            for table, attrs in attrs_by_table.items():
+                # Do an insert-from-select operation, which updates on conflict:
+                statement = table.insert().from_select(
+                    [a.name for a in attrs],
+                    value_set.select().subquery(),
+                )
 
-            if isinstance(statement, postgresql.Insert):
-                # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
-                statement = statement.on_conflict_do_update(
-                    index_elements=[
-                        col.name for col in self.base_table.primary_key.columns
-                    ],
-                    set_=dict(statement.excluded),
-                )
-            elif isinstance(statement, mysql.Insert):
-                # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
-                statement = statement.prefix_with("INSERT INTO")
-                statement = statement.on_duplicate_key_update(**statement.inserted)
-            else:
-                # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
-                raise NotImplementedError(
-                    "Upsert not supported for this database dialect."
-                )
+                if isinstance(statement, postgresql.Insert):
+                    # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
+                    statement = statement.on_conflict_do_update(
+                        index_elements=[col.name for col in table.primary_key.columns],
+                        set_=dict(statement.excluded),
+                    )
+                elif isinstance(statement, mysql.Insert):
+                    # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
+                    statement = statement.prefix_with("INSERT INTO")
+                    statement = statement.on_duplicate_key_update(**statement.inserted)
+                else:
+                    # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
+                    raise NotImplementedError(
+                        "Upsert not supported for this database dialect."
+                    )
+
+                statements.append(statement)
         else:
             assert isinstance(self.base_table, sqla.Table), "Base must be a table."
 
@@ -1597,39 +1605,46 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
             selected_attr = self.base.name if isinstance(self.base, Attr) else None
 
-            # Prepare update statement.
-            if self.db.engine.dialect.name in (
-                "postgres",
-                "postgresql",
-                "duckdb",
-                "mysql",
-                "mariadb",
-            ):
-                # Update-from.
-                statement = (
-                    self.base_table.update()
-                    .values(
-                        {col.name: col for col in value_set.base_table.columns}
-                        if value_set is not None
-                        else {selected_attr: value}
-                    )
-                    .where(
-                        reduce(
-                            sqla.and_,
-                            (
-                                self.base_table.c[col.name] == select.c[col.name]
-                                for col in self.base_table.primary_key.columns
-                            ),
+            for table, attrs in attrs_by_table.items():
+                values = (
+                    {
+                        a.name: value_set.base_table.c[a.name]
+                        for a in (attrs & value_set.record_type._attrs())
+                    }
+                    if value_set is not None
+                    else {selected_attr: value}
+                )
+
+                # Prepare update statement.
+                if self.db.engine.dialect.name in (
+                    "postgres",
+                    "postgresql",
+                    "duckdb",
+                    "mysql",
+                    "mariadb",
+                ):
+                    # Update-from.
+                    statements.append(
+                        table.update()
+                        .values(values)
+                        .where(
+                            reduce(
+                                sqla.and_,
+                                (
+                                    table.c[col.name] == select.c[col.name]
+                                    for col in table.primary_key.columns
+                                ),
+                            )
                         )
                     )
-                )
-            else:
-                # Correlated update.
-                raise NotImplementedError("Correlated update not supported yet.")
+                else:
+                    # Correlated update.
+                    raise NotImplementedError("Correlated update not supported yet.")
 
         # Execute insert / update statement.
         with self.db.engine.begin() as con:
-            con.execute(statement)
+            for statement in statements:
+                con.execute(statement)
 
         # Drop the temporary table, if any.
         if value_set is not None:
