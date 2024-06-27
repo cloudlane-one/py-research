@@ -4,73 +4,76 @@ from collections.abc import Callable, Hashable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import chain, groupby
-from typing import Any, Literal, TypeAlias, cast, overload
+from typing import Any, Generic, Literal, TypeAlias, cast, overload
 from uuid import uuid4
 
 import pandas as pd
 
 from py_research.hashing import gen_str_hash
 
-from .base import DB
+from .base import Backend, DataBase, DataSet, Name
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
+from .schema import Prop, Rec, Schema, Val
 
 Scalar = str | int | float | datetime
 
-_AttrMap = Mapping[str, "str | bool | _AttrMap"]
-"""Mapping of hierarchical attributes to table columns"""
 
-_RelationalMap = Mapping[str, "str | bool | _RelationalMap | TableMap | list[TableMap]"]
-"""Mapping of hierarchical attributes to table columns or other tables."""
+@dataclass
+class XPath:
+    """Select a nested attribute via xpath."""
+
+    path: str
+
+
+AttrMap: TypeAlias = Mapping[str | XPath, "str | bool | AttrMap"]
+"""Mapping of hierarchical attributes to record attributes"""
+
+RelMap: TypeAlias = Mapping[
+    str | XPath, "str | bool | RelMap | RecordMap | list[RecordMap]"
+]
+"""Mapping of hierarchical attributes to record props or other records."""
+
+InvAttrMap: TypeAlias = str | Mapping[str, "InvAttrMap"]
 
 
 @dataclass
-class TableMap:
-    """Configuration for how to map (nested) dictionary items to relational tables."""
+class Transform(Generic[Val]):
+    """Select and transform attributes."""
 
-    table: str
-    """Name of the table to map to attributes in ``map`` to."""
+    sel: str | InvAttrMap | XPath
+    func: Callable[[Any], Val]
 
-    map: (
-        _RelationalMap
-        | set[str]
-        | str
-        | Callable[[dict | str], _RelationalMap | set[str] | str]
-    )
-    """Mapping of hierarchical attributes to table columns or other tables."""
 
-    ext_maps: "list[TableMap] | None" = None
-    """Map attributes on the same level to different tables"""
+class Hash:
+    """Hash the selected attribute."""
 
-    link_attr: str | None = None
-    """Override attribute to use when referencing this table from a parent table."""
-
-    link_type: Literal["1-n", "n-1", "n-m"] = "n-m"
-    """Type of reference between this table and the parent table.
-    Only ``n-m`` will create a join table.
-    """
-
-    join_table_name: str | None = None
-    """Name of the join table to use for referencing this table to its parent, if any"""
-
-    join_table_map: _AttrMap | None = None
-    """Mapping of hierarchical attributes to join table rows."""
-
-    id_type: Literal["hash", "attr", "uuid"] = "hash"
-    """Type of id to use for this table.
-    - ``hash``: sha256 hash of a subset of all mapped attributes
-    - ``attr``: use given attr as id directly, no hashing
-    - ``uuid``: generate random uuid for each row
-    """
-
-    id_attr: str | list[str] | None = None
-    """Name of unique, mapped attribute to use as id directly or
-    list of mapped attributes to use for auto-generating row ids via sha256 hashing.
-    If None, all mapped attributes will be used for hashing.
-    """
-
-    hash_id_with_path: bool = False
+    sel: str | InvAttrMap | XPath
+    with_path: bool = False
     """If True, the id will be generated based on the data and the full tree path.
     """
+
+
+InvMap: TypeAlias = Mapping[Prop[Rec, Val], InvAttrMap | Transform[Val] | Hash]
+
+
+@dataclass
+class RecordMap(Generic[Rec]):
+    """Configuration for how to map (nested) dictionary items to relational tables."""
+
+    target: type[Rec]
+    """Target record type to map to."""
+
+    map: RelMap | set[str] | str | Callable[[dict | str], RelMap | set[str] | str]
+    """Mapping of hierarchical attributes to record props or other records."""
+
+    loader: Callable[[Hashable], str | list | dict] | None = None
+    """Loader function to load data for this record from a source."""
+
+    inv_map: InvMap | None = None
+    """Mapping of record props to hierarchical attributes."""
+
+    sub_maps: "list[RecordMap] | None" = None
+    """Map attributes on the same level to different records"""
 
     match_by_attr: bool | str = False
     """Try to match this mapped data to target table (by given attr)
@@ -81,13 +84,11 @@ class TableMap:
     """Which policy to use if import conflicts occur for this table."""
 
 
-_SubMap = tuple[dict | list, TableMap | list[TableMap]]
+_SubMap = tuple[dict | list, RecordMap | list[RecordMap]]
 """Combination of data and mapping for a subtree."""
 
 
-def _map_sublayer(
-    node: dict, mapping: _RelationalMap
-) -> tuple[pd.Series, dict[str, _SubMap]]:
+def _map_sublayer(node: dict, mapping: RelMap) -> tuple[pd.Series, dict[str, _SubMap]]:
     """Extract hierarchical data into set of scalar attributes + ref'd data objects."""
     # Split the current mapping level into groups based on type.
     target_groups: dict[type, dict] = {
@@ -117,9 +118,9 @@ def _map_sublayer(
     }
 
     refs = {
-        attr: (data, cast(TableMap | list[TableMap], sub_map))
+        attr: (data, cast(RecordMap | list[RecordMap], sub_map))
         for attr, sub_map in {
-            **(target_groups.get(TableMap) or {}),
+            **(target_groups.get(RecordMap) or {}),
             **(target_groups.get(list) or {}),
         }.items()
         if isinstance(data := node.get(attr), dict | list)
@@ -154,22 +155,9 @@ def _gen_row_hash(
     return row_id
 
 
-_DictDB: TypeAlias = dict[str, dict[Hashable, dict[str, Any]]]
-"""All-dictionary representation of a relational database for performant extending."""
-
-_Rels: TypeAlias = dict[tuple[str, str], tuple[str, str]]
-"""Relations between tables, indexed by the referencing table and column."""
-
-_JoinTables: TypeAlias = set[str]
-"""Names of all join tables in the database."""
-
-RelDB = tuple[_DictDB, _Rels, _JoinTables]
-"""Full relational database representation."""
-
-
 def _handle_refs(  # noqa: C901
-    mapping: TableMap,
-    db: RelDB,
+    mapping: RecordMap,
+    db: DataBase,
     row: pd.Series,
     refs: list[tuple[str | None, _SubMap]],
     collect_conflicts: bool = False,
@@ -177,9 +165,10 @@ def _handle_refs(  # noqa: C901
     _path: list[str | int] | None = None,
 ) -> DataConflicts:
     """Handle references to other tables."""
+    raise NotImplementedError("This function is not yet implemented.")
+
     _all_conflicts = _all_conflicts or {}
     _path = _path or []
-    database, relations, join_tables = db
 
     # Handle nested data, which is to be extracted into separate tables and referenced.
     for attr, (sub_data, sub_maps) in refs:
@@ -291,20 +280,17 @@ def _handle_refs(  # noqa: C901
 
 def _tree_to_db(  # noqa: C901
     data: dict | str,
-    mapping: TableMap,
-    db: RelDB,
+    mapping: RecordMap,
+    db: DataBase,
     collect_conflicts: bool = False,
     _all_conflicts: DataConflicts | None = None,
     _path: list[str | int] | None = None,
 ) -> tuple[pd.Series, DataConflicts]:
     """Transform recursive dictionary data into relational format."""
+    raise NotImplementedError("This function is not yet implemented.")
+
     _all_conflicts = _all_conflicts or {}
     _path = _path or []
-    database, _, _ = db
-
-    # Initialize new table as defined by mapping, if it doesn't exist yet.
-    if mapping.table not in database:
-        database[mapping.table] = {}
 
     resolved_map = (
         mapping.map(data) if isinstance(mapping.map, Callable) else mapping.map
@@ -429,30 +415,40 @@ def _tree_to_db(  # noqa: C901
 @overload
 def tree_to_db(
     data: dict | str,
-    mapping: TableMap,
+    mapping: RecordMap,
+    backend: Backend[Name] = ...,  # type: ignore
+    schema: type[Schema] | None = ...,
     collect_conflicts: Literal[True] = ...,
-) -> tuple[DB, DataConflicts]: ...
+) -> tuple[DataBase[Name], DataConflicts]: ...
 
 
 @overload
 def tree_to_db(
     data: dict | str,
-    mapping: TableMap,
+    mapping: RecordMap,
+    backend: Backend[Name] = ...,  # type: ignore
+    schema: type[Schema] | None = ...,
     collect_conflicts: Literal[False] = ...,
-) -> DB: ...
+) -> DataBase[Name]: ...
 
 
 def tree_to_db(  # noqa: C901
     data: dict | str,
-    mapping: TableMap,
+    mapping: RecordMap,
+    backend: Backend[Name] = Backend("main"),
+    schema: type[Schema] | None = None,
     collect_conflicts: bool = False,
-) -> DB | tuple[DB, DataConflicts]:
-    """Transform recursive dictionary data into relational format.
+) -> DataBase[Name] | tuple[DataBase[Name], DataConflicts]:
+    """Transform recursive data into relational format.
 
     Args:
         data: The data to be transformed
         mapping:
             Configuration for how to performm the mapping.
+        backend:
+            The backend to use for the database.
+        schema:
+            The schema to use for the database.
         collect_conflicts:
             Collect all conflicts and return them, rather than stopping right away.
 
@@ -461,20 +457,8 @@ def tree_to_db(  # noqa: C901
         If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
         is returned.
     """
-    df_dict = {}
-    rels = {}
-    join_tables = set()
-    _, conflicts = _tree_to_db(
-        data, mapping, (df_dict, rels, join_tables), collect_conflicts
-    )
-    db = DB(
-        table_dfs={
-            name: pd.DataFrame.from_dict(df, orient="index").rename_axis(
-                "_id", axis="index"
-            )
-            for name, df in df_dict.items()
-        },
-        relations=rels,
-        join_tables=join_tables,
-    )
+    db = DataBase(backend, schema)
+
+    _, conflicts = _tree_to_db(data, mapping, db, collect_conflicts)
+
     return (db, conflicts) if collect_conflicts else db
