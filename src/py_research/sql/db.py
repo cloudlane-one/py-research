@@ -1,7 +1,7 @@
 """Abstract Python interface for SQL databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from functools import cache, cached_property, partial, reduce
 from io import BytesIO
@@ -40,6 +40,7 @@ from xlsxwriter import Workbook as ExcelWorkbook
 
 from py_research.files import HttpFile
 from py_research.hashing import gen_str_hash
+from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.types import has_type
 from py_research.sql.schema import (
     Agg,
@@ -242,7 +243,12 @@ class Backend(Generic[Name]):
 
 @dataclass(frozen=True)
 class DataBase(Generic[Name]):
-    """Active connection to a SQL server."""
+    """Active connection to a (in-memory) SQL server."""
+
+    @staticmethod
+    def main() -> "DataBase[Literal['main']]":
+        """Return the main in-memory database instance."""
+        return DataBase(Backend("main"))
 
     backend: Backend[Name]
     schema: (
@@ -274,6 +280,42 @@ class DataBase(Generic[Name]):
 
         if self.overlay is not None and self.overlay_with_schemas:
             self._ensure_schema_exists(self.overlay)
+
+    def describe(self) -> dict[str, str | dict[str, str] | None]:
+        """Return a description of this database.
+
+        Returns:
+            Mapping of table names to table descriptions.
+        """
+        schema_desc = {}
+        if self.schema is not None:
+            schema_ref = PyObjectRef.reference(self.schema)
+
+            schema_desc = {
+                "schema": {
+                    "repo": schema_ref.repo,
+                    "package": schema_ref.package,
+                    "class": f"{schema_ref.module}.{schema_ref.object}",
+                }
+            }
+
+            if schema_ref.object_version is not None:
+                schema_desc["schema"]["version"] = schema_ref.object_version
+            elif schema_ref.package_version is not None:
+                schema_desc["schema"]["version"] = schema_ref.package_version
+
+            if schema_ref.repo_revision is not None:
+                schema_desc["schema"]["revision"] = schema_ref.repo_revision
+
+            if schema_ref.docs_url is not None:
+                schema_desc["schema"]["docs"] = schema_ref.docs_url
+
+        return {
+            **schema_desc,
+            "backend": (
+                asdict(self.backend) if self.backend.type != "in-memory" else None
+            ),
+        }
 
     @cached_property
     def meta(self) -> sqla.MetaData:
@@ -360,7 +402,11 @@ class DataBase(Generic[Name]):
             )
             if self.backend.type == "sql-connection"
             or self.backend.type == "sqlite-file"
-            else sqla.create_engine("duckdb:///:memory:")
+            else (
+                sqla.create_engine("duckdb:///:default:")
+                if self.backend.name == "main"
+                else sqla.create_engine("sqlite:///:memory:")
+            )
         )
 
     def validate(self) -> None:
@@ -524,12 +570,20 @@ class DataBase(Generic[Name]):
 
         return ds
 
-    def copy(self, backend: Backend[Name2]) -> "DataBase[Name2]":
-        """Transfer the DB to a different backend."""
+    def copy(
+        self, backend: Backend[Name2] = Backend("main"), overlay: str | bool = True
+    ) -> "DataBase[Name2]":
+        """Transfer the DB to a different backend (defaults to in-memory)."""
         other_db = DataBase(
             backend,
             self.schema,
             create_cross_fk=self.create_cross_fk,
+            overlay=(
+                (self.overlay or token_hex())
+                if overlay is True
+                else overlay if isinstance(overlay, str) else None
+            ),
+            overlay_with_schemas=self.overlay_with_schemas,
             validate_on_init=False,
         )
 
