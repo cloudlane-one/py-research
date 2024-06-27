@@ -2,6 +2,7 @@
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from functools import cache, cached_property, partial, reduce
 from io import BytesIO
 from pathlib import Path
@@ -28,6 +29,7 @@ import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
 from cloudpathlib import CloudPath
 from pandas.api.types import (
+    is_bool_dtype,
     is_datetime64_dtype,
     is_integer_dtype,
     is_numeric_dtype,
@@ -45,19 +47,20 @@ from py_research.sql.schema import (
     BaseIdx,
     Idx,
     Key,
-    MergeTup,
     Prop,
     Rec,
     Rec2,
     Rec_cov,
     Record,
     Rel,
-    RelMerge,
+    RelDict,
     RelTree,
+    RelTup,
     Require,
     Schema,
     SingleIdx,
     Val,
+    dynamic_record_type,
 )
 
 DataFrame: TypeAlias = pd.DataFrame | pl.DataFrame
@@ -88,37 +91,92 @@ RecInput: TypeAlias = (
 ValInput: TypeAlias = Series | Mapping[Key, Val] | sqla.Select[tuple[Key, Val]] | Val
 
 
-def map_df_dtype(c: pd.Series | pl.Series) -> sqla.types.TypeEngine:  # noqa: C901
-    """Map pandas dtype to sqlalchemy type."""
+def map_df_dtype(c: pd.Series | pl.Series) -> type | None:
+    """Map pandas dtype to Python type."""
     if isinstance(c, pd.Series):
         if is_datetime64_dtype(c):
-            return sqla.types.DATETIME()
+            return datetime
+        elif is_bool_dtype(c):
+            return bool
         elif is_integer_dtype(c):
-            return sqla.types.INTEGER()
+            return int
         elif is_numeric_dtype(c):
-            return sqla.types.FLOAT()
+            return float
         elif is_string_dtype(c):
-            max_len = c.str.len().max()
-            if max_len < 16:
-                return sqla.types.CHAR(max_len)
-            elif max_len < 256:
-                return sqla.types.VARCHAR(max_len)
+            return str
     else:
         if c.dtype.is_temporal():
-            return sqla.types.DATE()
+            return datetime
         elif c.dtype.is_integer():
-            return sqla.types.INTEGER()
+            return int
         elif c.dtype.is_float():
-            return sqla.types.FLOAT()
+            return float
         elif c.dtype.is_(pl.String):
-            max_len = c.str.len_bytes().max()
-            assert max_len is not None
-            if (max_len) < 16:  # type: ignore
-                return sqla.types.CHAR(max_len)  # type: ignore
-            elif max_len < 256:  # type: ignore
-                return sqla.types.VARCHAR(max_len)  # type: ignore
+            return str
 
-    return sqla.types.BLOB()
+    return None
+
+
+def map_col_dtype(c: sqla.ColumnElement) -> type | None:
+    """Map sqla column type to Python type."""
+    match c.type:
+        case sqla.DateTime():
+            return datetime
+        case sqla.Date():
+            return date
+        case sqla.Time():
+            return time
+        case sqla.Boolean():
+            return bool
+        case sqla.Integer():
+            return int
+        case sqla.Float():
+            return float
+        case sqla.String() | sqla.Text() | sqla.Enum():
+            return str
+        case sqla.LargeBinary():
+            return bytes
+        case _:
+            return None
+
+
+def props_from_data(
+    data: DataFrame | sqla.Select, foreign_keys: Mapping[str, Attr] | None = None
+) -> list[Prop]:
+    """Extract prop definitions from dataframe or query."""
+    if isinstance(data, pd.DataFrame) and len(data.index.names) > 1:
+        raise NotImplementedError("Multi-index not supported yet.")
+
+    foreign_keys = foreign_keys or {}
+
+    def _gen_prop(name: str, data: Series | sqla.ColumnElement) -> Prop:
+        is_rel = name in foreign_keys
+        attr = Attr(
+            primary_key=True,
+            _name=name if not is_rel else f"fk_{name}",
+            _value_type=(
+                map_df_dtype(data) if isinstance(data, Series) else map_col_dtype(data)
+            ),
+        )
+        return attr if not is_rel else Rel(via={attr: foreign_keys[name]})
+
+    columns = (
+        [data[col] for col in data.columns]
+        if isinstance(data, DataFrame)
+        else list(data.columns)
+    )
+
+    return [
+        *(
+            (
+                _gen_prop(level, data.index.get_level_values(level).to_series())
+                for level in data.index.names
+            )
+            if isinstance(data, pd.DataFrame)
+            else []
+        ),
+        *(_gen_prop(str(col.name), col) for col in columns),
+    ]
 
 
 def remove_external_fk(table: sqla.Table):
@@ -205,6 +263,7 @@ class DataBase(Generic[Name]):
 
     validate_on_init: bool = True
     create_cross_fk: bool = True
+    overlay_with_schemas: bool = True
 
     overlay: str | None = None
     _overlay_subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
@@ -212,6 +271,9 @@ class DataBase(Generic[Name]):
     def __post_init__(self):  # noqa: D105
         if self.validate_on_init:
             self.validate()
+
+        if self.overlay is not None and self.overlay_with_schemas:
+            self._ensure_schema_exists(self.overlay)
 
     @cached_property
     def meta(self) -> sqla.MetaData:
@@ -374,8 +436,8 @@ class DataBase(Generic[Name]):
         """Return the dataset for given record type."""
         if self.backend.type == "excel-file":
             self._load_from_excel([key])
-        table = self._get_table(key)
-        return DataSet(self, table, selection=key)
+
+        return DataSet(self, key)
 
     def __setitem__(  # noqa: D105
         self,
@@ -385,10 +447,7 @@ class DataBase(Generic[Name]):
         if self.backend.type == "excel-file":
             self._load_from_excel([key])
 
-        if key not in self._overlay_subs:
-            self._overlay_subs[key] = self._get_table(key)
-
-        table = self._ensure_table_exists(self._get_table(key))
+        table = self._ensure_table_exists(self._get_table(key, writable=True))
         cols = list(table.c.keys())
         table_fqn = str(table)
 
@@ -425,10 +484,7 @@ class DataBase(Generic[Name]):
             self._save_to_excel([key])
 
     def __delitem__(self, key: type[Rec]) -> None:  # noqa: D105
-        if key not in self._overlay_subs:
-            self._overlay_subs[key] = self._get_table(key)
-
-        table = self._ensure_table_exists(self._get_table(key))
+        table = self._ensure_table_exists(self._get_table(key, writable=True))
         with self.engine.begin() as con:
             table.drop(con)
 
@@ -451,52 +507,24 @@ class DataBase(Generic[Name]):
 
     def dataset(
         self,
-        data: RecInput[Rec, Any],
-        record_type: type[Rec] | None = None,
+        data: DataFrame | sqla.Select,
         foreign_keys: Mapping[str, Attr] | None = None,
-    ) -> "DataSet[Name, Rec, None]":
+    ) -> "DataSet[Name, Record, None]":
         """Create a temporary dataset instance from a DataFrame or SQL query."""
-        table_name = (
+        name = (
             f"temp_df_{gen_str_hash(data, 10)}"
             if isinstance(data, DataFrame)
             else f"temp_{token_hex(5)}"
         )
 
-        table = None
-
-        if record_type is not None:
-            table = self._get_table(record_type)
-        elif isinstance(data, DataFrame):
-            table = sqla.Table(
-                table_name,
-                self.meta,
-                *self._cols_from_df(data, foreign_keys=foreign_keys).values(),
-            )
-        elif isinstance(data, Record):
-            table = self._get_table(data)
-        elif has_type(data, Iterable[Record]):
-            table = self._get_table(next(data.__iter__()))
-        elif has_type(data, Mapping[Any, Record]):
-            table = self._get_table(next(data.values().__iter__()))
-        elif isinstance(data, sqla.Select):
-            table = sqla.Table(
-                table_name,
-                self.meta,
-                *(
-                    sqla.Column(name, col.type, primary_key=col.primary_key)
-                    for name, col in data.selected_columns.items()
-                ),
-            )
-        else:
-            raise TypeError("Unsupported type given as value")
-
-        table = self._ensure_table_exists(table)
-
-        ds = DataSet(self, table, selection=record_type)
+        rec = dynamic_record_type(name, props=props_from_data(data, foreign_keys))
+        self._ensure_table_exists(self._get_table(rec, writable=True))
+        ds = DataSet(self, rec)
         ds[:] = data
+
         return ds
 
-    def transfer(self, backend: Backend[Name2]) -> "DataBase[Name2]":
+    def copy(self, backend: Backend[Name2]) -> "DataBase[Name2]":
         """Transfer the DB to a different backend."""
         other_db = DataBase(
             backend,
@@ -506,9 +534,8 @@ class DataBase(Generic[Name]):
         )
 
         for rec in self.record_types:
-            ds = self[rec]
-            ds.load(kind=pl.DataFrame).write_database(
-                str(ds.base), str(other_db.backend.url)
+            self[rec].load(kind=pl.DataFrame).write_database(
+                str(self._get_table(rec)), str(other_db.backend.url)
             )
 
         return other_db
@@ -528,9 +555,9 @@ class DataBase(Generic[Name]):
         node_dfs = [
             n.load(kind=pd.DataFrame)
             .reset_index()
-            .assign(table=n.selection._default_table_name())
+            .assign(table=n.base._default_table_name())
             for n in node_tables
-            if isinstance(n.selection, type)
+            if isinstance(n.base, type)
         ]
         node_df = (
             pd.concat(node_dfs, ignore_index=True)
@@ -621,51 +648,41 @@ class DataBase(Generic[Name]):
 
         return node_df, edge_df
 
-    def _cols_from_df(
-        self, df: DataFrame, foreign_keys: Mapping[str, Attr] | None = None
-    ) -> dict[str, sqla.Column]:
-        """Create columns from DataFrame."""
-        if isinstance(df, pd.DataFrame) and len(df.index.names) > 1:
-            raise NotImplementedError("Multi-index not supported yet.")
-
-        fks = foreign_keys or {}
-
-        def gen_fk(col: str) -> list[sqla.ForeignKey]:
-            return (
-                [sqla.ForeignKey(self._get_table(fks[col].rec_type).c[fks[col].name])]
-                if col in fks
-                else []
+    @cache
+    def _get_table(self, rec: type[Record], writable: bool = False) -> sqla.Table:
+        if writable and self.overlay is not None and rec not in self._overlay_subs:
+            # Create an empty overlay table for the record type
+            self._overlay_subs[rec] = sqla.table(
+                (
+                    (self.overlay + "_" + rec._default_table_name())
+                    if self.overlay_with_schemas
+                    else rec._default_table_name()
+                ),
+                schema=self.overlay if self.overlay_with_schemas else None,
             )
 
-        return {
-            **(
-                {
-                    level: sqla.Column(
-                        level,
-                        map_df_dtype(df.index.get_level_values(level).to_series()),
-                        *gen_fk(level),
-                        primary_key=True,
-                    )
-                    for level in df.index.names
-                }
-                if isinstance(df, pd.DataFrame)
-                else {}
-            ),
-            **{
-                str(df[col].name): sqla.Column(
-                    str(df[col].name), map_df_dtype(df[col]), *gen_fk(col)
-                )
-                for col in df.columns
-            },
-        }
-
-    @cache
-    def _get_table(self, rec: type[Record]) -> sqla.Table:
         return rec._table(self.meta, self.subs)
 
     @cache
     def _get_joined_table(self, rec: type[Record]) -> sqla.Table | sqla.Join:
         return rec._joined_table(self.meta, self.subs)
+
+    @cache
+    def _get_alias(self, rel: Rel) -> sqla.FromClause:
+        """Get alias for a relation reference."""
+        return self._get_joined_table(rel.target_type).alias(gen_str_hash(rel, 8))
+
+    def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
+        """Get random alias for a type."""
+        return self._get_joined_table(rec).alias(token_hex(4))
+
+    def _ensure_schema_exists(self, schema_name: str) -> str:
+        """Ensure that the table exists in the database, then return it."""
+        if not sqla.inspect(self.engine).has_schema(schema_name):
+            with self.engine.begin() as conn:
+                conn.execute(sqla.schema.CreateSchema(schema_name))
+
+        return schema_name
 
     def _ensure_table_exists(self, sqla_table: sqla.Table) -> sqla.Table:
         """Ensure that the table exists in the database, then return it."""
@@ -748,62 +765,240 @@ class DataBase(Generic[Name]):
             self.backend.url.set(file)
 
 
-Union: TypeAlias = sqla.FromClause
 Join: TypeAlias = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
 
 
 @dataclass(frozen=True)
 class DataSet(Generic[Name, Rec_cov, Idx_cov]):
-    """Dataset selection."""
+    """Dataset attached to a database."""
 
     db: DataBase[Name]
-    base: sqla.FromClause
-    selection: type[Rec_cov] | Prop[Rec_cov, Any] | None = None
-    merges: RelMerge = RelMerge()
+    base: type[Rec_cov] | Prop[Rec_cov, Any] | set["DataSet[Name, Rec_cov, Idx_cov]"]
+    extensions: RelTree = RelTree()
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
     keys: Sequence[slice | list[Hashable] | Hashable | sqla.ColumnElement] = field(
         default_factory=list
     )
 
     @cached_property
-    def record_type(self) -> type[Rec_cov] | None:
+    def record_type(self) -> type[Rec_cov]:
         """Record type of this dataset."""
-        return cast(
-            type[Rec_cov] | None,
-            (
-                self.selection.record_type
-                if isinstance(self.selection, Prop)
-                else self.selection if isinstance(self.selection, type) else None
-            ),
+        return (
+            self.base.record_type
+            if isinstance(self.base, Prop)
+            else (
+                self.base
+                if isinstance(self.base, type)
+                else [r.record_type for r in self.base][0]
+            )
         )
-
-    @cached_property
-    def base_set(self) -> "DataSet[Name, Rec_cov, Idx_cov]":
-        """Base dataset for this dataset."""
-        return DataSet(self.db, self.base)
 
     @cached_property
     def main_idx(self) -> set[Attr[Rec_cov, Any]] | None:
         """Main index of this dataset."""
-        match self.selection:
-            case type():
-                return self.selection._indexes()
-            case Rel():
-                return self.selection.target_type._indexes()
-            case Prop():
-                return self.selection.record_type._indexes()
-            case None:
-                return None
+        return self.record_type._indexes()
 
     @cached_property
     def path_idx(self) -> list[Attr] | None:
         """Optional, alternative index of this dataset based on merge path."""
-        path = self.selection.path if isinstance(self.selection, Prop) else []
+        path = self.base.path if isinstance(self.base, Prop) else []
 
         if any(rel.index_by is None for rel in path):
             return None
 
         return [rel.index_by for rel in path if rel.index_by is not None]
+
+    @cached_property
+    def base_table(self) -> sqla.FromClause:
+        """Get the main table for the current selection."""
+        return (
+            sqla.union(*(sqla.select(ds.base_table) for ds in self.base)).subquery()
+            if isinstance(self.base, set)
+            else (
+                self.db._get_alias(self.base)
+                if isinstance(self.base, Rel)
+                else (
+                    self.db._get_alias(self.base.parent)
+                    if isinstance(self.base, Prop) and self.base.parent is not None
+                    else (self.db._get_joined_table(self.record_type))
+                )
+            )
+        )
+
+    def joins(self, _subtree: RelDict | None = None) -> list[Join]:
+        """Extract join operations from the relation tree."""
+        joins = []
+        _subtree = _subtree or self.extensions.dict
+
+        for rel, next_subtree in _subtree.items():
+            parent = (
+                self.db._get_alias(rel.parent)
+                if rel.parent is not None
+                else self.base_table
+            )
+
+            temp_alias_map = {
+                rec: self.db._get_random_alias(rec) for rec in rel.inter_joins.keys()
+            }
+
+            joins.extend(
+                (
+                    temp_alias_map[rec],
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    parent.c[lk.name] == temp_alias_map[rec].c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in joins
+                        ),
+                    ),
+                )
+                for rec, joins in rel.inter_joins.items()
+            )
+
+            target_table = self.db._get_alias(rel)
+
+            joins.append(
+                (
+                    target_table,
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    temp_alias_map[lk.record_type].c[lk.name]
+                                    == target_table.c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in rel.joins
+                        ),
+                    ),
+                )
+            )
+
+            joins.extend(self.joins(next_subtree))
+
+        return joins
+
+    def parse_merge_tree(self, merge: Rel | RelTree | None) -> RelTree:
+        """Parse merge argument and prefix with current selection."""
+        merge = (
+            merge
+            if isinstance(merge, RelTree)
+            else RelTree({merge}) if merge is not None else RelTree()
+        )
+        return (
+            self.base >> merge
+            if isinstance(self.base, Rel)
+            else (self.base.path[-1] >> merge if isinstance(self.base, Prop) else merge)
+        )
+
+    def gen_idx_match_expr(
+        self,
+        values: Sequence[slice | list[Hashable] | Hashable | sqla.ColumnElement],
+    ) -> sqla.ColumnElement[bool] | None:
+        """Generate SQL expression for matching index values."""
+        if values == slice(None):
+            return None
+
+        idx_attrs = (
+            self.main_idx
+            if self.main_idx is not None and len(values) == len(self.main_idx)
+            else (
+                self.path_idx
+                if self.path_idx is not None and len(values) == len(self.path_idx)
+                else []
+            )
+        )
+
+        exprs = [
+            (
+                idx.in_(val)
+                if isinstance(val, list)
+                else (
+                    idx.between(val.start, val.stop)
+                    if isinstance(val, slice)
+                    else idx == val
+                )
+            )
+            for idx, val in zip(idx_attrs, values)
+        ]
+
+        if len(exprs) == 0:
+            return None
+
+        return reduce(sqla.and_, exprs)
+
+    def _replace_attr(
+        self,
+        element: sqla_visitors.ExternallyTraversible,
+        reflist: set[Rel] = set(),
+        **kw: Any,
+    ) -> sqla.ColumnElement | None:
+        if isinstance(element, Attr):
+            if element.parent is not None:
+                reflist.add(element.parent)
+
+            if isinstance(self.base, Rel):
+                element = self.base >> element
+            elif isinstance(self.base, Prop) and self.base.parent is not None:
+                element = self.base.parent >> element
+
+            table = (
+                self.db._get_alias(element.parent)
+                if element.parent is not None
+                else self.db._get_table(element.record_type)
+            )
+            return table.c[element.name]
+
+        return None
+
+    def parse_filter(
+        self,
+        key: sqla.ColumnElement[bool] | pd.Series,
+    ) -> tuple[sqla.ColumnElement[bool], RelTree]:
+        """Parse filter argument and return SQL expression and join operations."""
+        filt = None
+        merge = RelTree()
+
+        match key:
+            case sqla.ColumnElement():
+                # Filtering via SQL expression.
+                reflist = set()
+                replace_func = partial(self._replace_attr, reflist=reflist)
+                filt = sqla_visitors.replacement_traverse(key, {}, replace=replace_func)
+                merge += RelTree(reflist)
+            case pd.Series():
+                # Filtering via boolean Series.
+                assert all(
+                    n1 == n2.name
+                    for n1, n2 in zip(key.index.names, self.record_type._indexes())
+                )
+
+                series_name = token_hex(8)
+                uploaded = self.db.dataset(
+                    key.rename(series_name).to_frame(),
+                    foreign_keys={
+                        pk: getattr(self.record_type, pk) for pk in key.index.names
+                    },
+                )
+
+                filt = self.db._get_table(uploaded).c[series_name] == True  # noqa: E712
+                merge += Rel(via=uploaded.record_type)
+
+        return filt, merge
+
+    @cached_property
+    def base_set(self) -> "DataSet[Name, Rec_cov, Idx_cov]":
+        """Base dataset for this dataset."""
+        return DataSet(self.db, self.record_type)
 
     # Overloads: attribute selection:
 
@@ -907,8 +1102,8 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | Series
         ),
     ) -> "DataSet":
-        filt, join = (
-            self._parse_filter(key)
+        filt, ext = (
+            self.parse_filter(key)
             if isinstance(key, sqla.ColumnElement | pd.Series)
             else (None, None)
         )
@@ -925,13 +1120,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         return DataSet(
             self.db,
-            self.base.join(*join) if isinstance(join, tuple) else self.base,
             (
-                self.selection >> key
-                if isinstance(self.selection, type | Rel) and isinstance(key, Prop)
-                else self.selection
+                self.base >> key
+                if isinstance(self.base, type | Rel) and isinstance(key, Prop)
+                else self.base
             ),
-            self.merges + join if isinstance(join, RelMerge) else self.merges,
+            (self.extensions + ext if isinstance(ext, RelTree) else self.extensions),
             self.filters + [filt] if filt is not None else self.filters,
             keys if keys is not None else self.keys,
         )
@@ -944,31 +1138,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def select(
-        self, merge: RelMerge[*MergeTup]
-    ) -> sqla.Select[tuple[Rec_cov, *MergeTup]]: ...
+        self, merge: RelTree[*RelTup]
+    ) -> sqla.Select[tuple[Rec_cov, *RelTup]]: ...
 
     def select(
         self,
-        merge: Rel | RelMerge | None = None,
+        merge: Rel | RelTree | None = None,
         index_only: bool = False,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
-        abs_merge = self._parse_merge(merge)
+        abs_merge = self.parse_merge_tree(merge)
 
-        selection_table = (
-            self._get_alias(self.selection)
-            if isinstance(self.selection, Rel)
-            else (
-                self._get_alias(self.selection.parent)
-                if isinstance(self.selection, Prop)
-                and self.selection.parent is not None
-                else (
-                    self.db._get_joined_table(self.record_type)
-                    if self.record_type is not None
-                    else self.base
-                )
-            )
-        )
+        selection_table = self.base_table
 
         select = sqla.select(
             *(
@@ -979,12 +1160,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             *(
                 col.label(f"{rel.path_str}.{col_name}")
                 for rel in abs_merge.rels
-                for col_name, col in self._get_alias(rel).columns.items()
+                for col_name, col in self.db._get_alias(rel).columns.items()
                 if not index_only or col.primary_key
             ),
-        ).select_from(self.base)
+        ).select_from(selection_table)
 
-        for join in self._get_joins():
+        for join in self.joins():
             select = select.join(*join)
 
         for filt in self.filters:
@@ -1009,15 +1190,15 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     @overload
     def load(
         self: "DataSet[Name, Rec_cov, SingleIdx]",
-        merge: RelMerge[*MergeTup],
+        merge: RelTree[*RelTup],
         kind: type[Record] = ...,
-    ) -> tuple[Rec_cov, *MergeTup]: ...
+    ) -> tuple[Rec_cov, *RelTup]: ...
 
     @overload
     def load(self, merge: None = ..., kind: type[Df] = ...) -> Df: ...  # type: ignore
 
     @overload
-    def load(self, merge: Rel | RelMerge, kind: type[Df]) -> tuple[Df, ...]: ...
+    def load(self, merge: Rel | RelTree, kind: type[Df]) -> tuple[Df, ...]: ...
 
     @overload
     def load(
@@ -1031,12 +1212,12 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
     @overload
     def load(
-        self, merge: RelMerge[*MergeTup], kind: type[Record] = ...
-    ) -> Sequence[tuple[Rec_cov, *MergeTup]]: ...
+        self, merge: RelTree[*RelTup], kind: type[Record] = ...
+    ) -> Sequence[tuple[Rec_cov, *RelTup]]: ...
 
     def load(
         self,
-        merge: Rel | RelMerge | None = None,
+        merge: Rel | RelTree | None = None,
         kind: type[Record | Df] = Record,
     ) -> (
         Rec_cov
@@ -1049,7 +1230,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         if issubclass(kind, Record):
             raise NotImplementedError("Downloading record instances not supported yet.")
 
-        abs_merge = self._parse_merge(merge)
+        abs_merge = self.parse_merge_tree(merge)
         select = self.select(merge)
 
         df = None
@@ -1225,7 +1406,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         self, other: "DataSet[Name, Rec_cov, Idx]"
     ) -> "DataSet[Name, Rec_cov, Idx_cov | Idx]":
         """Union two datasets."""
-        return DataSet(self.db, sqla.union(self.select(), other.select()).subquery())
+        return DataSet(self.db, {self, other})
 
     def extract(
         self,
@@ -1329,188 +1510,6 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         """Return subquery for the current selection to be used inside SQL clauses."""
         return self.select().subquery()
 
-    def _get_alias(self, rel: Rel) -> sqla.FromClause:
-        """Get alias for a relation reference."""
-        return self.db._get_joined_table(rel.target_type).alias(gen_str_hash(rel, 8))
-
-    def _get_random_alias(self, rec: type[Record]) -> sqla.FromClause:
-        """Get random alias for a type."""
-        return self.db._get_joined_table(rec).alias(token_hex(4))
-
-    def _get_joins(self, _subtree: RelTree | None = None) -> list[Join]:
-        """Extract join operations from the relation tree."""
-        _subtree = _subtree or self.merges.rel_tree
-        joins = []
-
-        for rel, next_subtree in _subtree.items():
-            parent = (
-                self._get_alias(rel.parent) if rel.parent is not None else self.base
-            )
-
-            temp_alias_map = {
-                rec: self._get_random_alias(rec) for rec in rel.inter_joins.keys()
-            }
-
-            joins.extend(
-                (
-                    temp_alias_map[rec],
-                    reduce(
-                        sqla.or_,
-                        (
-                            reduce(
-                                sqla.and_,
-                                (
-                                    parent.c[lk.name] == temp_alias_map[rec].c[rk.name]
-                                    for lk, rk in join_on.items()
-                                ),
-                            )
-                            for join_on in joins
-                        ),
-                    ),
-                )
-                for rec, joins in rel.inter_joins.items()
-            )
-
-            target_table = self._get_alias(rel)
-
-            joins.append(
-                (
-                    target_table,
-                    reduce(
-                        sqla.or_,
-                        (
-                            reduce(
-                                sqla.and_,
-                                (
-                                    temp_alias_map[lk.record_type].c[lk.name]
-                                    == target_table.c[rk.name]
-                                    for lk, rk in join_on.items()
-                                ),
-                            )
-                            for join_on in rel.joins
-                        ),
-                    ),
-                )
-            )
-
-            joins.extend(self._get_joins(next_subtree))
-
-        return joins
-
-    def _parse_merge(self, merge: Rel | RelMerge | None) -> RelMerge:
-        """Parse merge argument and prefix with current selection."""
-        merge = (
-            merge
-            if isinstance(merge, RelMerge)
-            else RelMerge({merge}) if merge is not None else RelMerge()
-        )
-        return (
-            self.selection >> merge
-            if isinstance(self.selection, Rel)
-            else (
-                self.selection.path[-1] >> merge
-                if isinstance(self.selection, Prop)
-                else merge
-            )
-        )
-
-    def _gen_idx_match_expr(
-        self,
-        values: Sequence[slice | list[Hashable] | Hashable | sqla.ColumnElement],
-    ) -> sqla.ColumnElement[bool] | None:
-        if values == slice(None):
-            return None
-
-        idx_attrs = (
-            self.main_idx
-            if self.main_idx is not None and len(values) == len(self.main_idx)
-            else (
-                self.path_idx
-                if self.path_idx is not None and len(values) == len(self.path_idx)
-                else []
-            )
-        )
-
-        exprs = [
-            (
-                idx.in_(val)
-                if isinstance(val, list)
-                else (
-                    idx.between(val.start, val.stop)
-                    if isinstance(val, slice)
-                    else idx == val
-                )
-            )
-            for idx, val in zip(idx_attrs, values)
-        ]
-
-        if len(exprs) == 0:
-            return None
-
-        return reduce(sqla.and_, exprs)
-
-    def _replace_attr(
-        self,
-        element: sqla_visitors.ExternallyTraversible,
-        reflist: set[Rel] = set(),
-        **kw: Any,
-    ) -> sqla.ColumnElement | None:
-        if isinstance(element, Attr):
-            if element.parent is not None:
-                reflist.add(element.parent)
-
-            if isinstance(self.selection, Rel):
-                element = self.selection >> element
-            elif isinstance(self.selection, Prop) and self.selection.parent is not None:
-                element = self.selection.parent >> element
-
-            table = (
-                self._get_alias(element.parent)
-                if element.parent is not None
-                else self.db._get_table(element.record_type)
-            )
-            return table.c[element.name]
-
-        return None
-
-    def _parse_filter(
-        self,
-        key: sqla.ColumnElement[bool] | pd.Series,
-    ) -> tuple[sqla.ColumnElement[bool], RelMerge | Join]:
-        filt = None
-        join = None
-        merge = RelMerge()
-
-        match key:
-            case sqla.ColumnElement():
-                # Filtering via SQL expression.
-                reflist = set()
-                replace_func = partial(self._replace_attr, reflist=reflist)
-                filt = sqla_visitors.replacement_traverse(key, {}, replace=replace_func)
-                merge += RelMerge(reflist)
-            case pd.Series():
-                # Filtering via boolean Series.
-
-                series_name = token_hex(8)
-                uploaded = self.db.dataset(key.rename(series_name).to_frame())
-                assert all(
-                    n1 == n2 for n1, n2 in zip(key.index.names, self.base.primary_key)
-                )
-
-                filt = uploaded.base.c[series_name] == True  # noqa: E712
-                join = (
-                    uploaded.base,
-                    reduce(
-                        sqla.and_,
-                        (
-                            self.base.c[pk] == uploaded.base.c[pk]
-                            for pk in key.index.names
-                        ),
-                    ),
-                )
-
-        return filt, join or merge
-
     def _set(  # noqa: D105
         self,
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
@@ -1547,25 +1546,27 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             )
         )
 
+        raise NotImplementedError("Inserting / updating not supported yet.")
+
         # Construct the insert / update statement.
         if insert:
             assert (
-                isinstance(self.selection, Record)
-                and isinstance(self.base, sqla.Table)
-                and len(self.filters) == 0
+                isinstance(self.base, Record) and len(self.filters) == 0
             ), "Can only upsert into unfiltered base datasets."
             assert value_set is not None
 
             # Do an insert-from-select operation, which updates on conflict:
-            statement = self.base.insert().from_select(
-                [col.name for col in self.base.columns],
+            statement = self.base_table.insert().from_select(
+                [col.name for col in self.base_table.columns],
                 value_set.select().subquery(),
             )
 
             if isinstance(statement, postgresql.Insert):
                 # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
                 statement = statement.on_conflict_do_update(
-                    index_elements=[col.name for col in self.base.primary_key.columns],
+                    index_elements=[
+                        col.name for col in self.base_table.primary_key.columns
+                    ],
                     set_=dict(statement.excluded),
                 )
             elif isinstance(statement, mysql.Insert):
@@ -1578,25 +1579,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                     "Upsert not supported for this database dialect."
                 )
         else:
-            assert isinstance(self.base, sqla.Table), "Base must be a table."
+            assert isinstance(self.base_table, sqla.Table), "Base must be a table."
 
             # Derive current select statement and join with value table, if exists.
             select = self.select()
             if value_set is not None:
                 select = select.join(
-                    value_set.base,
+                    self.base_table,
                     reduce(
                         sqla.and_,
                         (
-                            idx_col == self.base.c[idx_col.name]
-                            for idx_col in value_set.base.primary_key
+                            idx_col == self.base_table.c[idx_col.name]
+                            for idx_col in value_set.base_table.primary_key
                         ),
                     ),
                 )
 
-            selected_attr = (
-                self.selection.name if isinstance(self.selection, Attr) else None
-            )
+            selected_attr = self.base.name if isinstance(self.base, Attr) else None
 
             # Prepare update statement.
             if self.db.engine.dialect.name in (
@@ -1608,9 +1607,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             ):
                 # Update-from.
                 statement = (
-                    self.base.update()
+                    self.base_table.update()
                     .values(
-                        {col.name: col for col in value_set.base.columns}
+                        {col.name: col for col in value_set.base_table.columns}
                         if value_set is not None
                         else {selected_attr: value}
                     )
@@ -1618,8 +1617,8 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                         reduce(
                             sqla.and_,
                             (
-                                self.base.c[col.name] == select.c[col.name]
-                                for col in self.base.primary_key.columns
+                                self.base_table.c[col.name] == select.c[col.name]
+                                for col in self.base_table.primary_key.columns
                             ),
                         )
                     )
@@ -1634,4 +1633,4 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
 
         # Drop the temporary table, if any.
         if value_set is not None:
-            cast(sqla.Table, value_set.base).drop(self.db.engine)
+            cast(sqla.Table, value_set.base_table).drop(self.db.engine)

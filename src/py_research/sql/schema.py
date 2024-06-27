@@ -57,7 +57,7 @@ Recs = TypeVar("Recs", bound=RecordValue)
 Sch = TypeVar("Sch", bound="Schema")
 DBS = TypeVar("DBS", bound="Record | Schema")
 
-MergeTup = TypeVarTuple("MergeTup")
+RelTup = TypeVarTuple("RelTup")
 
 
 def _extract_record_type(hint: Any) -> type["Record"]:
@@ -91,10 +91,10 @@ class Prop(Generic[Rec, Val]):
         return self._name
 
     @property
-    def record_type(self) -> type["Record"]:
+    def record_type(self) -> type[Rec]:
         """Record type."""
         assert self._record_type is not None, "Record type not set."
-        return self._record_type
+        return cast(type[Rec], self._record_type)
 
     @property
     def value_type(self) -> type[Val]:
@@ -331,6 +331,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                         rel
                         for rel in other_rel.record_type._rels()
                         if issubclass(rel.target_type, self.record_type)
+                        and len(rel.fk_map) > 0
                     ]
 
                     return {
@@ -348,6 +349,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                     rel
                     for rel in self.via._rels()
                     if issubclass(rel.target_type, self.record_type)
+                    and len(rel.fk_map) > 0
                 ]
 
                 return {self.via: [back_rel.fk_map.inverse for back_rel in back_rels]}
@@ -355,6 +357,7 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
                 back, _ = self.via
+                assert len(back.fk_map) > 0, "Back relation must be direct."
                 return {back.record_type: [back.fk_map.inverse]}
             case _:
                 # Relation is defined via foreign key attributes
@@ -367,14 +370,16 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
             case Rel():
                 # Relation is defined via other relation or relation table
                 other_rel = self.via
-                assert isinstance(
-                    other_rel, Rel
-                ), "Back-reference must be an explicit relation"
-
-                if issubclass(other_rel.target_type, self.record_type):
-                    return [self.fk_map.inverse]
-                else:
-                    return [other_rel.fk_map]
+                assert (
+                    len(other_rel.fk_map) > 0
+                ), "Backref or forward-ref on relation table must be a direct relation"
+                return [
+                    (
+                        other_rel.fk_map.inverse
+                        if issubclass(other_rel.target_type, self.record_type)
+                        else other_rel.fk_map
+                    )
+                ]
 
             case type():
                 if issubclass(self.via, self.target_type):
@@ -383,21 +388,29 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
                         rel
                         for rel in self.via._rels()
                         if issubclass(rel.target_type, self.record_type)
+                        and len(rel.fk_map) > 0
                     ]
-                    return [back_rel.fk_map for back_rel in back_rels]
+                    assert len(back_rels) > 0, "No direct backlinks found."
+                    return [back_rel.fk_map.inverse for back_rel in back_rels]
 
                 # Relation is defined via relation table
                 fwd_rels = [
                     rel
                     for rel in self.via._rels()
                     if issubclass(rel.target_type, self.record_type)
+                    and len(rel.fk_map) > 0
                 ]
+                assert (
+                    len(fwd_rels) > 0
+                ), "No direct forward rels found on relation table."
                 return [fwd_rel.fk_map for fwd_rel in fwd_rels]
 
-            case tuple() if has_type(self.via, tuple[Rel, Rel]):
+            case tuple():
+                assert has_type(self.via, tuple[Rel, Rel])
                 # Relation is defined via back-rel + forward-rel
                 # on a relation table.
                 _, fwd = self.via
+                assert len(fwd.fk_map) > 0, "Forward relation must be direct."
                 return [fwd.fk_map]
 
             case _:
@@ -448,28 +461,39 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
             for rel in next_rel.get_subdag(backlink_records, _traversed)
         }
 
-    def __add__(self, other: "Rel[Any, Any, Rec3]") -> "RelMerge[Rec2, Rec3]":
+    def __add__(self, other: "Rel[Any, Any, Rec3]") -> "RelTree[Rec2, Rec3]":
         """Add another prop to the merge."""
-        return RelMerge({self}) + other
+        return RelTree({self}) + other
 
     def __hash__(self) -> int:
         """Hash the rel."""
         return gen_int_hash(self)
 
 
-RelTree: TypeAlias = dict[Rel, "RelTree"]
+RelDict: TypeAlias = dict[Rel, "RelDict"]
 
 
-@dataclass(frozen=True)
-class RelMerge(Generic[*MergeTup]):
-    """Tree of joined properties."""
+@dataclass
+class RelTree(Generic[*RelTup]):
+    """Tree of relations starting from the same root."""
 
-    rels: set[Rel] = field(default_factory=set)
+    rels: Iterable[Rel] = field(default_factory=set)
+
+    def __post_init__(self) -> None:  # noqa: D105
+        assert all(
+            rel.path[0].record_type == self.root for rel in self.rels
+        ), "Relations in set must all start from same root."
+        self.targets = [rel.target_type for rel in self.rels]
 
     @cached_property
-    def rel_tree(self) -> RelTree:
-        """Tree representation of the merge."""
-        tree = {}
+    def root(self) -> type["Record"]:
+        """Root record type of the set."""
+        return list(self.rels)[-1].path[0].record_type
+
+    @cached_property
+    def dict(self) -> RelDict:
+        """Tree representation of the relation set."""
+        tree: RelDict = {}
 
         for rel in self.rels:
             subtree = tree
@@ -480,21 +504,22 @@ class RelMerge(Generic[*MergeTup]):
 
         return tree
 
-    def __add__(
-        self, other: "Rel[Any, Any, Rec] | RelMerge"
-    ) -> "RelMerge[*MergeTup, Rec]":
-        """Add another Rel to the merge."""
-        other = other if isinstance(other, RelMerge) else RelMerge({other})
-        assert all(
-            list(self.rels)[-1].path[0].record_type == other_rel.path[0].record_type
-            for other_rel in other.rels
-        ), "Invalid relation merge."
-        return RelMerge({*self.rels, *other.rels})
-
-    def __rrshift__(self, prefix: type["Record"] | Rel) -> "RelMerge[*MergeTup]":
-        """Prepend a Rel to the merge."""
+    def __rrshift__(self, prefix: type["Record"] | Rel) -> Self:
+        """Prefix all relations in the set with given relation."""
         rels = {prefix >> rel for rel in self.rels}
-        return RelMerge(rels)
+        return cast(Self, RelTree(rels))
+
+    def __add__(self, other: "Rel[Any, Any, Rec] | RelTree") -> "RelTree[*RelTup, Rec]":
+        """Append more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*self.rels, *other.rels])
+
+    def __or__(
+        self: "RelTree[Rec]", other: "Rel[Any, Any, Rec2] | RelTree[Rec2]"
+    ) -> "RelTree[Rec | Rec2]":
+        """Add more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*self.rels, *other.rels])
 
 
 class Record(Generic[Idx, Val]):
@@ -747,13 +772,21 @@ class DynRecordMeta(type):
         """Get dynamic attribute by dynamic name."""
         return Attr(_record_type=cls, _name=name, _value_type=Any)
 
+    def __getattribute__(cls, name: str) -> Attr:
+        """Get dynamic attribute by name."""
+        return Attr(_record_type=cls, _name=name, _value_type=Any)
 
-class a(Record, metaclass=DynRecordMeta):  # noqa: N801
+
+class DynRecord(Record, metaclass=DynRecordMeta):  # noqa: N801
     """Dynamically defined record type."""
 
-    def __getattribute__(self, name: str) -> Attr:
-        """Get dynamic attribute by name."""
-        return Attr(_record_type=type(self), _name=name, _value_type=Any)
+
+a = DynRecord
+
+
+def dynamic_record_type(name: str, props: Iterable[Prop] = []) -> type[DynRecord]:
+    """Create a dynamically defined record type."""
+    return type(name, (DynRecord,), {p.name: p for p in props})
 
 
 AggMap: TypeAlias = dict[Attr[Rec, Any], Attr | sqla.Function]
