@@ -1,421 +1,402 @@
 """Utilities for importing different data representations into relational format."""
 
-from collections.abc import Callable, Hashable, Mapping
-from dataclasses import dataclass
-from datetime import datetime
-from itertools import chain, groupby
-from typing import Any, Generic, Literal, TypeAlias, cast, overload
-from uuid import uuid4
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from dataclasses import asdict, dataclass
+from functools import reduce
+from itertools import chain
+from typing import Any, Generic, Literal, Self, TypeAlias, overload
 
-import pandas as pd
+from lxml.etree import _ElementTree as ElementTree
 
 from py_research.hashing import gen_str_hash
+from py_research.reflect.types import has_type
 
 from .base import Backend, DataBase, DataSet, Name
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
-from .schema import Prop, Rec, Schema, Val
+from .schema import Attr, Prop, Rec, Rec2, Record, Rel, Schema
 
-Scalar = str | int | float | datetime
-
-
-@dataclass
-class XPath:
-    """Select a nested attribute via xpath."""
-
-    path: str
+TreeData: TypeAlias = Mapping[str | int, Any] | ElementTree | Sequence
 
 
-AttrMap: TypeAlias = Mapping[str | XPath, "str | bool | AttrMap"]
-"""Mapping of hierarchical attributes to record attributes"""
+class All:
+    """Select all nodes on a level."""
 
-RelMap: TypeAlias = Mapping[
-    str | XPath, "str | bool | RelMap | RecordMap | list[RecordMap]"
-]
+
+def _select_on_level(data: TreeData, selector: str | int | slice | type[All]) -> list:
+    """Select attribute from hierarchical data."""
+    if isinstance(selector, type):
+        assert selector is All
+        if isinstance(data, Iterable):
+            return list(data)
+        else:
+            return [data]
+
+    match data:
+        case Mapping():
+            assert not isinstance(selector, slice)
+            return [data.get(selector)]
+        case Sequence():
+            match selector:
+                case int() | slice():
+                    res = data[selector]
+                    return list(res) if isinstance(res, Sequence) else [res]
+                case str():
+                    return list(
+                        chain(*(_select_on_level(item, selector) for item in data))
+                    )
+        case ElementTree():
+            assert not isinstance(selector, int | slice)
+            return data.findall(selector, namespaces={})
+
+
+PathLevel: TypeAlias = (
+    str | int | slice | set[str] | set[int] | type[All] | Callable[[Any], bool]
+)
+
+
+@dataclass(frozen=True)
+class TreePath:
+    """Path to a specific node in a hierarchical data structure."""
+
+    path: Iterable[PathLevel]
+
+    def select(self, data: TreeData) -> list:
+        """Select the node in the data structure."""
+        node = data if isinstance(data, list) else [data]
+        for part in self.path:
+            match part:
+                case str() | int() | slice():
+                    node = _select_on_level(node, part)
+                case set():
+                    node = list(chain(*(_select_on_level(node, p) for p in part)))
+                case type():
+                    assert part is All
+                    node = node
+                case Callable():
+                    node = (
+                        list(filter(part, node))
+                        if isinstance(node, list)
+                        else node if part(node) else []
+                    )
+                case _:
+                    raise ValueError(f"Unsupported path part {part}")
+
+        return node
+
+    def __truediv__(self, other: "PathLevel | TreePath") -> "TreePath":
+        """Join two paths."""
+        if isinstance(other, TreePath):
+            return TreePath(list(self.path) + list(other.path))
+        return TreePath(list(self.path) + [other])
+
+    def __rtruediv__(self, other: PathLevel) -> "TreePath":
+        """Join two paths."""
+        return TreePath([other] + list(self.path))
+
+
+NodeSelector: TypeAlias = str | int | TreePath | type[All]
+"""Select a node in a hierarchical data structure."""
+
+
+_PushMapping: TypeAlias = Mapping[NodeSelector, "bool | XMap | PushMap[Rec]"]
+
+PushMap: TypeAlias = (
+    _PushMapping[Rec]
+    | set["Attr | RelMap"]
+    | Attr[Rec, Any]
+    | Callable[[TreeData | str], "PushMap[Rec]"]
+)
 """Mapping of hierarchical attributes to record props or other records."""
 
-InvAttrMap: TypeAlias = str | Mapping[str, "InvAttrMap"]
+
+@dataclass(frozen=True)
+class XSelect:
+    """Select node for further processing."""
+
+    @staticmethod
+    def parse(obj: "NodeSelector | XSelect") -> "XSelect":
+        """Parse the object into an x selector."""
+        if isinstance(obj, XSelect):
+            return obj
+        return XSelect(sel=obj)
+
+    sel: NodeSelector
+    """Node selector to use."""
+
+    def prefix(self, prefix: NodeSelector) -> Self:
+        """Prefix the selector."""
+        sel = self.sel if isinstance(self.sel, TreePath) else TreePath([self.sel])
+        return type(self)(**asdict(self), sel=prefix / sel)
+
+    def select(self, data: TreeData) -> list:
+        """Select the node in the data structure."""
+        match self.sel:
+            case str() | int() | slice() | type():
+                return _select_on_level(data, self.sel)
+            case TreePath():
+                return self.sel.select(data)
 
 
-@dataclass
-class Transform(Generic[Val]):
-    """Select and transform attributes."""
-
-    sel: str | InvAttrMap | XPath
-    func: Callable[[Any], Val]
+PullMap: TypeAlias = Mapping[Prop[Rec, Any], "NodeSelector | XSelect"]
+_PullMapping: TypeAlias = Mapping[Prop[Rec, Any], XSelect]
 
 
-class Hash:
-    """Hash the selected attribute."""
-
-    sel: str | InvAttrMap | XPath
-    with_path: bool = False
-    """If True, the id will be generated based on the data and the full tree path.
-    """
-
-
-InvMap: TypeAlias = Mapping[Prop[Rec, Val], InvAttrMap | Transform[Val] | Hash]
-
-
-@dataclass
-class RecordMap(Generic[Rec]):
+@dataclass(frozen=True)
+class XMap(Generic[Rec]):
     """Configuration for how to map (nested) dictionary items to relational tables."""
 
-    target: type[Rec]
-    """Target record type to map to."""
-
-    map: RelMap | set[str] | str | Callable[[dict | str], RelMap | set[str] | str]
+    push: PushMap[Rec]
     """Mapping of hierarchical attributes to record props or other records."""
+
+    pull: PullMap[Rec] | None = None
+    """Mapping of record props to hierarchical attributes."""
 
     loader: Callable[[Hashable], str | list | dict] | None = None
     """Loader function to load data for this record from a source."""
 
-    inv_map: InvMap | None = None
-    """Mapping of record props to hierarchical attributes."""
-
-    sub_maps: "list[RecordMap] | None" = None
-    """Map attributes on the same level to different records"""
-
-    match_by_attr: bool | str = False
-    """Try to match this mapped data to target table (by given attr)
+    match_by_attrs: bool | list[Attr[Rec, Any]] = False
+    """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
 
     conflict_policy: DataConflictPolicy = "raise"
-    """Which policy to use if import conflicts occur for this table."""
+    """Which policy to use if import conflicts occur for this record table."""
+
+    def full_map(self, rec: type[Rec], data: TreeData) -> _PullMapping[Rec]:
+        """Get the full mapping."""
+        return {
+            **_push_to_pull_map(rec, self.push, data),
+            **{k: XSelect.parse(v) for k, v in (self.pull or {}).items()},
+        }
 
 
-_SubMap = tuple[dict | list, RecordMap | list[RecordMap]]
-"""Combination of data and mapping for a subtree."""
+@dataclass(frozen=True)
+class Transform(XSelect):
+    """Select and transform attributes."""
+
+    func: Callable
+
+    def select(self, data: TreeData) -> list:
+        """Select the node in the data structure."""
+        return [self.func(v) for v in XSelect.select(self, data)]
 
 
-def _map_sublayer(node: dict, mapping: RelMap) -> tuple[pd.Series, dict[str, _SubMap]]:
-    """Extract hierarchical data into set of scalar attributes + ref'd data objects."""
-    # Split the current mapping level into groups based on type.
-    target_groups: dict[type, dict] = {
-        t: dict(g)  # type: ignore
-        for t, g in groupby(
-            sorted(
-                mapping.items(),
-                key=lambda item: str(type(item[1])),
-            ),
-            key=lambda item: type(item[1]),
+@dataclass(frozen=True)
+class Hash(XSelect):
+    """Hash the selected attribute."""
+
+    with_path: bool = False
+    """If True, the id will be generated based on the data and the full tree path.
+    """
+
+    def select(self, data: TreeData) -> list[str]:
+        """Select the node in the data structure."""
+        value_hashes = [gen_str_hash(v) for v in XSelect.select(self, data)]
+        return (
+            [gen_str_hash((v, self.sel)) for v in value_hashes]
+            if self.with_path
+            else value_hashes
         )
-    }  # type: ignore
-
-    # First list and handle all scalars, hence data attributes on the current level,
-    # which are to be mapped to table columns.
-    scalars = dict(
-        chain(
-            (target_groups.get(str) or {}).items(),
-            (target_groups.get(bool) or {}).items(),
-        )
-    )
-
-    cols = {
-        (col if isinstance(col, str) else attr): data
-        for attr, col in scalars.items()
-        if isinstance(data := node.get(attr), Scalar)
-    }
-
-    refs = {
-        attr: (data, cast(RecordMap | list[RecordMap], sub_map))
-        for attr, sub_map in {
-            **(target_groups.get(RecordMap) or {}),
-            **(target_groups.get(list) or {}),
-        }.items()
-        if isinstance(data := node.get(attr), dict | list)
-    }
-
-    # Handle nested data attributes (which come as dict types).
-    for attr, sub_map in (target_groups.get(dict) or {}).items():
-        sub_node = node.get(attr)
-        if isinstance(sub_node, dict):
-            sub_row, sub_refs = _map_sublayer(sub_node, cast(dict, sub_map))
-            cols = {**cols, **sub_row}
-            refs = {**refs, **sub_refs}
-
-    return pd.Series(cols, dtype=object), refs
 
 
-def _gen_row_hash(
-    row: pd.Series,
-    context_path: list[str | int] | None = None,
-    hash_subset: list[str] | None = None,
-) -> str:
-    """Generate hash for given row."""
-    hash_row = (
-        row[list(set(hash_subset) & set(row.index))] if hash_subset is not None else row
-    )
-    row_id = gen_str_hash(
-        hash_row.to_dict()
-        if context_path is not None
-        else (hash_row.to_dict(), context_path)
-    )
+@dataclass(frozen=True)
+class SubMap(XMap, XSelect):
+    """Select and map nested data to another record."""
 
-    return row_id
+    link_map: XMap | None = None
+    """Mapping to optional attributes of the link record."""
 
 
-def _handle_refs(  # noqa: C901
-    mapping: RecordMap,
-    db: DataBase,
-    row: pd.Series,
-    refs: list[tuple[str | None, _SubMap]],
-    collect_conflicts: bool = False,
-    _all_conflicts: DataConflicts | None = None,
-    _path: list[str | int] | None = None,
-) -> DataConflicts:
-    """Handle references to other tables."""
-    raise NotImplementedError("This function is not yet implemented.")
+@dataclass(frozen=True, kw_only=True)
+class RelMap(XMap[Rec2], Generic[Rec, Rec2]):
+    """Map nested data via a relation to another record."""
 
-    _all_conflicts = _all_conflicts or {}
-    _path = _path or []
+    rel: Rel[Rec, Any, Rec2]
+    """Relation to use for mapping."""
 
-    # Handle nested data, which is to be extracted into separate tables and referenced.
-    for attr, (sub_data, sub_maps) in refs:
-        # Get info about the ref table to use from mapping
-        # (or generate a new for the ref table).
-
-        if not isinstance(sub_maps, list):
-            sub_maps = [sub_maps]
-
-        for sub_map in sub_maps:
-            join_table_name = sub_map.join_table_name
-            join_table_exists = False
-            alt_join_table_names = [
-                f"{mapping.table}_{sub_map.table}",
-                f"{sub_map.table}_{mapping.table}",
-            ]
-
-            if join_table_name is None:
-                join_table_name = alt_join_table_names[0]
-                for name in alt_join_table_names:
-                    if name in database:
-                        join_table_name = name
-                        join_table_exists = True
-                        break
-            else:
-                join_table_exists = join_table_name in database
-
-            if not isinstance(sub_data, list):
-                sub_data = [sub_data]
-
-            for i, sub_data_item in enumerate(sub_data):
-                _sub_path = [_path, attr, i]
-
-                rel_row, _all_conflicts = _tree_to_db(
-                    sub_data_item,
-                    sub_map,
-                    db,
-                    collect_conflicts,
-                    _all_conflicts,
-                    _sub_path,
-                )
-
-                if sub_map.link_type == "n-m":
-                    # Map via join table.
-                    if not join_table_exists:
-                        database[join_table_name] = {}
-                        join_table_exists = True
-
-                    ref_row, _ = (
-                        _map_sublayer(sub_data_item, sub_map.join_table_map)
-                        if isinstance(sub_data_item, dict)
-                        and sub_map.join_table_map is not None
-                        else (pd.Series(dtype=object), None)
-                    )
-
-                    left_col = f"{attr}_of" if attr is not None else mapping.table
-                    relations[(join_table_name, left_col)] = (
-                        mapping.table,
-                        "_id",
-                    )
-                    ref_row[left_col] = row.name
-
-                    right_col = attr if attr is not None else sub_map.table
-                    relations[(join_table_name, right_col)] = (
-                        sub_map.table,
-                        "_id",
-                    )
-                    ref_row[right_col] = rel_row.name
-
-                    ref_row.name = _gen_row_hash(ref_row, _sub_path)
-
-                    database[join_table_name][ref_row.name] = ref_row.to_dict()
-                    join_tables |= {join_table_name}
-                elif sub_map.link_type == "1-n":
-                    # Map via direct reference from children to parent.
-                    col = f"{attr}_of" if attr is not None else mapping.table
-
-                    if col in rel_row.index:
-                        assert rel_row[col] is None or rel_row[col] == row.name
-
-                    relations[(sub_map.table, col)] = (
-                        mapping.table,
-                        "_id",
-                    )
-
-                    database[sub_map.table][rel_row.name] = {
-                        **rel_row.to_dict(),
-                        col: row.name,
-                    }
-                elif sub_map.link_type == "n-1":
-                    # Map via direct reference from parents to child.
-                    col = attr if attr is not None else sub_map.table
-
-                    if col in row.index:
-                        assert row[col] is None or row[col] == row.name
-
-                    relations[(mapping.table, col)] = (
-                        sub_map.table,
-                        "_id",
-                    )
-
-                    database[mapping.table][row.name] = {
-                        **row.to_dict(),
-                        col: rel_row.name,
-                    }
-
-    return _all_conflicts
+    link_map: XMap | None = None
+    """Mapping to optional attributes of the link record."""
 
 
-def _tree_to_db(  # noqa: C901
-    data: dict | str,
-    mapping: RecordMap,
-    db: DataBase,
-    collect_conflicts: bool = False,
-    _all_conflicts: DataConflicts | None = None,
-    _path: list[str | int] | None = None,
-) -> tuple[pd.Series, DataConflicts]:
-    """Transform recursive dictionary data into relational format."""
-    raise NotImplementedError("This function is not yet implemented.")
+@dataclass(frozen=True, kw_only=True)
+class RootMap(XMap[Rec]):
+    """Root mapping for hierarchical data."""
 
-    _all_conflicts = _all_conflicts or {}
-    _path = _path or []
+    rec: type[Rec]
 
-    resolved_map = (
-        mapping.map(data) if isinstance(mapping.map, Callable) else mapping.map
-    )
 
-    # Extract row of data attributes and refs to other objects.
-    row = None
-    refs: list[tuple[str | None, _SubMap]] = []
-    # If mapping is only a string, extract the target attr directly.
-    if isinstance(data, str):
-        assert isinstance(resolved_map, str)
-        row = pd.Series({resolved_map: data}, dtype=object)
-    else:
-        if isinstance(resolved_map, set):
-            row = pd.Series(
-                {k: v for k, v in data.items() if k in resolved_map}, dtype=object
-            )
-        elif isinstance(resolved_map, dict):
-            row, ref_dict = _map_sublayer(data, resolved_map)
-            refs = [*refs, *ref_dict.items()]
-        else:
+def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
+    """Parse push map into a more usable format."""
+    match push_map:
+        case Mapping():
+            return push_map
+        case str():
+            return {All: push_map}
+        case set():
+            return {
+                k.name if isinstance(k, Attr) else k.rel.name: True for k in push_map
+            }
+        case Callable():
+            return _parse_pushmap(push_map(data), data)
+        case _:
             raise TypeError(
-                f"Unsupported mapping type {type(resolved_map)}"
+                f"Unsupported mapping type {type(push_map)}"
                 f" for data of type {type(data)}"
             )
 
-    row.name = (
-        row[mapping.id_attr]
-        if mapping.id_type == "attr" and isinstance(mapping.id_attr, str)
-        else (
-            _gen_row_hash(
-                row,
-                _path,
-                (
-                    [mapping.id_attr]
-                    if isinstance(mapping.id_attr, str)
-                    else mapping.id_attr
-                ),
+
+def _get_selector_name(selector: NodeSelector) -> str:
+    """Get the name of the selector."""
+    match selector:
+        case str():
+            return selector
+        case int() | TreePath() | type():
+            raise ValueError(f"Cannot get name of selector with type {type(selector)}.")
+
+
+def _push_to_pull_map(
+    rec: type[Record], push_map: PushMap, node: TreeData
+) -> _PullMapping:
+    """Extract hierarchical data into set of scalar attributes + ref'd data objects."""
+    mapping = _parse_pushmap(push_map, node)
+
+    # First list and handle all scalars, hence data attributes on the current level,
+    # which are to be mapped to record attributes.
+    pull_map: _PullMapping = {
+        **{
+            (
+                target
+                if isinstance(target, Attr)
+                else getattr(rec, _get_selector_name(sel))
+            ): XSelect(sel)
+            for sel, target in mapping.items()
+            if isinstance(target, Attr | bool)
+        },
+        **{
+            (
+                target.rel
+                if isinstance(target, RelMap) and target.rel is not None
+                else getattr(rec, _get_selector_name(sel))
+            ): (
+                SubMap(**asdict(target), sel=sel)
+                if isinstance(target, RelMap)
+                else XSelect.parse(sel)
             )
-            if mapping.id_type == "hash"
-            else str(uuid4())[-10:]
-        )
-    )
+            for sel, target in mapping.items()
+            if isinstance(target, XMap)
+        },
+    }
 
-    if not isinstance(row.name, str | int):
-        raise ValueError(
-            f"Value of `'{mapping.id_attr}'` (`TableMap.id_attr`) "
-            f"must be a string or int for all objects, but received {row.name}"
-        )
-
-    if mapping.ext_maps is not None:
-        assert isinstance(data, dict)
-        refs = [*refs, *((m.link_attr, (data, m)) for m in mapping.ext_maps)]
-
-    _all_conflicts = _handle_refs(
-        mapping, db, row, refs, collect_conflicts, _all_conflicts
-    )
-
-    if not row.empty:
-        existing_row: dict[str, Any] | None = None
-        if mapping.match_by_attr:
-            # Make sure any existing data in database is consistent with new data.
-            match_by = cast(str, mapping.match_by_attr)
-            if mapping.match_by_attr is True:
-                assert isinstance(resolved_map, str)
-                match_by = resolved_map
-
-            match_to = row[match_by]
-
-            # Match to existing row or create new one.
-            existing_rows: list[tuple[str, dict[str, Any]]] = list(
-                filter(
-                    lambda i: i[1][match_by] == match_to,
-                    database[mapping.table].items(),
+    # Handle nested data attributes (which come as dict types).
+    for sel, target in mapping.items():
+        if has_type(target, Mapping):
+            sub_node = XSelect.parse(sel).select(node)
+            if has_type(sub_node, TreeData):
+                sub_pull_map = _push_to_pull_map(
+                    rec,
+                    target,
+                    sub_node,
                 )
-            )
-
-            if len(existing_rows) > 0:
-                existing_row_id, existing_row = existing_rows[0]
-                # Take over the id of the existing row.
-                row.name = existing_row_id
-        else:
-            existing_row = database[mapping.table].get(row.name)
-
-        if existing_row is not None:
-            existing_attrs = set(
-                str(k) for k, v in existing_row.items() if k and pd.notna(v)
-            )
-            new_attrs = set(str(k) for k, v in row.items() if k and pd.notna(v))
-
-            # Assert that overlapping attributes are equal.
-            intersect = existing_attrs & new_attrs
-
-            if mapping.conflict_policy == "raise":
-                conflicts = {
-                    (mapping.table, row.name, c): (existing_row[c], row[c])
-                    for c in intersect
-                    if existing_row[c] != row[c]
+                # Prefix the selectors with the current selector.
+                pull_map = {
+                    **pull_map,
+                    **{
+                        prop: sub_sel.prefix(sel)
+                        for prop, sub_sel in sub_pull_map.items()
+                    },
                 }
 
-                if len(conflicts) > 0:
-                    if not collect_conflicts:
-                        raise DataConflictError(conflicts)
+    return pull_map
 
-                    _all_conflicts = {**_all_conflicts, **conflicts}
-            if mapping.conflict_policy == "ignore":
-                row = pd.Series(
-                    {**row.loc[list(new_attrs)], **existing_row}, name=row.name
-                )
-            else:
-                row = pd.Series(
-                    {**existing_row, **row.loc[list(new_attrs)]}, name=row.name
-                )
 
-        # Add row to database table or update it.
-        database[mapping.table][row.name] = row.to_dict()
+def _map_record(  # noqa: C901
+    db: DataBase,
+    rec: type[Record],
+    mapping: _PullMapping,
+    data: TreeData,
+    collect_conflicts: bool = False,
+    match_by_attrs: list[Attr] | None = None,
+    link_map: _PullMapping | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None, DataConflicts]:
+    """Handle references to other tables."""
+    conflicts = {}
 
-    # Return row (used for recursion).
-    return row, _all_conflicts
+    attrs = {
+        a.name: sel.select(data)[0] for a, sel in mapping.items() if isinstance(a, Attr)
+    }
+
+    rels = {
+        r: sel
+        for r, sel in mapping.items()
+        if isinstance(r, Rel) and isinstance(sel, SubMap)
+    }
+
+    # Handle nested data, which is to be extracted into separate tables and referenced.
+    for rel, sub_map in rels.items():
+        rel_rec = rel.target_type
+        full_sub_map = sub_map.full_map(rel_rec, data)
+
+        sub_attrs, sub_link_attrs, sub_conflicts = _map_record(
+            db, rel_rec, full_sub_map, data
+        )
+        conflicts = {**conflicts, **sub_conflicts}
+
+        # Get the foreign keys via `rel.fk_map` and
+        # use `rel.fk_record_type` to determine where to insert them.
+        if issubclass(rec, rel.fk_record_type):
+            # - Case 1: Insert into attrs of current record.
+            for fk_attr, fk in rel.fk_map.items():
+                attrs[fk_attr.name] = sub_attrs[fk.name]
+        elif issubclass(rel_rec, rec):
+            # - Case 2: Fks are already included in linked record (backlink).
+            pass
+        else:
+            # - Case 3: Create record in link table and insert there.
+            sub_link_attrs = sub_link_attrs or {}
+
+            for _, fk_maps in rel.inter_joins.items():
+                for fk_map in fk_maps:
+                    for fk_attr, fk in fk_map.items():
+                        sub_link_attrs[fk_attr.name] = attrs[fk.name]
+
+            for fk_map in rel.joins:
+                for fk_attr, fk in rel.fk_map.items():
+                    sub_link_attrs[fk_attr.name] = sub_attrs[fk.name]
+
+            db[rel.fk_record_type] <<= sub_link_attrs
+
+    link_attrs = None
+    if link_map is not None:
+        link_attrs, _, link_conflicts = _map_record(
+            db, rec, link_map, data, collect_conflicts
+        )
+        conflicts = {**conflicts, **link_conflicts}
+
+    if len(conflicts) > 0:
+        raise DataConflictError(conflicts)
+
+    if match_by_attrs:
+        # Match against existing records in the database and update them.
+        match_attrs = {a: attrs[a.name] for a in match_by_attrs}
+        match_expr = reduce(
+            lambda x, y: x & y, [a == v for a, v in match_attrs.items()]
+        )
+        existing: DataSet = db[rec][match_expr]
+
+        if len(existing) > 1:
+            for a, v in attrs.items():
+                existing[a] = v
+    else:
+        # Do an index-based upsert.
+        db[rec] <<= attrs
+
+    return attrs, link_attrs, conflicts
 
 
 @overload
 def tree_to_db(
-    data: dict | str,
-    mapping: RecordMap,
+    data: TreeData,
+    mapping: RootMap,
     backend: Backend[Name] = ...,  # type: ignore
     schema: type[Schema] | None = ...,
     collect_conflicts: Literal[True] = ...,
@@ -424,17 +405,17 @@ def tree_to_db(
 
 @overload
 def tree_to_db(
-    data: dict | str,
-    mapping: RecordMap,
+    data: TreeData,
+    mapping: RootMap,
     backend: Backend[Name] = ...,  # type: ignore
     schema: type[Schema] | None = ...,
     collect_conflicts: Literal[False] = ...,
 ) -> DataBase[Name]: ...
 
 
-def tree_to_db(  # noqa: C901
-    data: dict | str,
-    mapping: RecordMap,
+def tree_to_db(
+    data: TreeData,
+    mapping: RootMap,
     backend: Backend[Name] = Backend("main"),
     schema: type[Schema] | None = None,
     collect_conflicts: bool = False,
@@ -459,6 +440,16 @@ def tree_to_db(  # noqa: C901
     """
     db = DataBase(backend, schema)
 
-    _, conflicts = _tree_to_db(data, mapping, db, collect_conflicts)
+    rec = mapping.rec
+    pull_map = mapping.full_map(rec, data)
+    match_by_attrs = (
+        [a for a in pull_map.keys() if isinstance(a, Attr)]
+        if mapping.match_by_attrs is True
+        else mapping.match_by_attrs if mapping.match_by_attrs else None
+    )
+
+    _, _, conflicts = _map_record(
+        db, rec, pull_map, data, collect_conflicts, match_by_attrs
+    )
 
     return (db, conflicts) if collect_conflicts else db

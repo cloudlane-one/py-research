@@ -258,6 +258,19 @@ class Rel(Prop[Rec, Recs], Generic[Rec, Recs, Rec2]):
         return self._target_type
 
     @cached_property
+    def fk_record_type(self) -> type["Record"]:
+        """Record type of the foreign key."""
+        match self.via:
+            case type():
+                return self.via
+            case Rel():
+                return self.via.record_type
+            case tuple():
+                return self.via[0].record_type
+            case dict() | Attr() | Iterable() | None:
+                return self.record_type
+
+    @cached_property
     def fk_map(self) -> bidict["Attr", "Attr"]:
         """Map source foreign keys to target attrs."""
         target = self.target_type

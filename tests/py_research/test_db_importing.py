@@ -1,9 +1,8 @@
 """Test db importing module."""
 
 import pytest
-
 from py_research.db import DB
-from py_research.db.importing import RecordMap, tree_to_db
+from py_research.db.importing import XMap, tree_to_db
 
 
 @pytest.fixture
@@ -94,39 +93,39 @@ def nested_db_dict() -> dict:
 
 
 @pytest.fixture
-def root_table_mapping() -> RecordMap:
+def root_table_mapping() -> XMap:
     """Return root table mapping for import testing."""
-    return RecordMap(
+    return XMap(
         table="searches",
         id_type="hash",
         id_attr="search_term",
-        map={
+        push={
             "resultCount": "result_count",
             "search": "search_term",
-            "results": RecordMap(
+            "results": XMap(
                 table="projects",
                 id_type="uuid",
-                map={
+                push={
                     "project_name": "name",
                     "project_start": "start",
                     "project_end": "end",
                     "project_status": "status",
-                    "tasks": RecordMap(
+                    "tasks": XMap(
                         table="tasks",
-                        map={
+                        push={
                             "task_name": "name",
-                            "task_assignee": RecordMap(
+                            "task_assignee": XMap(
                                 table="users",
-                                map="name",
-                                match_by_attr="name",
+                                push="name",
+                                match_by_attrs="name",
                             ),
                             "task_status": "status",
                         },
                         id_type="uuid",
                     ),
-                    "members": RecordMap(
+                    "members": XMap(
                         table="users",
-                        map={"name", "age"},
+                        push={"name", "age"},
                         join_table_name="memberships",
                         join_table_map={
                             "role": "role",
@@ -134,9 +133,9 @@ def root_table_mapping() -> RecordMap:
                     ),
                 },
                 ext_maps=[
-                    RecordMap(
+                    XMap(
                         table="organizations",
-                        map={
+                        push={
                             "organization_name": "name",
                             "organization_address": "address",
                             "organization_city": "city",
@@ -152,7 +151,7 @@ def root_table_mapping() -> RecordMap:
     )
 
 
-def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RecordMap):
+def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: XMap):
     """Test importing nested data dict to database."""
     db = tree_to_db(nested_db_dict, root_table_mapping, False)
     assert isinstance(db, DB)

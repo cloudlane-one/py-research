@@ -1,5 +1,6 @@
 """Reflection utilities for types."""
 
+from types import UnionType
 from typing import Any, TypeGuard, TypeVar
 
 from beartype.door import is_bearable, is_subhint
@@ -12,6 +13,6 @@ def is_subtype(type_: type, supertype: T) -> TypeGuard[T]:
     return is_subhint(type_, supertype)
 
 
-def has_type(obj: Any, type_: type[T]) -> TypeGuard[T]:
+def has_type(obj: Any, type_: type[T] | UnionType) -> TypeGuard[T]:
     """Check if object is of given type hint."""
     return is_bearable(obj, type_)

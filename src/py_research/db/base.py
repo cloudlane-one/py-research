@@ -480,7 +480,7 @@ class DataBase(Generic[Name]):
 
                 assert any(all(m) for m in matches)
 
-    def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, None]":
+    def __getitem__(self, key: type[Rec]) -> "DataSet[Name, Rec, BaseIdx]":
         """Return the dataset for given record type."""
         if self.backend.type == "excel-file":
             self._load_from_excel([key])
@@ -490,7 +490,7 @@ class DataBase(Generic[Name]):
     def __setitem__(  # noqa: D105
         self,
         key: type[Rec],
-        value: "DataSet[Name, Rec, Key] | RecInput[Rec, Key] | sqla.Select[tuple[Rec]]",  # noqa: E501
+        value: "DataSet[Name, Rec, Key | BaseIdx | None] | RecInput[Rec, Key] | sqla.Select[tuple[Rec]]",  # noqa: E501
     ) -> None:
         if self.backend.type == "excel-file":
             self._load_from_excel([key])
@@ -1454,15 +1454,24 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __ilshift__(
         self: "DataSet[Name, Record[Any, Key2], BaseIdx]",
         value: "DataSet[Name, Rec_cov, Key2 | BaseIdx] | RecInput[Rec_cov, Key2]",
-    ) -> None:
+    ) -> "DataSet[Name, Record[Any, Key2], BaseIdx]":
         """Merge update into unfiltered dataset."""
-        self._set(value, insert=True)
+        return self._set(value, insert=True)
 
     def __or__(
         self, other: "DataSet[Name, Rec_cov, Idx]"
     ) -> "DataSet[Name, Rec_cov, Idx_cov | Idx]":
         """Union two datasets."""
         return DataSet(self.db, {self, other})
+
+    def __len__(self) -> int:
+        """Return the number of records in the dataset."""
+        with self.db.engine.connect() as conn:
+            res = conn.execute(
+                sqla.select(sqla.func.count()).select_from(self.select().subquery())
+            ).scalar()
+            assert isinstance(res, int)
+            return res
 
     def extract(
         self,
@@ -1570,7 +1579,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         self,
         value: "DataSet | RecInput[Rec_cov, Any] | ValInput",
         insert: bool = False,
-    ) -> None:
+    ) -> Self:
         if (
             has_type(value, Record)
             or has_type(value, Iterable[Record])
@@ -1705,3 +1714,5 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         # Drop the temporary table, if any.
         if value_set is not None:
             cast(sqla.Table, value_set.base_table).drop(self.db.engine)
+
+        return self
