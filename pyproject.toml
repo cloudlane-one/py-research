@@ -39,6 +39,8 @@ dependencies = [
     "duckdb-engine>=0.11.5",
     "bidict>=0.23.1",
     "lxml>=5.2.2",
+    "beartype>=0.18.5",
+    "yarl>=1.9.4",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
