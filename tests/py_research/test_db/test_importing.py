@@ -1,101 +1,66 @@
 """Test db importing module."""
 
+import json
+from datetime import date
+from typing import Any, Literal
+
 import pytest
-from py_research.db import DB
-from py_research.db.importing import XMap, tree_to_db
+
+from py_research.db import Attr, Record, Rel, RootMap
+
+
+class SearchResult(Record):
+    """Link search to a result."""
+
+    search: Rel[Any, "Search", "Search"]
+    result: Rel[Any, "Project", "Project"]
+
+
+class Search(Record[str, str]):
+    """Defined search against the API."""
+
+    search_term: Attr[Any, str] = Attr(primary_key=True)
+    result_count: Attr[Any, int]
+    results: Rel[Any, list["Project"], "Project"] = Rel(via=SearchResult)
+
+
+class Task(Record):
+    """Link search to a result."""
+
+    name: Attr[Any, str]
+    project: Rel[Any, "Project", "Project"]
+    assignee: Rel[Any, "User", "User"]
+    status: Attr[Any, Literal["todo", "done"]]
+
+
+class User(Record):
+    """A generic user."""
+
+    name: Attr[Any, str]
+    tasks = Rel(via=Task.assignee)
+
+
+class Project(Record):
+    """A generic project record."""
+
+    name: Attr[Any, str]
+    start: Attr[Any, date]
+    end: Attr[Any, date]
+    status: Attr[Any, Literal["planned", "started", "done"]]
+    tasks = Rel(via=Task.project)
 
 
 @pytest.fixture
 def nested_db_dict() -> dict:
     """Return nested data dict for import testing."""
-    return {
-        "resultCount": 3,
-        "search": "test",
-        "results": [
-            {
-                "project_name": "baking cake",
-                "project_start": "2020-01-01",
-                "project_end": "2020-01-04",
-                "project_status": "done",
-                "organization_name": "Bakery",
-                "organization_address": "Main Street 1",
-                "organization_city": "Bakerville",
-                "tasks": [
-                    {
-                        "task_name": "task1",
-                        "task_assignee": "John",
-                        "task_status": "todo",
-                    },
-                    {
-                        "task_name": "task2",
-                        "task_assignee": "John",
-                        "task_status": "todo",
-                    },
-                    {
-                        "task_name": "task3",
-                        "task_assignee": "Jane",
-                        "task_status": "done",
-                    },
-                ],
-                "members": [
-                    {"name": "John", "age": 20, "role": "baker"},
-                    {"name": "John", "age": 20, "role": "manager"},
-                ],
-            },
-            {
-                "project_name": "cleaning shoes",
-                "project_start": "2020-01-02",
-                "project_end": "2020-01-05",
-                "project_status": "done",
-                "organization_name": "Shoe Shop",
-                "organization_address": "Main Street 2",
-                "organization_city": "Shoetown",
-                "tasks": [
-                    {
-                        "task_name": "task4",
-                        "task_assignee": "John",
-                        "task_status": "todo",
-                    },
-                    {
-                        "task_name": "task5",
-                        "task_assignee": "Jane",
-                        "task_status": "todo",
-                    },
-                ],
-                "members": [
-                    {"name": "John", "age": 20, "role": "cleaner"},
-                    {"name": "Jane", "age": 30, "role": "manager"},
-                ],
-            },
-            {
-                "project_name": "fixing cars",
-                "project_start": "2020-01-03",
-                "project_end": "2020-01-06",
-                "project_status": "started",
-                "organization_name": "Car Shop",
-                "organization_address": "Main Street 3",
-                "organization_city": "Cartown",
-                "tasks": [
-                    {
-                        "task_name": "task6",
-                        "task_assignee": "John",
-                        "task_status": "todo",
-                    },
-                ],
-                "members": [
-                    {"name": "John", "age": 20, "role": "mechanic"},
-                    {"name": "Jane", "age": 30, "role": "manager"},
-                    {"name": "Jack", "age": 40, "role": "manager"},
-                ],
-            },
-        ],
-    }
+    with open("./nested_data.json") as f:
+        return json.load(f)
 
 
 @pytest.fixture
-def root_table_mapping() -> XMap:
+def root_table_mapping() -> RootMap:
     """Return root table mapping for import testing."""
-    return XMap(
+    return RootMap(
         table="searches",
         id_type="hash",
         id_attr="search_term",

@@ -1,4 +1,4 @@
-"""Static schemas for SQL databases."""
+"""Static schemas for universal relational databases."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field

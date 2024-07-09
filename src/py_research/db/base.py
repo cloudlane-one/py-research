@@ -1,4 +1,4 @@
-"""Abstract Python interface for SQL databases."""
+"""Base class definitions for universal database interface."""
 
 from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
 from dataclasses import asdict, dataclass, field

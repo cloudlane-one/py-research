@@ -1,10 +1,10 @@
 """Utilities for importing different data representations into relational format."""
 
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from functools import reduce
 from itertools import chain
-from typing import Any, Generic, Literal, Self, TypeAlias, overload
+from typing import Any, Generic, Literal, Self, TypeAlias, TypeVar, overload
 
 from lxml.etree import _ElementTree as ElementTree
 
@@ -16,6 +16,8 @@ from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
 from .schema import Attr, Prop, Rec, Rec2, Record, Rel, Schema
 
 TreeData: TypeAlias = Mapping[str | int, Any] | ElementTree | Sequence
+
+Dat = TypeVar("Dat")
 
 
 class All:
@@ -142,7 +144,7 @@ _PullMapping: TypeAlias = Mapping[Prop[Rec, Any], XSelect]
 
 
 @dataclass(frozen=True)
-class XMap(Generic[Rec]):
+class XMap(Generic[Rec, Dat]):
     """Configuration for how to map (nested) dictionary items to relational tables."""
 
     push: PushMap[Rec]
@@ -151,15 +153,15 @@ class XMap(Generic[Rec]):
     pull: PullMap[Rec] | None = None
     """Mapping of record props to hierarchical attributes."""
 
-    loader: Callable[[Hashable], str | list | dict] | None = None
+    load: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match_by_attrs: bool | list[Attr[Rec, Any]] = False
+    match: bool | list[Attr[Rec, Any]] = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
 
-    conflict_policy: DataConflictPolicy = "raise"
+    conflicts: DataConflictPolicy = "raise"
     """Which policy to use if import conflicts occur for this record table."""
 
     def full_map(self, rec: type[Rec], data: TreeData) -> _PullMapping[Rec]:
@@ -203,23 +205,23 @@ class Hash(XSelect):
 class SubMap(XMap, XSelect):
     """Select and map nested data to another record."""
 
-    link_map: XMap | None = None
+    link: "RootMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
 @dataclass(frozen=True, kw_only=True)
-class RelMap(XMap[Rec2], Generic[Rec, Rec2]):
+class RelMap(XMap[Rec2, Dat], Generic[Rec, Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
     rel: Rel[Rec, Any, Rec2]
     """Relation to use for mapping."""
 
-    link_map: XMap | None = None
+    link: XMap | None = None
     """Mapping to optional attributes of the link record."""
 
 
 @dataclass(frozen=True, kw_only=True)
-class RootMap(XMap[Rec]):
+class RootMap(XMap[Rec, Dat]):
     """Root mapping for hierarchical data."""
 
     rec: type[Rec]
@@ -297,7 +299,6 @@ def _push_to_pull_map(
                     target,
                     sub_node,
                 )
-                # Prefix the selectors with the current selector.
                 pull_map = {
                     **pull_map,
                     **{
@@ -311,18 +312,26 @@ def _push_to_pull_map(
 
 def _map_record(  # noqa: C901
     db: DataBase,
-    rec: type[Record],
-    mapping: _PullMapping,
-    data: TreeData,
+    rec: type[Rec],
+    xmap: XMap[Rec, Dat],
+    in_data: Dat,
     collect_conflicts: bool = False,
-    match_by_attrs: list[Attr] | None = None,
-    link_map: _PullMapping | None = None,
-) -> tuple[dict[str, Any], dict[str, Any] | None, DataConflicts]:
-    """Handle references to other tables."""
+) -> tuple[dict[Attr[Rec, Any], Any], dict[Attr, Any] | None, DataConflicts]:
+    """Map a data record to its relational representation."""
     conflicts = {}
 
+    data: TreeData
+    if xmap.load is not None:
+        data = xmap.load(in_data)
+    else:
+        if not has_type(in_data, TreeData):
+            raise ValueError(f"Supplied data has unsupported type {type(in_data)}")
+        data = in_data
+
+    mapping = xmap.full_map(rec, data)
+
     attrs = {
-        a.name: sel.select(data)[0] for a, sel in mapping.items() if isinstance(a, Attr)
+        a: sel.select(data)[0] for a, sel in mapping.items() if isinstance(a, Attr)
     }
 
     rels = {
@@ -333,38 +342,40 @@ def _map_record(  # noqa: C901
 
     # Handle nested data, which is to be extracted into separate tables and referenced.
     for rel, sub_map in rels.items():
+        sub_data_items = sub_map.select(data)
         rel_rec = rel.target_type
-        full_sub_map = sub_map.full_map(rel_rec, data)
 
-        sub_attrs, sub_link_attrs, sub_conflicts = _map_record(
-            db, rel_rec, full_sub_map, data
-        )
-        conflicts = {**conflicts, **sub_conflicts}
+        for sub_data in sub_data_items:
+            sub_attrs, sub_link_attrs, sub_conflicts = _map_record(
+                db, rel_rec, sub_map, sub_data, collect_conflicts
+            )
+            conflicts = {**conflicts, **sub_conflicts}
 
-        # Get the foreign keys via `rel.fk_map` and
-        # use `rel.fk_record_type` to determine where to insert them.
-        if issubclass(rec, rel.fk_record_type):
-            # - Case 1: Insert into attrs of current record.
-            for fk_attr, fk in rel.fk_map.items():
-                attrs[fk_attr.name] = sub_attrs[fk.name]
-        elif issubclass(rel_rec, rec):
-            # - Case 2: Fks are already included in linked record (backlink).
-            pass
-        else:
-            # - Case 3: Create record in link table and insert there.
-            sub_link_attrs = sub_link_attrs or {}
-
-            for _, fk_maps in rel.inter_joins.items():
-                for fk_map in fk_maps:
-                    for fk_attr, fk in fk_map.items():
-                        sub_link_attrs[fk_attr.name] = attrs[fk.name]
-
-            for fk_map in rel.joins:
+            # Get the foreign keys via `rel.fk_map` and
+            # use `rel.fk_record_type` to determine where to insert them.
+            if issubclass(rec, rel.fk_record_type):
+                # - Case 1: Insert into attrs of current record.
                 for fk_attr, fk in rel.fk_map.items():
-                    sub_link_attrs[fk_attr.name] = sub_attrs[fk.name]
+                    attrs[fk_attr] = sub_attrs[fk]
+            elif issubclass(rel_rec, rec):
+                # - Case 2: Fks are already included in linked record (backlink).
+                pass
+            else:
+                # - Case 3: Create record in link table and insert there.
+                sub_link_attrs = sub_link_attrs or {}
 
-            db[rel.fk_record_type] <<= sub_link_attrs
+                for _, fk_maps in rel.inter_joins.items():
+                    for fk_map in fk_maps:
+                        for fk_attr, fk in fk_map.items():
+                            sub_link_attrs[fk_attr] = attrs[fk]
 
+                for fk_map in rel.joins:
+                    for fk_attr, fk in rel.fk_map.items():
+                        sub_link_attrs[fk_attr] = sub_attrs[fk]
+
+                db[rel.fk_record_type] <<= sub_link_attrs
+
+    link_map = xmap.link if isinstance(xmap, SubMap) else None
     link_attrs = None
     if link_map is not None:
         link_attrs, _, link_conflicts = _map_record(
@@ -375,9 +386,9 @@ def _map_record(  # noqa: C901
     if len(conflicts) > 0:
         raise DataConflictError(conflicts)
 
-    if match_by_attrs:
+    if xmap.match:
         # Match against existing records in the database and update them.
-        match_attrs = {a: attrs[a.name] for a in match_by_attrs}
+        match_attrs = attrs if xmap.match is True else {a: attrs[a] for a in xmap.match}
         match_expr = reduce(
             lambda x, y: x & y, [a == v for a, v in match_attrs.items()]
         )
@@ -440,16 +451,6 @@ def tree_to_db(
     """
     db = DataBase(backend, schema)
 
-    rec = mapping.rec
-    pull_map = mapping.full_map(rec, data)
-    match_by_attrs = (
-        [a for a in pull_map.keys() if isinstance(a, Attr)]
-        if mapping.match_by_attrs is True
-        else mapping.match_by_attrs if mapping.match_by_attrs else None
-    )
-
-    _, _, conflicts = _map_record(
-        db, rec, pull_map, data, collect_conflicts, match_by_attrs
-    )
+    _, _, conflicts = _map_record(db, mapping.rec, mapping, data, collect_conflicts)
 
     return (db, conflicts) if collect_conflicts else db
