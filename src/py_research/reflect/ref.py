@@ -4,6 +4,7 @@ import inspect
 from dataclasses import dataclass
 from functools import reduce
 from importlib import import_module
+from types import ModuleType
 from typing import Any, Generic, TypeVar
 
 import requests
@@ -35,7 +36,7 @@ class PyObjectRef(Generic[T]):
     module: str
     """Name of the module the object belongs to."""
 
-    object: str
+    object: str | None = None
     """Name of the object."""
 
     package_version: str | None = None
@@ -90,11 +91,11 @@ class PyObjectRef(Generic[T]):
         except InvalidVersion:
             pass
 
-        qualname = getattr(obj, "__qualname__")
-        if qualname is None:
+        qualname = getattr(obj, "__qualname__", None)
+        if qualname is None and not isinstance(obj, ModuleType):
             raise ValueError("Object must have fully qualified name (`__qualname__`)")
 
-        module = inspect.getmodule(obj)
+        module = obj if isinstance(obj, ModuleType) else inspect.getmodule(obj)
         if module is None:
             raise ValueError("Object must be associated with a module.")
 
@@ -124,21 +125,22 @@ class PyObjectRef(Generic[T]):
         docs_urls = get_project_urls(dist, "Documentation")
         docs_url = docs_urls[0] if len(docs_urls) > 0 else None
 
-        obj_inv = get_py_inventory(docs_url) if docs_url is not None else None
-        if obj_inv is not None:
-            obj_inv_key = f"{module.__name__}.{qualname}"
-            if obj_inv_key in obj_inv:
-                docs_url = obj_inv[obj_inv_key][2]
-        else:
-            api_urls = get_project_urls(dist, "API Reference")
-            base_api_url = api_urls[0] if len(api_urls) > 0 else None
-            if base_api_url is not None:
-                possible_docs_url = (
-                    f"{base_api_url.rstrip('/')}/{module.__name__}.html#{qualname}"
-                )
-                test_request = requests.get(possible_docs_url)
-                if test_request.status_code != 404:
-                    docs_url = possible_docs_url
+        if not isinstance(obj, ModuleType):
+            obj_inv = get_py_inventory(docs_url) if docs_url is not None else None
+            if obj_inv is not None:
+                obj_inv_key = f"{module.__name__}.{qualname}"
+                if obj_inv_key in obj_inv:
+                    docs_url = obj_inv[obj_inv_key][2]
+            else:
+                api_urls = get_project_urls(dist, "API Reference")
+                base_api_url = api_urls[0] if len(api_urls) > 0 else None
+                if base_api_url is not None:
+                    possible_docs_url = (
+                        f"{base_api_url.rstrip('/')}/{module.__name__}.html#{qualname}"
+                    )
+                    test_request = requests.get(possible_docs_url)
+                    if test_request.status_code != 404:
+                        docs_url = possible_docs_url
 
         return PyObjectRef(
             object_type=type(obj),
@@ -223,6 +225,10 @@ class PyObjectRef(Generic[T]):
                     f"URL mismatch: Package '{self.package} should be from "
                     f"'{self.repo}' but is from '{url}'."
                 )
+
+        if self.object is None:
+            assert self.object_type is ModuleType
+            return module  # type: ignore
 
         obj = reduce(getattr, self.object.split("."), module)
         if not isinstance(obj, self.object_type):

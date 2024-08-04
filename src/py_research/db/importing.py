@@ -4,20 +4,18 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from functools import reduce
 from itertools import chain
-from typing import Any, Generic, Literal, Self, TypeAlias, TypeVar, overload
+from typing import Any, Literal, Self, overload
 
 from lxml.etree import _ElementTree as ElementTree
 
 from py_research.hashing import gen_str_hash
-from py_research.reflect.types import has_type
+from py_research.reflect.types import SupportsItems, has_type
 
 from .base import Backend, DataBase, DataSet, Name
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
-from .schema import Attr, Prop, Rec, Rec2, Record, Rel, Schema
+from .schema import AttrRef, PropRef, Record, RelRef, Schema
 
-TreeData: TypeAlias = Mapping[str | int, Any] | ElementTree | Sequence
-
-Dat = TypeVar("Dat")
+type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
 
 
 class All:
@@ -51,9 +49,9 @@ def _select_on_level(data: TreeData, selector: str | int | slice | type[All]) ->
             return data.findall(selector, namespaces={})
 
 
-PathLevel: TypeAlias = (
-    str | int | slice | set[str] | set[int] | type[All] | Callable[[Any], bool]
-)
+type PathLevel = str | int | slice | set[str] | set[int] | type[All] | Callable[
+    [Any], bool
+]
 
 
 @dataclass(frozen=True)
@@ -96,18 +94,15 @@ class TreePath:
         return TreePath([other] + list(self.path))
 
 
-NodeSelector: TypeAlias = str | int | TreePath | type[All]
+type NodeSelector = str | int | TreePath | type[All]
 """Select a node in a hierarchical data structure."""
 
 
-_PushMapping: TypeAlias = Mapping[NodeSelector, "bool | XMap | PushMap[Rec]"]
+type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
-PushMap: TypeAlias = (
-    _PushMapping[Rec]
-    | set["Attr | RelMap"]
-    | Attr[Rec, Any]
-    | Callable[[TreeData | str], "PushMap[Rec]"]
-)
+type PushMap[Rec: Record] = _PushMapping[Rec] | AttrRef[Rec, Any] | RelMap | Iterable[
+    AttrRef | RelMap
+] | Callable[[TreeData | str], PushMap[Rec]]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -139,12 +134,12 @@ class XSelect:
                 return self.sel.select(data)
 
 
-PullMap: TypeAlias = Mapping[Prop[Rec, Any], "NodeSelector | XSelect"]
-_PullMapping: TypeAlias = Mapping[Prop[Rec, Any], XSelect]
+type PullMap[Rec: Record] = SupportsItems[PropRef[Rec, Any], "NodeSelector | XSelect"]
+type _PullMapping[Rec: Record] = Mapping[PropRef[Rec, Any], XSelect]
 
 
-@dataclass(frozen=True)
-class XMap(Generic[Rec, Dat]):
+@dataclass(frozen=True, kw_only=True)
+class XMap[Rec: Record, Dat]:
     """Configuration for how to map (nested) dictionary items to relational tables."""
 
     push: PushMap[Rec]
@@ -156,7 +151,7 @@ class XMap(Generic[Rec, Dat]):
     load: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match: bool | list[Attr[Rec, Any]] = False
+    match: bool | AttrRef[Rec, Any] | list[AttrRef[Rec, Any]] = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
@@ -201,27 +196,29 @@ class Hash(XSelect):
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class SubMap(XMap, XSelect):
     """Select and map nested data to another record."""
+
+    sel: NodeSelector = All
 
     link: "RootMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
 @dataclass(frozen=True, kw_only=True)
-class RelMap(XMap[Rec2, Dat], Generic[Rec, Rec2, Dat]):
+class RelMap[Rec: Record, Rec2: Record, Dat](XMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: Rel[Rec, Any, Rec2]
+    rel: RelRef[Rec, Any, Rec2]
     """Relation to use for mapping."""
 
-    link: XMap | None = None
+    link: "RootMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
 @dataclass(frozen=True, kw_only=True)
-class RootMap(XMap[Rec, Dat]):
+class RootMap[Rec: Record, Rec2: Record, Dat](XMap[Rec, Dat]):
     """Root mapping for hierarchical data."""
 
     rec: type[Rec]
@@ -230,14 +227,14 @@ class RootMap(XMap[Rec, Dat]):
 def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
     """Parse push map into a more usable format."""
     match push_map:
-        case Mapping():
+        case Iterable() if has_type(push_map, Iterable[AttrRef | RelMap]):
+            return {
+                k.name if isinstance(k, AttrRef) else k.rel.name: True for k in push_map
+            }
+        case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
         case str():
             return {All: push_map}
-        case set():
-            return {
-                k.name if isinstance(k, Attr) else k.rel.name: True for k in push_map
-            }
         case Callable():
             return _parse_pushmap(push_map(data), data)
         case _:
@@ -268,11 +265,11 @@ def _push_to_pull_map(
         **{
             (
                 target
-                if isinstance(target, Attr)
+                if isinstance(target, AttrRef)
                 else getattr(rec, _get_selector_name(sel))
             ): XSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, Attr | bool)
+            if isinstance(target, AttrRef | bool)
         },
         **{
             (
@@ -284,8 +281,9 @@ def _push_to_pull_map(
                 if isinstance(target, RelMap)
                 else XSelect.parse(sel)
             )
-            for sel, target in mapping.items()
-            if isinstance(target, XMap)
+            for sel, targets in mapping.items()
+            if has_type(targets, XMap) or has_type(targets, Iterable[XMap])
+            for target in ([targets] if isinstance(targets, XMap) else targets)
         },
     }
 
@@ -293,7 +291,7 @@ def _push_to_pull_map(
     for sel, target in mapping.items():
         if has_type(target, Mapping):
             sub_node = XSelect.parse(sel).select(node)
-            if has_type(sub_node, TreeData):
+            if has_type(sub_node, TreeData):  # type: ignore
                 sub_pull_map = _push_to_pull_map(
                     rec,
                     target,
@@ -310,13 +308,15 @@ def _push_to_pull_map(
     return pull_map
 
 
-def _map_record(  # noqa: C901
+def _map_record[  # noqa: C901
+    Rec: Record, Dat
+](
     db: DataBase,
     rec: type[Rec],
     xmap: XMap[Rec, Dat],
     in_data: Dat,
     collect_conflicts: bool = False,
-) -> tuple[dict[Attr[Rec, Any], Any], dict[Attr, Any] | None, DataConflicts]:
+) -> tuple[dict[AttrRef[Rec, Any], Any], dict[AttrRef, Any] | None, DataConflicts]:
     """Map a data record to its relational representation."""
     conflicts = {}
 
@@ -324,20 +324,20 @@ def _map_record(  # noqa: C901
     if xmap.load is not None:
         data = xmap.load(in_data)
     else:
-        if not has_type(in_data, TreeData):
+        if not has_type(in_data, TreeData):  # type: ignore
             raise ValueError(f"Supplied data has unsupported type {type(in_data)}")
         data = in_data
 
     mapping = xmap.full_map(rec, data)
 
     attrs = {
-        a: sel.select(data)[0] for a, sel in mapping.items() if isinstance(a, Attr)
+        a: sel.select(data)[0] for a, sel in mapping.items() if isinstance(a, AttrRef)
     }
 
     rels = {
         r: sel
         for r, sel in mapping.items()
-        if isinstance(r, Rel) and isinstance(sel, SubMap)
+        if isinstance(r, RelRef) and isinstance(sel, SubMap)
     }
 
     # Handle nested data, which is to be extracted into separate tables and referenced.
@@ -386,9 +386,18 @@ def _map_record(  # noqa: C901
     if len(conflicts) > 0:
         raise DataConflictError(conflicts)
 
-    if xmap.match:
+    if xmap.match is not False:
         # Match against existing records in the database and update them.
-        match_attrs = attrs if xmap.match is True else {a: attrs[a] for a in xmap.match}
+        match_attrs = (
+            attrs
+            if xmap.match is True
+            else {
+                a: attrs[a]
+                for a in (
+                    [xmap.match] if isinstance(xmap.match, AttrRef) else xmap.match
+                )
+            }
+        )
         match_expr = reduce(
             lambda x, y: x & y, [a == v for a, v in match_attrs.items()]
         )
@@ -427,7 +436,7 @@ def tree_to_db(
 def tree_to_db(
     data: TreeData,
     mapping: RootMap,
-    backend: Backend[Name] = Backend("main"),
+    backend: Backend[Name] | None = None,
     schema: type[Schema] | None = None,
     collect_conflicts: bool = False,
 ) -> DataBase[Name] | tuple[DataBase[Name], DataConflicts]:
@@ -449,7 +458,7 @@ def tree_to_db(
         If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
         is returned.
     """
-    db = DataBase(backend, schema)
+    db = DataBase(backend, schema) if backend is not None else DataBase(schema=schema)
 
     _, _, conflicts = _map_record(db, mapping.rec, mapping, data, collect_conflicts)
 

@@ -5,10 +5,13 @@ from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from numbers import Number
+from types import ModuleType
 from typing import Any
 
 import pandas as pd
 from pandas.util import hash_pandas_object
+
+from py_research.reflect.ref import PyObjectRef
 
 
 def _stable_hash(
@@ -36,6 +39,8 @@ def gen_int_hash(obj: Any) -> int:
             return sum(_hash_sequence(item) for item in obj.items())
         case set():
             return sum(gen_int_hash(item) for item in obj)
+        case type() | ModuleType():
+            return gen_int_hash(PyObjectRef.reference(obj).to_url())
         case None:
             return 0
         case _:
@@ -46,7 +51,9 @@ def gen_int_hash(obj: Any) -> int:
 
                 if len(state_dicts) > 0:
                     return sum(
-                        sum(_hash_sequence(item) for item in s.items())
+                        sum(
+                            _hash_sequence((k, v)) for k, v in s.items() if v is not obj
+                        )
                         for s in state_dicts
                     )
             if hasattr(obj, "__getnewargs_ex__"):

@@ -13,10 +13,6 @@ import requests
 import sphinx.util.inventory as inv
 from git import GitError, Repo
 
-from py_research.caching import get_cache
-
-file_cache = get_cache()
-
 
 @cache
 def get_distributions() -> dict[str, meta.Distribution]:
@@ -61,7 +57,7 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
         return None
 
     dists = {
-        Path(dist.locate_file(f"{name}")): dist
+        Path(str(dist.locate_file(f"{name}"))): dist
         for name, dist in get_distributions().items()
     }
 
@@ -113,7 +109,6 @@ def get_project_urls(dist: meta.Distribution, key: str) -> list[str]:
     return urls
 
 
-@file_cache.function
 def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]]:
     """Return object inventory for given documentation URL."""
     inv_url = f"{docs_url.rstrip('/')}/objects.inv"
