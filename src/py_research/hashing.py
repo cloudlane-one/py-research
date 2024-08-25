@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from numbers import Number
-from types import ModuleType
-from typing import Any
+from types import GenericAlias, ModuleType
+from typing import Any, get_args, get_origin
 
 import pandas as pd
 from pandas.util import hash_pandas_object
@@ -26,7 +26,7 @@ def _hash_sequence(s: Sequence) -> int:
     return reduce(lambda x, y: gen_int_hash(str(x) + str(gen_int_hash(y))), s, 0)
 
 
-def gen_int_hash(obj: Any) -> int:
+def gen_int_hash(obj: Any) -> int:  # noqa: C901
     """Generate stable hash for obj (must be known, hashable or composed of such)."""
     match obj:
         case Number() | str() | bytes() | date() | time() | datetime() | timedelta():
@@ -41,6 +41,15 @@ def gen_int_hash(obj: Any) -> int:
             return sum(gen_int_hash(item) for item in obj)
         case type() | ModuleType():
             return gen_int_hash(PyObjectRef.reference(obj).to_url())
+        case GenericAlias():
+            base = get_origin(obj)
+            args = get_args(obj)
+            return gen_int_hash(
+                (
+                    PyObjectRef.reference(base).to_url(),
+                    *(PyObjectRef.reference(arg).to_url() for arg in args),
+                )
+            )
         case None:
             return 0
         case _:

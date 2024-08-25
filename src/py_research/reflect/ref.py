@@ -1,9 +1,11 @@
 """Utils for creating presistent references to Python objects."""
 
 import inspect
+import sysconfig
 from dataclasses import dataclass
-from functools import reduce
+from functools import cache, reduce
 from importlib import import_module
+from pathlib import Path
 from types import ModuleType
 from typing import Any, Generic, TypeVar
 
@@ -21,6 +23,23 @@ from .dist import (
 
 T = TypeVar("T")
 T2 = TypeVar("T2")
+
+
+@cache
+def std_modules() -> list[str]:
+    """Get list of standard library modules."""
+    ret_list = []
+    std_lib = sysconfig.get_path("stdlib")
+
+    for root, _, files in Path(std_lib).walk():
+        for file in files:
+            p = root / file
+            if p.name != "__init__.py" and p.suffix == ".py":
+                ret_list.append(
+                    p.relative_to(std_lib).with_suffix("").as_posix().replace("/", ".")
+                )
+
+    return ret_list
 
 
 @dataclass
@@ -100,12 +119,28 @@ class PyObjectRef(Generic[T]):
             raise ValueError("Object must be associated with a module.")
 
         dist = get_module_distribution(module)
-        if dist is None:
+        if dist is not None:
+            dist_name = dist.name
+            dist_version = dist.version
+            dist_origin = dist.origin
+
+            docs_urls = get_project_urls(dist, "Documentation")
+            docs_url = docs_urls[0] if len(docs_urls) > 0 else None
+            api_urls = get_project_urls(dist, "API Reference")
+            base_api_url = api_urls[0] if len(api_urls) > 0 else None
+        elif module.__name__ in std_modules() or module.__name__ == "builtins":
+            dist_name = "python"
+            dist_version = sysconfig.get_python_version()
+            dist_origin = None
+
+            docs_url = f"https://docs.python.org/{dist_version}/library"
+            base_api_url = docs_url
+        else:
             raise ValueError("Object must be associated with a package.")
 
         package_version = None
         try:
-            package_version_exact = Version(dist.version)
+            package_version_exact = Version(dist_version)
             package_version = version_to_range(
                 package_version_exact, pkg_version_strategy
             )
@@ -113,7 +148,7 @@ class PyObjectRef(Generic[T]):
             pass
 
         url: str | None = (
-            dict(dist.origin.__dict__).get("url") if dist.origin is not None else None
+            dict(dist_origin.__dict__).get("url") if dist_origin is not None else None
         )
 
         repo = None
@@ -122,29 +157,23 @@ class PyObjectRef(Generic[T]):
             if repo is not None:
                 url = repo.remote().url
 
-        docs_urls = get_project_urls(dist, "Documentation")
-        docs_url = docs_urls[0] if len(docs_urls) > 0 else None
-
         if not isinstance(obj, ModuleType):
             obj_inv = get_py_inventory(docs_url) if docs_url is not None else None
             if obj_inv is not None:
                 obj_inv_key = f"{module.__name__}.{qualname}"
                 if obj_inv_key in obj_inv:
                     docs_url = obj_inv[obj_inv_key][2]
-            else:
-                api_urls = get_project_urls(dist, "API Reference")
-                base_api_url = api_urls[0] if len(api_urls) > 0 else None
-                if base_api_url is not None:
-                    possible_docs_url = (
-                        f"{base_api_url.rstrip('/')}/{module.__name__}.html#{qualname}"
-                    )
-                    test_request = requests.get(possible_docs_url)
-                    if test_request.status_code != 404:
-                        docs_url = possible_docs_url
+            elif base_api_url is not None:
+                possible_docs_url = (
+                    f"{base_api_url.rstrip('/')}/{module.__name__}.html#{qualname}"
+                )
+                test_request = requests.get(possible_docs_url)
+                if test_request.status_code != 404:
+                    docs_url = possible_docs_url
 
         return PyObjectRef(
             object_type=type(obj),
-            package=dist.name,
+            package=dist_name,
             module=module.__name__,
             object=qualname,
             object_version=object_version,

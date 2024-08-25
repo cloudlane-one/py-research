@@ -1,7 +1,7 @@
 """Reflection utilities for types."""
 
 from collections.abc import Iterable
-from typing import Any, Protocol, TypeGuard, TypeVar
+from typing import Any, Protocol, TypeGuard, TypeVar, runtime_checkable
 
 from beartype.door import is_bearable, is_subhint
 
@@ -10,6 +10,7 @@ T_cov = TypeVar("T_cov", covariant=True)
 U_cov = TypeVar("U_cov", covariant=True)
 
 
+@runtime_checkable
 class SupportsItems(Protocol[T_cov, U_cov]):
     """Protocol for objects that support item access."""
 

@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property, reduce
 from inspect import getmodule
 from secrets import token_hex
-from types import ModuleType
+from types import GenericAlias, ModuleType, UnionType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -47,6 +47,8 @@ Key = TypeVar("Key", bound=Hashable)
 Val = TypeVar("Val")
 Val2 = TypeVar("Val2")
 
+PVal = TypeVar("PVal", bound="Prop")
+
 Rec = TypeVar("Rec", bound="Record")
 Rec2 = TypeVar("Rec2", bound="Record")
 Rec3 = TypeVar("Rec3", bound="Record")
@@ -62,7 +64,7 @@ RelTup = TypeVarTuple("RelTup")
 
 
 def _extract_record_type(hint: Any) -> type["Record"]:
-    origin: type = get_origin(hint)
+    origin: type = get_origin(hint) or hint
 
     if issubclass(origin, Record):
         return origin
@@ -75,21 +77,37 @@ def _extract_record_type(hint: Any) -> type["Record"]:
 
 
 @dataclass(frozen=True)
-class TypeRef(Generic[Val]):
+class TypeRef(Generic[PVal]):
     """Reference to a type."""
 
-    hint: str | type[Val]
+    hint: str | type[PVal] | None = None
     ctx: ModuleType | None = None
 
-    def resolve(self) -> type[Val]:
-        """Resolve the type reference."""
+    def prop_type(self) -> type["Prop"]:
+        """Resolve the property type reference."""
+        hint = self.hint or Prop
+
+        if isinstance(hint, type):
+            base = get_origin(hint)
+            assert base is not None and issubclass(base, Prop)
+            return base
+        else:
+            return Attr if "Attr" in hint else Rel if "Rel" in hint else Prop
+
+    def value_type(self) -> type:
+        """Resolve the value type reference."""
+        hint = self.hint or Prop
+
         generic = (
-            self.hint
-            if isinstance(self.hint, type)
-            else cast(type[Val], eval(self.hint, vars(self.ctx)))
+            hint
+            if isinstance(hint, type | GenericAlias | UnionType)
+            else cast(type[PVal], eval(hint, vars(self.ctx) if self.ctx else None))
         )
-        assert issubclass(get_origin(generic) or type, Prop)
-        return get_args(generic)[0]
+
+        assert issubclass(get_origin(generic) or generic, Prop)
+
+        args = get_args(generic)
+        return args[0] if len(args) > 0 else object
 
 
 @dataclass(kw_only=True, eq=False)
@@ -135,7 +153,7 @@ class Prop(Generic[Val]):
                 primary_key=self.primary_key,
                 _name=self._name,
                 record_type=cast(type[Rec], owner),
-                value_type=owner._static_types[self.name],
+                prop_type=owner._prop_defs[self.name],
             )
         return self
 
@@ -153,7 +171,7 @@ class PropRef(Prop[Val], Generic[Rec_cov, Val]):
     """Reference a property of a record."""
 
     record_type: type[Rec_cov]
-    value_type: TypeRef[Val]
+    prop_type: TypeRef[Prop[Val]]
 
     @staticmethod
     def get_tag(rec_type: type["Record"]) -> "RelRef | None":
@@ -179,13 +197,13 @@ class PropRef(Prop[Val], Generic[Rec_cov, Val]):
 
     def __rrshift__(self, left: "type[Record] | RelRef") -> Self:
         """Append a prop to the relation path."""
-        current_root = self.path[0]
+        current_root: RelRef[Record, Record, Any] = self.path[0]
         new_root = (
             left if isinstance(left, RelRef) else left.rel(current_root.record_type)
         )
 
         prefixed_rel = reduce(
-            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.a),
+            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.a),  # type: ignore
             self.path,
             new_root,
         )
@@ -225,7 +243,7 @@ class Attr(Prop[Val]):
                 primary_key=self.primary_key,
                 _name=self._name,
                 record_type=cast(type[Rec], owner),
-                value_type=owner._static_types[self.name],
+                prop_type=owner._prop_defs[self.name],
                 attr_name=self.attr_name,
             )
         return self
@@ -307,18 +325,14 @@ class Rel(Prop[Recs]):
         if instance is not None:
             return self.value
         elif owner is not None and issubclass(owner, Record):
-            typeref = owner._static_types.get(self.name)
-            target = (
-                _extract_record_type(typeref.resolve()) if typeref is not None else None
-            )
+            typeref = owner._prop_defs.get(self.name)
             return RelRef(
                 primary_key=self.primary_key,
                 _name=self._name,
                 record_type=owner,
-                value_type=typeref or TypeRef(Iterable[target or Any]),
+                prop_type=typeref or TypeRef(),
                 via=self.via,
                 index_by=self.index_by,
-                _target_type=target,
             )
         return self
 
@@ -327,13 +341,13 @@ class Rel(Prop[Recs]):
 class RelRef(Rel[Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
     """Reference a relation to another record."""
 
-    _target_type: type[Rec2] | None = None
-
     @property
     def target_type(self) -> type["Record"]:
         """Dynamic target type of the relation."""
-        if self._target_type is not None:
-            return self._target_type
+        if self.prop_type is not None:
+            value_type = self.prop_type.value_type()
+            if issubclass(value_type, Record):
+                return _extract_record_type(value_type)
 
         match self.via:
             case dict():
@@ -377,7 +391,7 @@ class RelRef(Rel[Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
                         AttrRef(
                             _name=fk.name,
                             record_type=self.record_type,
-                            value_type=fk.value_type,
+                            prop_type=fk.prop_type,
                         ): pk
                         for fk, pk in self.via.items()
                     }
@@ -388,7 +402,7 @@ class RelRef(Rel[Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
                     AttrRef(
                         _name=attr.name,
                         record_type=self.record_type,
-                        value_type=attr.value_type,
+                        prop_type=attr.prop_type,
                     )
                     for attr in attrs
                 ]
@@ -399,11 +413,11 @@ class RelRef(Rel[Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
                     issubclass(
                         self.record_type._static_props[
                             fk_attr.name
-                        ].value_type.resolve(),
-                        pk_attr.value_type.resolve(),
+                        ].prop_type.value_type(),
+                        pk_attr.prop_type.value_type(),
                     )
                     for fk_attr, pk_attr in fk_map.items()
-                    if pk_attr.value_type is not None
+                    if pk_attr.prop_type is not None
                 ), "Foreign key value types must match primary key value types."
 
                 return bidict(fk_map)
@@ -413,7 +427,7 @@ class RelRef(Rel[Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
                         AttrRef(
                             _name=f"{self._name}.{target_attr.name}",
                             record_type=self.record_type,
-                            value_type=target_attr.value_type,
+                            prop_type=target_attr.prop_type,
                         ): target_attr
                         for target_attr in target._indexes
                     }
@@ -639,29 +653,36 @@ class RecordMeta(type):
     """Metaclass for record types."""
 
     @property
-    def _id(cls) -> AttrRef:
+    def _id(cls: type["Record"]) -> AttrRef:
         """Default primary key attribute."""
         return AttrRef(
             _name="id",
             record_type=cls,
-            value_type=TypeRef(int),
+            prop_type=TypeRef(Attr[int]),
             primary_key=True,
         )
 
     @property
-    def _static_types(cls) -> dict[str, TypeRef]:
+    def _prop_defs(cls) -> dict[str, TypeRef]:
         return {
             name: TypeRef(hint, ctx=getmodule(cls))
             for name, hint in cls.__annotations__.items()
             if issubclass(get_origin(hint) or type, Prop)
             or isinstance(hint, str)
-            and "Attr" in hint
-            or "Rel" in hint
+            and ("Attr" in hint or "Rel" in hint)
         }
+
+    def __init__(cls, name, bases, dct):
+        """Initialize a new record type."""
+        super().__init__(name, bases, dct)
+
+        for name, type_ in cls._prop_defs.items():
+            if name not in cls.__dict__:
+                setattr(cls, name, type_.prop_type()(_name=name))
 
     @property
     def _static_props(cls) -> dict[str, PropRef]:
-        return {name: getattr(cls, name) for name in cls._static_types.keys()}
+        return {name: getattr(cls, name) for name in cls._prop_defs.keys()}
 
     @property
     def _dynamic_props(cls) -> dict[str, PropRef]:
@@ -707,13 +728,13 @@ class RecordMeta(type):
         ]
 
     @property
-    def _base_pks(cls) -> dict[type["Record"], dict[AttrRef, AttrRef]]:
+    def _base_pks(cls: type["Record"]) -> dict[type["Record"], dict[AttrRef, AttrRef]]:
         return {
             base: {
                 AttrRef(
                     attr_name=pk.name,
                     record_type=cls,
-                    value_type=pk.value_type,
+                    prop_type=pk.prop_type,
                     primary_key=True,
                 ): pk
                 for pk in base._indexes
@@ -743,22 +764,6 @@ class RecordMeta(type):
         """Return the primary key attributes of this schema."""
         defined_pks = {p for p in cls._attrs if p.primary_key}
         return defined_pks or {cls._id}
-
-    if not TYPE_CHECKING:
-
-        def __getattr__(cls, name: str) -> AttrRef:
-            """Get and instantiate attribute by name."""
-            if name in cls.__dict__:
-                return cls.__dict__[name]
-
-            if name.startswith("__"):
-                return super().__getattribute__(name)
-
-            static_types = cls._static_types
-            if name in static_types:
-                return Prop(_name=name)
-
-            raise AttributeError(f"{cls.__name__} has no attribute '{name}'.")
 
 
 class Record(Generic[Idx, Val], metaclass=RecordMeta):
@@ -794,8 +799,8 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
             sqla.Column(
                 attr.name,
                 (
-                    registry._resolve_type(attr.value_type.resolve())
-                    if attr.value_type
+                    registry._resolve_type(attr.prop_type.value_type())
+                    if attr.prop_type
                     else None
                 ),
                 primary_key=attr.primary_key,
@@ -885,8 +890,7 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
             RelRef(
                 via=cls,
                 record_type=target,
-                value_type=TypeRef(Iterable[cls]),
-                _target_type=cls,
+                prop_type=TypeRef(Rel[Iterable[cls]]),
             )
             for rel in cls._rels
             if issubclass(target, rel.target_type)
@@ -911,8 +915,7 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
         return RelRef(
             via=other,
             record_type=cls,
-            value_type=TypeRef(value_type),
-            _target_type=other,
+            prop_type=TypeRef(Rel[value_type]),
         )
 
     @classmethod
@@ -944,16 +947,16 @@ class Require:
 class DynRecordMeta(RecordMeta):
     """Metaclass for dynamically defined record types."""
 
-    def __getitem__(cls, name: str) -> AttrRef:
+    def __getitem__(cls: type[Record], name: str) -> AttrRef:
         """Get dynamic attribute by dynamic name."""
-        return AttrRef(_name=name, record_type=cls, value_type=TypeRef(Any))
+        return AttrRef(_name=name, record_type=cls, prop_type=TypeRef())
 
-    def __getattr__(cls, name: str) -> AttrRef:
+    def __getattr__(cls: type["Record"], name: str) -> AttrRef:
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
 
-        return AttrRef(_name=name, record_type=cls, value_type=TypeRef(Any))
+        return AttrRef(_name=name, record_type=cls, prop_type=TypeRef())
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):  # noqa: N801

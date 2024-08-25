@@ -109,13 +109,15 @@ def get_project_urls(dist: meta.Distribution, key: str) -> list[str]:
     return urls
 
 
-def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]]:
+@cache
+def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]] | None:
     """Return object inventory for given documentation URL."""
     inv_url = f"{docs_url.rstrip('/')}/objects.inv"
 
     res = requests.get(inv_url, allow_redirects=True)
 
-    res.raise_for_status()
+    if res.status_code != 200:
+        return None
 
     inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)
     py_inv_dict = reduce(

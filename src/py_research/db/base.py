@@ -163,7 +163,7 @@ def props_from_data(
         attr = AttrRef(
             primary_key=True,
             _name=name if not is_rel else f"fk_{name}",
-            value_type=TypeRef(value_type),
+            prop_type=TypeRef(value_type),
             record_type=DynRecord,
         )
         return (
@@ -171,7 +171,7 @@ def props_from_data(
             if not is_rel
             else RelRef(
                 via={attr: foreign_keys[name]},
-                value_type=TypeRef(value_type),
+                prop_type=TypeRef(value_type),
                 record_type=DynRecord,
                 _target_type=foreign_keys[name].record_type,
             )
@@ -1065,7 +1065,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                     via=uploaded.record_type,
                     _target_type=uploaded.record_type,
                     record_type=self.record_type,
-                    value_type=TypeRef(Iterable[uploaded.record_type]),
+                    prop_type=TypeRef(Iterable[uploaded.record_type]),
                 )
 
         return filt, merge
