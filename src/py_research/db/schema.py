@@ -5,7 +5,7 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property, reduce
 from inspect import getmodule
 from secrets import token_hex
-from types import GenericAlias, ModuleType, UnionType
+from types import ModuleType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -99,9 +99,9 @@ class TypeRef(Generic[PVal]):
         hint = self.hint or Prop
 
         generic = (
-            hint
-            if isinstance(hint, type | GenericAlias | UnionType)
-            else cast(type[PVal], eval(hint, vars(self.ctx) if self.ctx else None))
+            cast(type[PVal], eval(hint, vars(self.ctx) if self.ctx else None))
+            if isinstance(hint, str)
+            else hint
         )
 
         assert issubclass(get_origin(generic) or generic, Prop)
@@ -274,7 +274,7 @@ class AttrRef(
         return self.name
 
     @cached_property
-    def type(self) -> sqla_types.TypeEngine:
+    def sql_type(self) -> sqla_types.TypeEngine:
         """Column key."""
         return sqla_types.to_instance(self._value_type)  # type: ignore
 

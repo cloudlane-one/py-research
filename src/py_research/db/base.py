@@ -3,7 +3,7 @@
 from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
-from functools import cache, cached_property, partial, reduce
+from functools import cached_property, partial, reduce
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
@@ -44,6 +44,7 @@ from py_research.reflect.types import has_type
 
 from .schema import (
     Agg,
+    Attr,
     AttrRef,
     BaseIdx,
     DynRecord,
@@ -54,6 +55,7 @@ from .schema import (
     Rec2,
     Rec_cov,
     Record,
+    Rel,
     RelDict,
     RelRef,
     RelTree,
@@ -163,7 +165,7 @@ def props_from_data(
         attr = AttrRef(
             primary_key=True,
             _name=name if not is_rel else f"fk_{name}",
-            prop_type=TypeRef(value_type),
+            prop_type=TypeRef(Attr[value_type]),
             record_type=DynRecord,
         )
         return (
@@ -171,9 +173,8 @@ def props_from_data(
             if not is_rel
             else RelRef(
                 via={attr: foreign_keys[name]},
-                prop_type=TypeRef(value_type),
+                prop_type=TypeRef(Rel[value_type]),
                 record_type=DynRecord,
-                _target_type=foreign_keys[name].record_type,
             )
         )
 
@@ -257,11 +258,11 @@ class Backend(Generic[Name]):
                 return "in-memory"
 
 
-@dataclass(frozen=True)
+@dataclass
 class DataBase(Generic[Name]):
     """Active connection to a (in-memory) SQL server."""
 
-    backend: Backend[Name] = field(default_factory=lambda: Backend(token_hex(5)))
+    backend: Backend[Name] = field(default_factory=lambda: Backend("default"))  # type: ignore
     schema: (
         type[Schema]
         | Mapping[
@@ -713,7 +714,6 @@ class DataBase(Generic[Name]):
 
         return node_df, edge_df
 
-    @cache
     def _get_table(self, rec: type[Record], writable: bool = False) -> sqla.Table:
         if writable and self.overlay is not None and rec not in self._overlay_subs:
             # Create an empty overlay table for the record type
@@ -728,11 +728,9 @@ class DataBase(Generic[Name]):
 
         return rec._table(self.meta, self.subs)
 
-    @cache
     def _get_joined_table(self, rec: type[Record]) -> sqla.Table | sqla.Join:
         return rec._joined_table(self.meta, self.subs)
 
-    @cache
     def _get_alias(self, rel: RelRef) -> sqla.FromClause:
         """Get alias for a relation reference."""
         return self._get_joined_table(rel.target_type).alias(gen_str_hash(rel, 8))
@@ -1060,12 +1058,16 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                     },
                 )
 
-                filt = self.db._get_table(uploaded).c[series_name] == True  # noqa: E712
+                filt = (
+                    self.db._get_table(uploaded.record_type).c[  # noqa: E712
+                        series_name
+                    ]
+                    == True
+                )
                 merge += RelRef(
                     via=uploaded.record_type,
-                    _target_type=uploaded.record_type,
                     record_type=self.record_type,
-                    prop_type=TypeRef(Iterable[uploaded.record_type]),
+                    prop_type=TypeRef(Rel[Iterable[uploaded.record_type]]),
                 )
 
         return filt, merge
