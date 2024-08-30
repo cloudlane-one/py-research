@@ -2,6 +2,7 @@
 
 import hashlib
 from collections.abc import Sequence
+from dataclasses import fields, is_dataclass
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from numbers import Number
@@ -17,35 +18,28 @@ from py_research.reflect.ref import PyObjectRef
 def _stable_hash(
     data: Number | str | bytes | date | time | datetime | timedelta,
 ) -> int:
+    data = f"{type(data)}:{data}"
     m = hashlib.md5(usedforsecurity=False)
-    m.update(bytes(str(data), "utf-8"))
+    m.update(bytes(data, "utf-8"))
     return int.from_bytes(m.digest())
 
 
-def _hash_sequence(s: Sequence, _ctx: set[int] = set()) -> int:
+def _hash_sequence(s: Sequence, _ctx: set[int]) -> int:
     return reduce(
         lambda x, y: gen_int_hash(str(x) + str(gen_int_hash(y, _ctx)), _ctx), s, 0
     )
 
 
-def gen_int_hash(obj: Any, _ctx: set[int] = set()) -> int:  # noqa: C901
+def gen_int_hash(obj: Any, _ctx: set[int] | None = None) -> int:  # noqa: C901
     """Generate stable hash for obj (must be known, hashable or composed of such)."""
+    _ctx = _ctx or set()
+
     if id(obj) in _ctx:
         return 0
 
-    _ctx.add(id(obj))
-
     match obj:
-        case Number() | str() | bytes() | date() | time() | datetime() | timedelta():
-            return _stable_hash(obj)
-        case pd.DataFrame() | pd.Series() | pd.Index():
-            return sum(hash_pandas_object(obj))
-        case list() | tuple():
-            return _hash_sequence(obj, _ctx)
-        case dict():
-            return sum(_hash_sequence(item, _ctx) for item in obj.items())
-        case set():
-            return sum(gen_int_hash(item, _ctx) for item in obj)
+        case None:
+            return 0
         case type() | ModuleType():
             return gen_int_hash(PyObjectRef.reference(obj).to_url())
         case GenericAlias():
@@ -57,9 +51,26 @@ def gen_int_hash(obj: Any, _ctx: set[int] = set()) -> int:  # noqa: C901
                     *(PyObjectRef.reference(arg).to_url() for arg in args),
                 )
             )
-        case None:
-            return 0
+        case Number() | str() | bytes() | date() | time() | datetime() | timedelta():
+            return _stable_hash(obj)
+        case pd.DataFrame() | pd.Series() | pd.Index():
+            return sum(hash_pandas_object(obj))
+        case list() | tuple():
+            _ctx.add(id(obj))
+            return _hash_sequence(obj, _ctx)
+        case dict():
+            _ctx.add(id(obj))
+            return sum(_hash_sequence(item, _ctx) for item in obj.items())
+        case set():
+            _ctx.add(id(obj))
+            return sum(gen_int_hash(item, _ctx) for item in obj)
         case _:
+            _ctx.add(id(obj))
+
+            if is_dataclass(obj):
+                return gen_int_hash(
+                    {f.name: getattr(obj, f.name) for f in fields(obj)}, _ctx
+                )
             if hasattr(obj, "__getstate__"):
                 state = obj.__getstate__()
                 state = state if isinstance(state, tuple) else (state,)

@@ -5,7 +5,9 @@ from dataclasses import dataclass, fields
 from functools import reduce
 from itertools import chain
 from typing import Any, Literal, Self, overload
+from uuid import uuid4
 
+import pandas as pd
 from lxml.etree import _ElementTree as ElementTree
 
 from py_research.hashing import gen_str_hash
@@ -354,6 +356,9 @@ def _map_record[  # noqa: C901
         if isinstance(a, AttrRef)
     }
 
+    if "_id" not in attrs:
+        attrs["_id"] = (getattr(rec, "_id"), uuid4())
+
     rels = {
         r: sel
         for r, sel in mapping.items()
@@ -428,7 +433,9 @@ def _map_record[  # noqa: C901
                 existing[a] = v
     else:
         # Do an index-based upsert.
-        db[rec] <<= dict(attrs.values())
+        db[rec] <<= pd.DataFrame.from_records(dict(attrs.values())).set_index(
+            [a.name for a in rec._primary_keys.values()]
+        )
 
     return attrs, link_attrs, conflicts
 

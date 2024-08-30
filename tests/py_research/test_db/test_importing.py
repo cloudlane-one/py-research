@@ -7,7 +7,16 @@ from datetime import date
 from typing import Literal
 
 import pytest
-from py_research.db import Attr, DataBase, Record, Rel, RootMap
+from py_research.db import (
+    Attr,
+    DataBase,
+    Record,
+    Rel,
+    RootMap,
+    as_dataset,
+    backrel,
+    computed,
+)
 from py_research.db.importing import RelMap, SubMap, tree_to_db
 
 
@@ -16,6 +25,7 @@ class SearchResult(Record):
 
     search: Rel[Search]
     result: Rel[Project]
+    score: Attr[float]
 
 
 class Search(Record[str, str]):
@@ -23,7 +33,7 @@ class Search(Record[str, str]):
 
     term: Attr[str] = Attr(primary_key=True)
     result_count: Attr[int]
-    results: Rel[list[Project]] = Rel(via=SearchResult)
+    results = backrel(via=SearchResult.result, order_by={SearchResult.score: -1})
 
 
 class Task(Record):
@@ -40,7 +50,12 @@ class User(Record):
 
     name: Attr[str]
     age: Attr[int]
-    tasks = Rel(via=Task.assignee)
+    tasks = backrel(to=Task.assignee)
+
+    @computed
+    def all_done(self) -> bool:
+        """Return True if all tasks are done."""
+        return all(task.status == "done" for task in self.tasks)
 
 
 class Membership(Record):
@@ -48,7 +63,7 @@ class Membership(Record):
 
     member: Rel[User]
     project: Rel[Project]
-    role: Attr[str]
+    role: Attr[str] = Attr(default="member")
 
 
 class Project(Record):
@@ -58,9 +73,9 @@ class Project(Record):
     start: Attr[date]
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
-    tasks = Rel(via=Task.project)
-    members = Rel(via=Membership)
     org: Rel[Organization]
+    tasks = backrel(to=Task.project)
+    members = backrel(to=Membership)
 
 
 class Organization(Record):
@@ -69,7 +84,7 @@ class Organization(Record):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects = Rel(via=Project.org)
+    projects = backrel(to=Project.org)
 
 
 @pytest.fixture
