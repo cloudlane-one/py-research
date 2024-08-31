@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterable, Mapping
-from dataclasses import InitVar, asdict, dataclass, field
+from collections.abc import Callable, Hashable, Iterable, Mapping
+from dataclasses import InitVar, asdict, dataclass, field, fields
 from functools import cached_property, reduce
 from inspect import getmodule
 from secrets import token_hex
@@ -13,6 +13,7 @@ from typing import (
     Any,
     ClassVar,
     Generic,
+    Literal,
     Self,
     cast,
     dataclass_transform,
@@ -20,14 +21,13 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 import sqlalchemy.sql.roles as sqla_roles
 import sqlalchemy.sql.type_api as sqla_types
 from bidict import bidict
-from pydantic._internal._model_construction import ModelMetaclass
 from sqlalchemy_utils import UUIDType
 from typing_extensions import TypeVar, TypeVarTuple
 
@@ -52,6 +52,8 @@ Key = TypeVar("Key", bound=Hashable)
 
 Val = TypeVar("Val")
 Val2 = TypeVar("Val2")
+Val3 = TypeVar("Val3")
+Val_cov = TypeVar("Val_cov", covariant=True)
 
 PVal = TypeVar("PVal", bound="Prop")
 
@@ -62,13 +64,27 @@ Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
 Rec_def = TypeVar("Rec_def", bound="Record", default="Record")
 
 type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec]
-Recs = TypeVar("Recs", bound=RecordValue)
-Recs_def = TypeVar("Recs_def", bound=RecordValue, default=Rec_def)
+Recs_cov = TypeVar("Recs_cov", bound=RecordValue, covariant=True)
 
 Sch = TypeVar("Sch", bound="Schema")
 DBS = TypeVar("DBS", bound="Record | Schema")
 
 RelTup = TypeVarTuple("RelTup")
+
+
+class RO:
+    """Read-only flag."""
+
+
+class RW(RO):
+    """Read-write flag."""
+
+
+RWT = TypeVar("RWT", RW, RO, default=RW, covariant=True)
+
+
+class Unfetched:
+    """Singleton to mark unfetched values."""
 
 
 def _extract_record_type(hint: Any) -> type[Record]:
@@ -85,7 +101,7 @@ def _extract_record_type(hint: Any) -> type[Record]:
 
 
 @dataclass(frozen=True)
-class TypeRef(Generic[PVal]):
+class TypeDef(Generic[PVal]):
     """Reference to a type."""
 
     hint: str | type[PVal] | None = None
@@ -118,12 +134,26 @@ class TypeRef(Generic[PVal]):
         return args[0] if len(args) > 0 else object
 
 
-@dataclass(kw_only=True, eq=False)
-class Prop(Generic[Val]):
+@dataclass(eq=False)
+class Prop(Generic[Val_cov, RWT]):
     """Reference a property of a record."""
 
+    _value: Val_cov | None = None
+
     alias: str | None = None
+    default: InitVar[Val_cov | None] = None
+    default_factory: Callable[[], Val_cov] | None = None
+    index: bool = False
+    primary_key: bool = False
+    getter: Callable[[Record], Val_cov] | None = None
+    setter: Callable[[Record, Val_cov], None] | None = None
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None
+
     _name: str | None = None
+    _default: Val_cov | None = None
+
+    def __post_init__(self, default: Val_cov | None) -> None:  # noqa: D105
+        self._default = default
 
     @property
     def name(self) -> str:
@@ -142,13 +172,127 @@ class Prop(Generic[Val]):
         """Hash the Prop."""
         return gen_int_hash(self)
 
+    @overload
+    def __get__(self, instance: Record, owner: type[Record]) -> Val_cov: ...
+
+    @overload
+    def __get__(self, instance: None, owner: type[Rec]) -> PropRef[Rec, Val_cov]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[Rec] | None
+    ) -> Val_cov | PropRef[Rec, Val_cov] | Self:
+        if isinstance(instance, Record):
+            if self.getter is not None:
+                value = self.getter(instance)
+            else:
+                value = instance._values[self.name]
+
+            if isinstance(value, Unfetched) and instance._fetcher is not None:
+                try:
+                    value = instance._fetcher(self.name)
+                except KeyError:
+                    pass
+
+            if isinstance(value, Unfetched):
+                if self.default_factory is not None:
+                    value = self.default_factory()
+                elif self._default is not None:
+                    value = self._default
+
+            if isinstance(value, Unfetched):
+                raise ValueError("Property value could not fetched.")
+
+            instance._values[self.name] = value
+            return value
+        elif owner is not None and issubclass(owner, Record):
+            return type(self)(
+                **{
+                    **{f.name: getattr(self, f.name) for f in fields(self)},
+                    **dict(
+                        record_type=cast(type[Rec], owner),
+                        prop_type=owner._prop_defs[self.name],
+                    ),
+                }
+            )
+        return self
+
+    def __set__(self: Prop[Val, RW], instance: Record, value: Val | Unfetched) -> None:
+        """Set the value of the property."""
+        if self.setter is not None and not isinstance(value, Unfetched):
+            self.setter(instance, value)
+        instance._values[self.name] = value
+
+
+@dataclass(eq=False)
+class Attr(Prop[Val_cov, RWT]):
+    """Define an attribute of a record."""
+
+    collection: Callable[[Any], Attr[Val_cov]] | None = None
+
+    @overload
+    def __get__(self, instance: Record, owner: type[Record]) -> Val_cov: ...
+
+    @overload
+    def __get__(self, instance: None, owner: type[Rec]) -> AttrRef[Rec, Val_cov]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[Rec] | None
+    ) -> Val_cov | PropRef[Rec, Val_cov] | Self:
+        return super().__get__(instance, owner)
+
+
+@dataclass(eq=False)
+class Rel(Prop[Recs_cov, RWT]):
+    """Define a relation to another record."""
+
+    on: (
+        AttrRef
+        | Iterable[AttrRef]
+        | dict[AttrRef, AttrRef]
+        | RelRef
+        | tuple[RelRef, RelRef]
+        | type
+        | None
+    ) = None
+    order_by: Mapping[AttrRef, int] | None = None
+    map_by: AttrRef | None = None
+
+    @overload
+    def __get__(self, instance: Record, owner: type[Record]) -> Recs_cov: ...
+
+    @overload
+    def __get__(
+        self: Rel[Rec | Iterable[Rec] | Mapping[Any, Rec]],
+        instance: None,
+        owner: type[Rec2],
+    ) -> RelRef[Rec2, Recs_cov, Rec]: ...
+
+    @overload
+    def __get__(
+        self, instance: None, owner: type[Rec2]
+    ) -> RelRef[Rec2, Recs_cov, Any]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105 # type: ignore
+        self, instance: object | None, owner: type | type[Rec2] | None
+    ) -> Recs_cov | RelRef[Rec2, Recs_cov, Any] | Self:
+        return super().__get__(instance, owner)
+
 
 @dataclass(kw_only=True, eq=False)
-class PropRef(Prop[Val], sqla_roles.ExpressionElementRole[Val], Generic[Rec_cov, Val]):
+class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
     """Reference a property of a record."""
 
     record_type: type[Rec_cov]
-    prop_type: TypeRef[Prop[Val]]
+    prop_type: TypeDef[Prop[Val_cov]]
 
     @staticmethod
     def get_tag(rec_type: type[Record]) -> RelRef | None:
@@ -194,7 +338,17 @@ class PropRef(Prop[Val], sqla_roles.ExpressionElementRole[Val], Generic[Rec_cov,
             ),
         )
 
-    def label(self, name: str | None) -> sqla.Label[Val]:
+
+@dataclass(kw_only=True, eq=False)
+class AttrRef(
+    Attr[Val_cov],
+    PropRef[Rec_cov, Val_cov],
+    sqla_roles.ExpressionElementRole[Val_cov],
+    Generic[Rec_cov, Val_cov],
+):
+    """Reference an attribute of a record."""
+
+    def label(self, name: str | None) -> sqla.Label[Val_cov]:
         """Label the attribute for SQL queries."""
         return sqla.Label(
             name, self, type_=sqla_types.to_instance(self.prop_type.value_type())  # type: ignore
@@ -203,198 +357,19 @@ class PropRef(Prop[Val], sqla_roles.ExpressionElementRole[Val], Generic[Rec_cov,
     def __clause_element__(self) -> Self:  # noqa: D105
         return self
 
+    def all(self) -> sqla.CollectionAggregate[bool]:
+        """Return a SQL ALL expression for this attribute."""
+        return sqla.all_(self)
 
-@dataclass(kw_only=True, eq=False)
-class Attr(Prop[Val]):
-    """Define an attribute of a record."""
-
-    primary_key: bool = False
-    default: InitVar[Val | None] = None
-
-    _value: Val | None = None
-
-    def __post_init__(self, default: Val | None) -> None:  # noqa: D105
-        self.__default = default
-
-    @overload
-    def __get__(self, instance: Record, owner: type[Record]) -> Val: ...
-
-    @overload
-    def __get__(self, instance: None, owner: type[Rec]) -> AttrRef[Rec, Val]: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type | type[Rec] | None
-    ) -> Val | AttrRef[Rec, Val] | Self:
-        if isinstance(instance, Record):
-            return instance._values[self.name]
-        elif owner is not None and issubclass(owner, Record):
-            return AttrRef(
-                primary_key=self.primary_key,
-                _name=self._name,
-                alias=self.alias,
-                default=self.__default,
-                record_type=cast(type[Rec], owner),
-                prop_type=owner._prop_defs[self.name],
-            )
-        return self
-
-    def __set__(self, instance: Record, value: Val) -> None:
-        """Set the value of the property."""
-        instance._values[self.name] = value
+    def any(self) -> sqla.CollectionAggregate[bool]:
+        """Return a SQL ANY expression for this attribute."""
+        return sqla.any_(self)
 
 
 @dataclass(kw_only=True, eq=False)
-class AttrRef(
-    Attr[Val],
-    PropRef[Rec_cov, Val],
-    Generic[Rec_cov, Val],
+class RelRef(
+    Rel[Recs_cov], PropRef[Rec_cov, Recs_cov], Generic[Rec_cov, Recs_cov, Rec2]
 ):
-    """Reference an attribute of a record."""
-
-
-@dataclass(kw_only=True, eq=False)
-class Rel(Prop[Recs_def], Generic[Rec_def, Recs_def]):
-    """Define a relation to another record."""
-
-    on: (
-        AttrRef
-        | Iterable[AttrRef]
-        | dict[AttrRef, AttrRef]
-        | RelRef
-        | tuple[RelRef, RelRef]
-        | type
-        | None
-    ) = None
-    order_by: Mapping[AttrRef, int] | None = None
-    map_by: AttrRef | None = None
-
-    @overload
-    def __get__(self, instance: Record, owner: type[Record]) -> Recs_def: ...
-
-    @overload
-    def __get__(
-        self, instance: None, owner: type[Rec]
-    ) -> RelRef[Rec, Recs_def, Rec_def]: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105 # type: ignore
-        self, instance: object | None, owner: type | type[Rec] | None
-    ) -> Recs_def | RelRef[Rec, Recs_def, Rec_def] | Self:
-        if isinstance(instance, Record):
-            return instance._values[self.name]
-        elif owner is not None and issubclass(owner, Record):
-            owner_rec = cast(type[Rec], owner)
-            typeref = owner._prop_defs.get(self.name)
-            return RelRef(
-                _name=self._name,
-                record_type=owner_rec,
-                prop_type=typeref or TypeRef(),
-                on=self.on,
-                order_by=self.order_by,
-                map_by=self.map_by,
-            )
-        return self
-
-    def __set__(self, instance: Record, value: Recs_def) -> None:
-        """Set the value of the property."""
-        instance._values[self.name] = value
-
-
-@overload
-def backrel(
-    *,
-    to: RelRef[Rec, Any, Any] | type[Rec],
-    via: None = None,
-    order_by: None = None,
-    map_by: None = None,
-) -> Rel[Rec, set[Rec]]: ...
-
-
-@overload
-def backrel(
-    *,
-    to: RelRef[Rec, Any, Any] | type[Rec],
-    via: None = None,
-    order_by: Mapping[AttrRef[Rec, Any], int],
-    map_by: None = None,
-) -> Rel[Rec, list[Rec]]: ...
-
-
-@overload
-def backrel(
-    *,
-    to: RelRef[Rec, Any, Any] | type[Rec],
-    via: None = None,
-    order_by: None = None,
-    map_by: AttrRef[Rec, Val],
-) -> Rel[Rec, dict[Val, Rec]]: ...
-
-
-@overload
-def backrel(
-    *,
-    to: None = None,
-    via: (
-        RelRef[Any, Any, Rec]
-        | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
-        | type[Rec2]
-    ),
-    order_by: None = None,
-    map_by: None = None,
-) -> Rel[Rec, set[Rec]]: ...
-
-
-@overload
-def backrel(
-    *,
-    to: None = None,
-    via: (
-        RelRef[Any, Any, Rec]
-        | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
-        | type[Rec2]
-    ),
-    order_by: Mapping[AttrRef[Rec | Rec2, Any], int],
-    map_by: None = None,
-) -> Rel[Rec, list[Rec]]: ...
-
-
-@overload
-def backrel(
-    *,
-    to: None = None,
-    via: (
-        RelRef[Any, Any, Rec]
-        | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
-        | type[Rec2]
-    ),
-    order_by: None = None,
-    map_by: AttrRef[Rec | Rec2, Val],
-) -> Rel[Rec, dict[Val, Rec]]: ...
-
-
-def backrel(
-    *,
-    to: RelRef[Rec, Any, Any] | type[Rec] | None = None,
-    via: (
-        RelRef[Any, Any, Rec]
-        | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
-        | type[Rec2]
-        | None
-    ) = None,
-    order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = None,
-    map_by: AttrRef[Rec | Rec2, Val] | None = None,
-) -> Rel[Rec, set[Rec]] | Rel[Rec, list[Rec]] | Rel[Rec, dict[Val, Rec]]:
-    """Define a backlinking relation to another record."""
-    return Rel(on=via or to, order_by=order_by, map_by=map_by)
-
-
-@dataclass(kw_only=True, eq=False)
-class RelRef(Rel[Rec2, Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec2]):
     """Reference a relation to another record."""
 
     @property
@@ -448,6 +423,7 @@ class RelRef(Rel[Rec2, Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec
                     {
                         AttrRef(
                             _name=fk.name,
+                            collection=fk.collection,
                             record_type=self.record_type,
                             prop_type=fk.prop_type,
                         ): pk
@@ -459,6 +435,7 @@ class RelRef(Rel[Rec2, Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec
                 source_attrs = [
                     AttrRef(
                         _name=attr.name,
+                        collection=attr.collection,
                         record_type=self.record_type,
                         prop_type=attr.prop_type,
                     )
@@ -484,6 +461,7 @@ class RelRef(Rel[Rec2, Recs], PropRef[Rec_cov, Recs], Generic[Rec_cov, Recs, Rec
                     {
                         AttrRef(
                             _name=f"{self._name}_{target_attr.name}",
+                            collection=target_attr.collection,
                             record_type=self.record_type,
                             prop_type=target_attr.prop_type,
                         ): target_attr
@@ -705,8 +683,327 @@ class RelTree(Generic[*RelTup]):
         return RelTree([*self.rels, *other.rels])
 
 
-@dataclass_transform(kw_only_default=True, field_specifiers=(Attr,))
-class RecordMeta(ModelMetaclass, type):
+type DirectLink[Rec: Record] = (
+    AttrRef | Iterable[AttrRef] | dict[AttrRef, AttrRef[Rec, Any]]
+)
+
+type BackLink[Rec: Record] = (RelRef[Rec, Any, Any] | type[Rec])
+
+type BiLink[Rec: Record, Rec2: Record] = (
+    RelRef[Rec2, Any, Rec]
+    | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
+    | type[Rec2]
+)
+
+
+@overload
+def prop(
+    *,
+    default: Val | Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: bool = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Attr[Val]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool | Literal["fk"] = ...,
+    primary_key: bool | Literal["fk"] = ...,
+    collection: None = ...,
+    link_on: DirectLink[Rec],
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[Rec]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal["fk"],
+    primary_key: bool | Literal["fk"] = ...,
+    collection: None = ...,
+    link_on: DirectLink[Rec] | None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[Rec]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool | Literal["fk"] = ...,
+    primary_key: Literal["fk"],
+    collection: None = ...,
+    link_on: DirectLink[Rec] | None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[Rec]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Prop[Val, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: Callable[[Record, Val], None],
+    sql_getter: None = ...,
+) -> Prop[Val, RW]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: None = ...,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+) -> Attr[Val, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: Callable[[Record, Val], None],
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+) -> Attr[Val, RW]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[True] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: None = ...,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+) -> Attr[Val, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Val | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[True] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], Val],
+    setter: Callable[[Record, Val], None],
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+) -> Attr[Val, RW]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: BackLink[Rec] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,
+    order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[list[Rec]]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Rec | None = ...,
+    default_factory: Callable[[], Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: Callable[[Iterable[Rec]], Rel[Recs_cov]],
+    link_on: None = ...,
+    link_from: BackLink[Rec] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,
+    order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[Recs_cov]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Rec | None = ...,
+    default_factory: Callable[[], Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: BackLink[Rec] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,
+    order_by: None = ...,
+    map_by: AttrRef[Rec | Rec2, Val3],
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[dict[Val3, Rec]]: ...
+
+
+@overload
+def prop(
+    *,
+    default: Rec | None = ...,
+    default_factory: Callable[[], Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    collection: Callable[[Mapping[Val3, Rec]], Rel[Recs_cov]],
+    link_on: None = ...,
+    link_from: BackLink[Rec] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,
+    order_by: None = ...,
+    map_by: AttrRef[Rec | Rec2, Val3],
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+) -> Rel[Recs_cov]: ...
+
+
+def prop(
+    *,
+    default: Val | Rec | None = None,
+    default_factory: Callable[[], Val | Rec | Val2] | None = None,
+    alias: str | None = None,
+    index: bool | Literal["fk"] = False,
+    primary_key: bool | Literal["fk"] = False,
+    collection: Callable[[Val2], Val | Rec] | None = None,
+    link_on: DirectLink[Rec] | None = None,
+    link_from: BackLink[Rec] | None = None,
+    link_via: BiLink[Rec, Rec2] | None = None,
+    order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = None,
+    map_by: AttrRef[Rec | Rec2, Val] | None = None,
+    getter: Callable[[Record], Any] | None = None,
+    setter: Callable[[Record, Any], None] | None = None,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None,
+) -> Any:
+    """Define a backlinking relation to another record."""
+    raise NotImplementedError()
+
+
+# def computed(func: Callable[[Record], Val]) -> CompProp[Val, RO]:
+#     """Define a computed property."""
+#     return CompProp(getter=func)
+
+
+@dataclass_transform(kw_only_default=True, field_specifiers=(prop,))
+class RecordMeta(type):
     """Metaclass for record types."""
 
     def __new__(cls, name, bases, namespace, **_):
@@ -714,19 +1011,9 @@ class RecordMeta(ModelMetaclass, type):
         return super().__new__(cls, name, bases, namespace)
 
     @property
-    def _id(cls: type[Record]) -> AttrRef:
-        """Default primary key attribute."""
-        return AttrRef(
-            _name="_id",
-            record_type=cls,
-            prop_type=TypeRef(Attr[UUID]),
-            primary_key=True,
-        )
-
-    @property
-    def _prop_defs(cls) -> dict[str, TypeRef]:
+    def _prop_defs(cls) -> dict[str, TypeDef]:
         return {
-            name: TypeRef(hint, ctx=getmodule(cls))
+            name: TypeDef(hint, ctx=getmodule(cls))
             for name, hint in cls.__annotations__.items()
             if issubclass(get_origin(hint) or type, Prop)
             or isinstance(hint, str)
@@ -740,47 +1027,6 @@ class RecordMeta(ModelMetaclass, type):
         for name, type_ in cls._prop_defs.items():
             if name not in cls.__dict__:
                 setattr(cls, name, type_.prop_type()(_name=name))
-
-    @property
-    def _static_props(cls) -> dict[str, PropRef]:
-        return {name: getattr(cls, name) for name in cls._prop_defs.keys()}
-
-    @property
-    def _dynamic_props(cls) -> dict[str, PropRef]:
-        return {
-            name: getattr(cls, name)
-            for name, prop in cls.__dict__.items()
-            if isinstance(prop, Prop)
-        }
-
-    @property
-    def _defined_props(cls) -> dict[str, PropRef]:
-        return {
-            **{
-                name: prop
-                for name, prop in [
-                    *cls._static_props.items(),
-                    *cls._dynamic_props.items(),
-                ]
-            },
-            "_id": cls._id,
-        }
-
-    @property
-    def _defined_attrs(cls) -> dict[str, AttrRef]:
-        return {
-            name: getattr(cls, name)
-            for name, attr in cls._defined_props.items()
-            if isinstance(attr, AttrRef)
-        }
-
-    @property
-    def _defined_rels(cls) -> dict[str, RelRef]:
-        return {
-            name: getattr(cls, name)
-            for name, rel in cls._defined_props.items()
-            if isinstance(rel, RelRef)
-        }
 
     @property
     def _record_bases(cls) -> list[type[Record]]:
@@ -807,6 +1053,63 @@ class RecordMeta(ModelMetaclass, type):
         }
 
     @property
+    def _static_props(cls) -> dict[str, PropRef]:
+        return {name: getattr(cls, name) for name in cls._prop_defs.keys()}
+
+    @property
+    def _dynamic_props(cls) -> dict[str, PropRef]:
+        return {
+            name: getattr(cls, name)
+            for name, prop in cls.__dict__.items()
+            if isinstance(prop, Prop)
+        }
+
+    @property
+    def _defined_props(cls) -> dict[str, PropRef]:
+        return {
+            **{
+                name: prop
+                for name, prop in [
+                    *cls._static_props.items(),
+                    *cls._dynamic_props.items(),
+                ]
+            },
+        }
+
+    @property
+    def _defined_attrs(cls) -> dict[str, AttrRef]:
+        return {
+            name: getattr(cls, name)
+            for name, attr in cls._defined_props.items()
+            if isinstance(attr, AttrRef)
+        }
+
+    @property
+    def _defined_rels(cls) -> dict[str, RelRef]:
+        return {
+            name: getattr(cls, name)
+            for name, rel in cls._defined_props.items()
+            if isinstance(rel, RelRef)
+        }
+
+    @property
+    def _defined_rel_attrs(cls) -> dict[str, AttrRef]:
+        return {
+            a.name: a for rel in cls._defined_rels.values() for a in rel.fk_map.keys()
+        }
+
+    @property
+    def _primary_keys(cls) -> dict[str, AttrRef]:
+        """Return the defined primary key attributes of this record."""
+        base_pks = {v.name: v for vs in cls._base_pks.values() for v in vs.keys()}
+
+        if len(base_pks) > 0:
+            assert all(not a.primary_key for a in cls._defined_attrs.values())
+            return base_pks
+
+        return {name: p for name, p in cls._defined_attrs.items() if p.primary_key}
+
+    @property
     def _rels(cls) -> dict[str, RelRef]:
         return reduce(
             lambda x, y: {**x, **y},
@@ -827,13 +1130,8 @@ class RecordMeta(ModelMetaclass, type):
         """Return all record types that are related to this record."""
         return {rel.target_type for rel in cls._rels.values()}
 
-    @property
-    def _primary_keys(cls) -> dict[str, AttrRef]:
-        """Return the defined primary key attributes of this record."""
-        return {name: p for name, p in cls._attrs.items() if p.primary_key}
 
-
-class Record(Generic[Idx, Val], metaclass=RecordMeta):
+class Record(Generic[Idx, Val_cov], metaclass=RecordMeta):
     """Schema for a record in a database."""
 
     _table_name: ClassVar[str]
@@ -844,9 +1142,10 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
         UUID: UUIDType(binary=False),  # Binary type causes issues with DuckDB
     }
 
-    def __init__(self):
+    def __post_init__(self):
         """Initialize a new record."""
-        self._values = {}
+        self._values: dict[str, Any] = {}
+        self._fetcher: Callable[[str], Any] | None = None
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -869,11 +1168,10 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
     @classmethod
     def _columns(cls, registry: orm.registry) -> list[sqla.Column]:
         """Columns of this record type's table."""
-        base_pk_cols = {pk for pks in cls._base_pks.values() for pk in pks.keys()}
         table_attrs = (
             set(cls._defined_attrs.values())
-            | base_pk_cols
-            | {a for rel in cls._defined_rels.values() for a in rel.fk_map.keys()}
+            | set(cls._defined_rel_attrs.values())
+            | set(cls._primary_keys.values())
         )
 
         return [
@@ -885,6 +1183,7 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
                     else None
                 ),
                 primary_key=attr.primary_key,
+                index=attr.index,
             )
             for attr in table_attrs
         ]
@@ -989,7 +1288,7 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
             RelRef(
                 on=cls,
                 record_type=target,
-                prop_type=TypeRef(Rel[cls, Iterable[cls]]),
+                prop_type=TypeDef(Rel[Iterable[cls]]),
             )
             for rel in cls._rels.values()
             if issubclass(target, rel.target_type)
@@ -1014,13 +1313,21 @@ class Record(Generic[Idx, Val], metaclass=RecordMeta):
         return RelRef(
             on=other,
             record_type=cls,
-            prop_type=TypeRef(Rel[other, value_type]),
+            prop_type=TypeDef(Rel[value_type]),
         )
 
     @classmethod
     def __clause_element__(cls) -> sqla.TableClause:  # noqa: D105
         assert cls._default_table_name() is not None
         return sqla.table(cls._default_table_name())
+
+    def __hash__(self) -> int:
+        """Hash the record."""
+        return gen_int_hash(self)
+
+    def __eq__(self, value: Hashable) -> bool:
+        """Check if the record is equal to another record."""
+        return hash(self) == hash(value)
 
 
 class Schema:
@@ -1048,18 +1355,21 @@ class DynRecordMeta(RecordMeta):
 
     def __getitem__(cls: type[Record], name: str) -> AttrRef:
         """Get dynamic attribute by dynamic name."""
-        return AttrRef(_name=name, record_type=cls, prop_type=TypeRef())
+        return AttrRef(_name=name, record_type=cls, prop_type=TypeDef())
 
     def __getattr__(cls: type[Record], name: str) -> AttrRef:
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
 
-        return AttrRef(_name=name, record_type=cls, prop_type=TypeRef())
+        return AttrRef(_name=name, record_type=cls, prop_type=TypeDef())
 
 
-class DynRecord(Record, metaclass=DynRecordMeta):  # noqa: N801
+class DynRecord(Record[UUID, Val], metaclass=DynRecordMeta):  # noqa: N801
     """Dynamically defined record type."""
+
+    _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
+    _value: Attr[Val]
 
 
 a = DynRecord

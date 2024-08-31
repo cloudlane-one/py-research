@@ -14,4 +14,4 @@ from .schema import Prop as Prop
 from .schema import Record as Record
 from .schema import Rel as Rel
 from .schema import Schema as Schema
-from .schema import backrel as backrel
+from .schema import prop as prop

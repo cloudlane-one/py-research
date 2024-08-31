@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence, Sized
+from collections.abc import Hashable, Iterable, Mapping, Sequence, Sized
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from functools import cached_property, partial, reduce
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
-from typing import (
-    Any,
-    Generic,
-    Literal,
-    LiteralString,
-    Self,
-    TypeVar,
-    TypeVarTuple,
-    cast,
-    overload,
-)
+from typing import Any, Generic, Literal, LiteralString, Self, cast, overload
 
 import openpyxl
 import pandas as pd
@@ -37,6 +27,7 @@ from pandas.api.types import (
     is_numeric_dtype,
     is_string_dtype,
 )
+from typing_extensions import TypeVar, TypeVarTuple
 from xlsxwriter import Workbook as ExcelWorkbook
 
 from py_research.files import HttpFile
@@ -52,7 +43,6 @@ from .schema import (
     DynRecord,
     Idx,
     Key,
-    Prop,
     PropRef,
     Rec,
     Rec2,
@@ -66,8 +56,8 @@ from .schema import (
     Require,
     Schema,
     SingleIdx,
-    TypeRef,
-    Val,
+    TypeDef,
+    Val_cov,
     dynamic_record_type,
 )
 
@@ -78,8 +68,7 @@ Series = pd.Series | pl.Series
 Name = TypeVar("Name", bound=LiteralString)
 Name2 = TypeVar("Name2", bound=LiteralString)
 
-
-DBS_contrav = TypeVar("DBS_contrav", contravariant=True, bound=Record | Schema)
+RecMerge = TypeVar("RecMerge", covariant=True, bound=tuple | None, default=None)
 
 
 Idx_cov = TypeVar("Idx_cov", covariant=True, bound=Hashable | BaseIdx)
@@ -173,7 +162,7 @@ def props_from_data(
         attr = AttrRef(
             primary_key=True,
             _name=name if not is_rel else f"fk_{name}",
-            prop_type=TypeRef(Attr[value_type]),
+            prop_type=TypeDef(Attr[value_type]),
             record_type=DynRecord,
         )
         return (
@@ -181,7 +170,7 @@ def props_from_data(
             if not is_rel
             else RelRef(
                 on={attr: foreign_keys[name]},
-                prop_type=TypeRef(Rel[DynRecord]),
+                prop_type=TypeDef(Rel[DynRecord]),
                 record_type=DynRecord,
             )
         )
@@ -519,22 +508,26 @@ class DataBase(Generic[Name]):
 
         return None
 
-    def _parse_expr(
-        self,
-        expr: sqla.Select,
-    ) -> sqla.Select:
+    def _parse_expr[
+        CE: sqla.ClauseElement
+    ](self, expr: CE,) -> CE:
         """Parse an expression in this database's context."""
         return cast(
-            sqla.Select,
+            CE,
             sqla_visitors.replacement_traverse(
                 expr, {}, replace=self._parse_schema_items
             ),
         )
 
-    def execute(self, stmt: sqla.Select) -> sqla.engine.Result:
+    def execute[
+        *T
+    ](
+        self, stmt: sqla.Select[tuple[*T]] | sqla.Insert | sqla.Update | sqla.Delete
+    ) -> sqla.Result[tuple[*T]]:
         """Execute a SQL statement in this database's context."""
+        stmt = self._parse_expr(stmt)
         with self.engine.begin() as conn:
-            return conn.execute(stmt)
+            return conn.execute(self._parse_expr(stmt))
 
     def __getitem__(self, key: type[Rec]) -> DataSet[Name, Rec, BaseIdx]:
         """Return the dataset for given record type."""
@@ -889,7 +882,7 @@ type Join = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
 
 
 @dataclass(frozen=True)
-class DataSet(Generic[Name, Rec_cov, Idx_cov]):
+class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
     """Dataset attached to a database."""
 
     db: DataBase[Name]
@@ -1126,7 +1119,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
                 merge += RelRef(
                     on=uploaded.record_type,
                     record_type=self.record_type,
-                    prop_type=TypeRef(Rel[uploaded.record_type]),
+                    prop_type=TypeDef(Rel[uploaded.record_type]),
                 )
 
         return filt, merge
@@ -1142,20 +1135,20 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     @overload
     def __getitem__(
         self: DataSet[Name, Record[Any, Key2], Idx],
-        key: AttrRef[Rec_cov, Val],
-    ) -> DataSet[Name, Record[Val, Key2], Idx]: ...
+        key: AttrRef[Rec_cov, Val_cov],
+    ) -> DataSet[Name, Record[Val_cov, Key2], Idx]: ...
 
     # 2. Nested attribute selection, base index
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Any, Key2], BaseIdx], key: AttrRef[Any, Val]
-    ) -> DataSet[Name, Record[Val, Any], IdxStart[Key2]]: ...
+        self: DataSet[Name, Record[Any, Key2], BaseIdx], key: AttrRef[Any, Val_cov]
+    ) -> DataSet[Name, Record[Val_cov, Any], IdxStart[Key2]]: ...
 
     # 3. Nested attribute selection, relational index
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Any, Key2], Key], key: AttrRef[Any, Val]
-    ) -> DataSet[Name, Record[Val, Any], IdxStart[Key | Key2]]: ...
+        self: DataSet[Name, Record[Any, Key2], Key], key: AttrRef[Any, Val_cov]
+    ) -> DataSet[Name, Record[Val_cov, Any], IdxStart[Key | Key2]]: ...
 
     # Overloads: relation selection:
 
@@ -1169,7 +1162,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     # 5. Top-level relation selection, indexed, tuple case
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Any, Key2], tuple[*IdxTup] | BaseIdx],
+        self: DataSet[Name, Record[Any, Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3]]: ...
 
@@ -1183,7 +1176,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     # 7. Top-level relation selection, no index
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Any, Key2], Key | BaseIdx],
+        self: DataSet[Name, Record[Any, Key2], BaseIdx],
         key: RelRef[Rec_cov, Iterable, Rec2],
     ) -> DataSet[Name, Rec2, BaseIdx]: ...
 
@@ -1206,32 +1199,44 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     # 10. List selection, keep index
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Val, Key2], Key], key: list[Key | Key2]
+        self: DataSet[Name, Record[Val_cov, Key2], Key], key: list[Key | Key2]
     ) -> DataSet[Name, Rec_cov, Key]: ...
 
-    # 11. List selection from record (value) tuple, keep index
+    # 11. Merge selection
     @overload
     def __getitem__(
-        self: DataSet[Name, tuple[Record, ...], Key], key: list[Hashable]
-    ) -> DataSet[Name, Rec_cov, Key]: ...
+        self: DataSet[Name, Any, Key], key: RelTree[Rec_cov, *RelTup]
+    ) -> DataSet[Name, Rec_cov, Key, tuple[*RelTup]]: ...
 
-    # 12. Index value selection
+    # 12. Merge selection, single index
     @overload
     def __getitem__(
-        self: DataSet[Name, Record[Val, Key2], Key], key: Key | Key2
+        self: DataSet[Name, Any, SingleIdx], key: RelTree[Rec_cov, *RelTup]
+    ) -> DataSet[Name, Rec_cov, BaseIdx, tuple[*RelTup]]: ...
+
+    # 13. List selection from record (value) tuple, keep index
+    @overload
+    def __getitem__(
+        self: DataSet[Name, Any, Any, tuple[Record, ...]], key: list[Hashable]
+    ) -> DataSet[Name, Rec_cov, Idx_cov]: ...
+
+    # 14. Index value selection
+    @overload
+    def __getitem__(
+        self: DataSet[Name, Record[Val_cov, Key2], Key], key: Key | Key2
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 13. Index value selection from record (value) tuple
+    # 15. Index value selection from record (value) tuple
     @overload
     def __getitem__(
-        self: DataSet[Name, tuple[Record, ...], Key], key: Hashable
+        self: DataSet[Name, Any, Key, tuple[Record, ...]], key: Hashable
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 14. Slice selection, keep index
+    # 16. Slice selection, keep index
     @overload
     def __getitem__(self, key: slice | tuple[slice, ...]) -> Self: ...
 
-    # 15. Expression filtering, keep index
+    # 17. Expression filtering, keep index
     @overload
     def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series) -> Self: ...
 
@@ -1240,8 +1245,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     def __getitem__(  # noqa: D105
         self,
         key: (
-            AttrRef[Any, Val]
+            AttrRef[Any, Val_cov]
             | RelRef
+            | RelTree
             | list[Hashable]
             | Hashable
             | slice
@@ -1249,18 +1255,22 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             | sqla.ColumnElement[bool]
             | Series
         ),
-    ) -> DataSet:
-        filt, ext = (
-            self._parse_filter(key)
-            if isinstance(key, sqla.ColumnElement | pd.Series)
-            else (None, None)
-        )
+    ) -> DataSet[Any, Any, Any, Any]:
+        ext = None
+        filt = None
+
+        if isinstance(key, sqla.ColumnElement | pd.Series):
+            filt, ext = self._parse_filter(key)
+
+        if isinstance(key, RelTree):
+            ext = self._parse_merge_tree(key)
 
         keys = None
         if isinstance(key, tuple):
             # Selection by tuple of index values.
             keys = list(key)
-        elif isinstance(key, list | slice) and not isinstance(
+
+        if isinstance(key, list | slice) and not isinstance(
             key, sqla.ColumnElement | pd.Series
         ):
             # Selection by index value list, slice or single value.
@@ -1278,27 +1288,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             keys if keys is not None else self.keys,
         )
 
-    @overload
-    def select(self, merge: None = ...) -> sqla.Select[tuple[Rec_cov]]: ...
-
-    @overload
-    def select(
-        self, merge: RelRef[Any, Any, Rec]
-    ) -> sqla.Select[tuple[Rec_cov, Rec]]: ...
-
-    @overload
-    def select(
-        self, merge: RelTree[*RelTup]
-    ) -> sqla.Select[tuple[Rec_cov, *RelTup]]: ...
-
     def select(
         self,
-        merge: RelRef | RelTree | None = None,
         index_only: bool = False,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
-        abs_merge = self._parse_merge_tree(merge)
-
         selection_table = self.base_table
 
         select = sqla.select(
@@ -1309,7 +1303,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             ),
             *(
                 col.label(f"{rel.path_str}.{col_name}")
-                for rel in abs_merge.rels
+                for rel in self.extensions.rels
                 for col_name, col in self.db._get_alias(rel).columns.items()
                 if not index_only or col.primary_key
             ),
@@ -1326,48 +1320,34 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
     @overload
     def load(
         self: DataSet[Name, Rec_cov, SingleIdx],
-        merge: None = ...,
         kind: type[Record] = ...,
     ) -> Rec_cov: ...
 
     @overload
     def load(
-        self: DataSet[Name, Rec_cov, SingleIdx],
-        merge: RelRef[Any, Any, Rec],
-        kind: type[Record] = ...,
-    ) -> tuple[Rec_cov, Rec]: ...
-
-    @overload
-    def load(
-        self: DataSet[Name, Rec_cov, SingleIdx],
-        merge: RelTree[*RelTup],
+        self: DataSet[Name, Rec_cov, SingleIdx, tuple[*RelTup]],
         kind: type[Record] = ...,
     ) -> tuple[Rec_cov, *RelTup]: ...
 
     @overload
-    def load(self, merge: None = ..., kind: type[Df] = ...) -> Df: ...  # type: ignore
+    def load(
+        self: DataSet[Name, Any, Any, tuple[*RelTup]], kind: type[Df]
+    ) -> tuple[Df, ...]: ...
 
     @overload
-    def load(self, merge: RelRef | RelTree, kind: type[Df]) -> tuple[Df, ...]: ...
+    def load(self, kind: type[Df]) -> Df: ...
 
     @overload
     def load(
-        self, merge: None = ..., kind: type[Record] = ...
-    ) -> Sequence[Rec_cov]: ...
-
-    @overload
-    def load(
-        self, merge: RelRef[Any, Any, Rec], kind: type[Record] = ...
-    ) -> Sequence[tuple[Rec_cov, Rec]]: ...
-
-    @overload
-    def load(
-        self, merge: RelTree[*RelTup], kind: type[Record] = ...
+        self: DataSet[Name, Any, Hashable | BaseIdx, tuple[*RelTup]],
+        kind: type[Record] = ...,
     ) -> Sequence[tuple[Rec_cov, *RelTup]]: ...
+
+    @overload
+    def load(self, kind: type[Record] = ...) -> Sequence[Rec_cov]: ...
 
     def load(
         self,
-        merge: RelRef | RelTree | None = None,
         kind: type[Record | Df] = Record,
     ) -> (
         Rec_cov
@@ -1377,48 +1357,64 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         | Sequence[Rec_cov | tuple[Rec_cov, *tuple[Any, ...]]]
     ):
         """Download table selection."""
-        if issubclass(kind, Record):
-            raise NotImplementedError("Downloading record instances not supported yet.")
+        select = self.select()
 
-        abs_merge = self._parse_merge_tree(merge)
-        select = self.select(merge)
-
-        df = None
-        if kind is pl.DataFrame:
-            df = pl.read_database(select, self.db.engine)
-        else:
+        merged_df = None
+        if kind is pd.DataFrame:
             with self.db.engine.connect() as con:
-                df = pd.read_sql(select, con)
+                merged_df = pd.read_sql(select, con)
+        else:
+            merged_df = pl.read_database(select, self.db.engine)
 
-        return cast(
+        main_df, *extra_dfs = cast(
             tuple[Df, ...],
             tuple(
-                df[list(col for col in df.columns if col.startswith(relref.path_str))]
-                for relref in abs_merge.rels
+                merged_df[
+                    list(
+                        col
+                        for col in merged_df.columns
+                        if col.startswith(relref.path_str)
+                    )
+                ]
+                for relref in self.extensions.rels
             ),
         )
+
+        if issubclass(kind, Record):
+            assert isinstance(main_df, pl.DataFrame)
+            return list(
+                zip(
+                    [self.record_type(**row) for row in main_df.iter_rows()],
+                    *(
+                        [rel.target_type(**row) for row in df.iter_rows()]
+                        for df, rel in zip(extra_dfs, abs_merge.rels)
+                    ),
+                )
+            )
+
+        return main_df, *extra_dfs
 
     # 1. Top-level attribute assignment
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Val, Key2], Key | BaseIdx],
-        key: AttrRef[Rec_cov, Val],
+        self: DataSet[Name, Record[Val_cov, Key2], Key | BaseIdx],
+        key: AttrRef[Rec_cov, Val_cov],
         value: (
-            DataSet[Name, Record[Val, Key | Key2], BaseIdx]
-            | DataSet[Name, Record[Val, Any], Key | Key2]
-            | ValInput[Val, Key | Key2]
+            DataSet[Name, Record[Val_cov, Key | Key2], BaseIdx]
+            | DataSet[Name, Record[Val_cov, Any], Key | Key2]
+            | ValInput[Val_cov, Key | Key2]
         ),
     ) -> None: ...
 
     # 2. Nested attribute assignment
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Val, Key2], Key | BaseIdx],
-        key: AttrRef[Any, Val],
+        self: DataSet[Name, Record[Val_cov, Key2], Key | BaseIdx],
+        key: AttrRef[Any, Val_cov],
         value: (
-            DataSet[Name, Record[Val, IdxStart[Key | Key2]], BaseIdx]
-            | DataSet[Name, Record[Val, Any], IdxStart[Key | Key2]]
-            | ValInput[Val, IdxStart[Key | Key2]]
+            DataSet[Name, Record[Val_cov, IdxStart[Key | Key2]], BaseIdx]
+            | DataSet[Name, Record[Val_cov, Any], IdxStart[Key | Key2]]
+            | ValInput[Val_cov, IdxStart[Key | Key2]]
         ),
     ) -> None: ...
 
@@ -1482,7 +1478,18 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         ),
     ) -> None: ...
 
-    # 9. List assignment with base index
+    # 9. Merge assignment
+    @overload
+    def __setitem__(
+        self,
+        key: RelTree[Rec_cov, *RelTup],
+        value: (
+            DataSet[Name, Rec_cov, Any, tuple[*RelTup]]
+            | tuple[RecInput[Rec_cov, Any], *tuple[RecInput, ...]]
+        ),
+    ) -> None: ...
+
+    # 10. List assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Any, Key2], BaseIdx],
@@ -1490,7 +1497,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         value: DataSet[Name, Rec_cov, Key2 | BaseIdx] | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
-    # 10. List assignment with relational index
+    # 11. List assignment with relational index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Any, Key2], Key],
@@ -1500,23 +1507,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         ),
     ) -> None: ...
 
-    # 11. Single value assignment with base index
+    # 12. Single value assignment with base index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Val, Key2], BaseIdx],
+        self: DataSet[Name, Record[Val_cov, Key2], BaseIdx],
         key: Key2,
-        value: Rec_cov | Val,
+        value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 12. Single value assignment with relational index
+    # 13. Single value assignment with relational index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Val, Key2], Key],
+        self: DataSet[Name, Record[Val_cov, Key2], Key],
         key: Key | Key2,
-        value: Rec_cov | Val,
+        value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 13. Slice assignment
+    # 14. Slice assignment
     @overload
     def __setitem__(
         self,
@@ -1524,7 +1531,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         value: Self | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
-    # 14. Filter assignment with base index
+    # 15. Filter assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Any, Key2], BaseIdx],
@@ -1532,7 +1539,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         value: DataSet[Name, Rec_cov, Key2] | RecInput[Rec_cov, Key2],
     ) -> None: ...
 
-    # 15. Filter assignment with relational index
+    # 16. Filter assignment with relational index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Any, Key2], Key],
@@ -1545,6 +1552,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
         key: (
             AttrRef
             | RelRef
+            | RelTree
             | list[Hashable]
             | Hashable
             | slice
@@ -1835,59 +1843,3 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov]):
             cast(sqla.Table, value_set.base_table).drop(self.db.engine)
 
         return self
-
-
-@dataclass(kw_only=True, eq=False)
-class Comp(Prop[Val], Generic[Rec, Val]):
-    """Define a dynamically computed attribute of a record."""
-
-    func: Callable[[Rec], Val]
-    dataset_func: Callable[[DataSet[Any, Rec, Any]]] | None = None
-    dataframe_func: Callable[[DataFrame], Series] | None = None
-    sql_func: Callable[[sqla.Table], sqla.Select[tuple[Val]]] | None = None
-
-    @overload
-    def __get__(self, instance: Rec, owner: type[Rec]) -> Val: ...
-
-    @overload
-    def __get__(self, instance: None, owner: type[Rec]) -> CompRef[Rec, Val]: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type | type[Rec] | None
-    ) -> Val | CompRef[Rec, Val] | Self:
-        if isinstance(instance, Record):
-            return instance._values.get(self.name) or self.func(cast(Rec, instance))
-        elif owner is not None and issubclass(owner, Record):
-            return CompRef(
-                _name=self._name,
-                alias=self.alias,
-                func=self.func,
-                record_type=cast(type[Rec], owner),
-                prop_type=cast(TypeRef[Prop[Val]], owner._prop_defs[self.name]),
-            )
-        return self
-
-
-def computed[Rec: Record, Val](func: Callable[[Rec], Val]) -> Comp[Rec, Val]:
-    """Define a computed property."""
-    return Comp(func=func)
-
-
-def as_dataset(
-    ds_func: Callable[[DataSet[Any, Rec, Any]], DataSet[Any, Rec, Any]]
-) -> Callable[[Comp[Rec, Val]], Comp[Rec, Val]]:
-    """Compute a property for the whole dataset at once."""
-
-    def inner(comp: Comp[Rec, Val]) -> Comp[Rec, Val]:
-        comp.dataset_func = ds_func
-        return comp
-
-    return inner
-
-
-@dataclass(kw_only=True, eq=False)
-class CompRef(Comp[Rec_cov, Val], PropRef[Rec_cov, Val], Generic[Rec_cov, Val]):  # type: ignore
-    """Reference a computed attribute of a record."""
