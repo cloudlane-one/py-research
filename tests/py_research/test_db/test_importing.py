@@ -4,34 +4,34 @@ from __future__ import annotations
 
 import json
 from datetime import date
-from typing import Literal
+from typing import Literal, reveal_type
 
 import pytest
-from py_research.db import Attr, DataBase, Record, Rel, RootMap, prop
+from py_research.db import Attr, DataBase, Record, RecUUID, Rel, RootMap, prop
 from py_research.db.importing import RelMap, SubMap, tree_to_db
 
 
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Rel[Search]
-    result: Rel[Project]
+    search: Rel[Search] = prop(primary_key="fk")
+    result: Rel[Project] = prop(primary_key="fk")
     score: Attr[float]
 
 
 class Search(Record[str]):
     """Defined search against the API."""
 
-    term: Attr[str] = Attr(primary_key=True)
+    term: Attr[str] = prop(primary_key=True)
     result_count: Attr[int]
     results: Rel[dict[int, Project]] = prop(
         link_via=SearchResult.result,
         order_by={SearchResult.score: -1},
-        collection=lambda s: Rel(dict(enumerate(s))),
+        collection=lambda s: dict(enumerate(s)),
     )
 
 
-class Task(Record):
+class Task(RecUUID):
     """Link search to a result."""
 
     name: Attr[str]
@@ -40,7 +40,7 @@ class Task(Record):
     status: Attr[Literal["todo", "done"]]
 
 
-class User(Record):
+class User(RecUUID):
     """A generic user."""
 
     name: Attr[str]
@@ -53,17 +53,18 @@ class User(Record):
         return all(task.status == "done" for task in self.tasks)
 
 
-class Membership(Record):
+class Membership(RecUUID):
     """Link user to a project."""
 
-    member: Rel[User]
-    project: Rel[Project]
+    member: Rel[User] = prop(primary_key="fk")
+    project: Rel[Project] = prop(primary_key="fk")
     role: Attr[str] = Attr(default="member")
 
 
-class Project(Record):
+class Project(Record[int]):
     """A generic project record."""
 
+    number: Attr[int] = prop(primary_key=True)
     name: Attr[str]
     start: Attr[date]
     end: Attr[date]
@@ -73,16 +74,13 @@ class Project(Record):
     members: Rel[list[User]] = prop(link_via=Membership)
 
 
-class Organization(Record):
+class Organization(RecUUID):
     """A generic organization record."""
 
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
     projects: Rel[list[Project]] = prop(link_from=Project.org)
-
-
-Organization.projects
 
 
 @pytest.fixture
@@ -158,3 +156,19 @@ def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RootMap):
     assert len(db[Organization]) == 3
     assert len(db[Membership]) > 0
     assert len(db[SearchResult]) > 0
+
+    reveal_type(s := db[Search])
+    reveal_type(s[Search.result_count])
+    reveal_type(sr := s[Search.results])
+    reveal_type(s[Search.results.a.org])
+    reveal_type(sr0 := sr[("first", 0)])
+    reveal_type(sr[[("first", 0), ("second", 1)]])
+    reveal_type(db[Project][0:3])
+    reveal_type(db[Project].__getitem__(0))
+    reveal_type(s[Search.term == "first"])
+    reveal_type(sr[Project.name == "Project 1"])
+    reveal_type(sr0.load())
+
+    s[Search.result_count] = 10
+    s[Search.term == "first"][Search.result_count] = 5
+    s[Search.results] = {("first", 0): db[Project][0].load()}

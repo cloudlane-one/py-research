@@ -1,11 +1,11 @@
 """Types and functions for data conflict management."""
 
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal
 
-DataConflictPolicy: TypeAlias = Literal["raise", "ignore", "override"]
+type DataConflictPolicy = Literal["raise", "ignore", "override"]
 """Policy for handling data conflicts."""
 
-DataConflicts: TypeAlias = dict[tuple[str, str, str], tuple[Any, Any]]
+type DataConflicts = dict[tuple[str, str, str], tuple[Any, Any]]
 """Conflicting values indexed by their location in a table."""
 
 

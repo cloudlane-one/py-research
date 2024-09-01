@@ -71,11 +71,10 @@ Name2 = TypeVar("Name2", bound=LiteralString)
 RecMerge = TypeVar("RecMerge", covariant=True, bound=tuple | None, default=None)
 
 Idx = TypeVar("Idx", bound="Hashable | BaseIdx")
-Idx_cov = TypeVar(
-    "Idx_cov", covariant=True, bound=Hashable | BaseIdx | SingleIdx, default=BaseIdx
-)
+Idx_cov = TypeVar("Idx_cov", covariant=True, bound=Hashable | BaseIdx | SingleIdx)
 Key2 = TypeVar("Key2", bound=Hashable)
 Key3 = TypeVar("Key3", bound=Hashable)
+Key4 = TypeVar("Key4", bound=Hashable)
 IdxTup = TypeVarTuple("IdxTup")
 
 Df = TypeVar("Df", bound=DataFrame)
@@ -83,17 +82,21 @@ Dl = TypeVar("Dl", bound=DataFrame | Record)
 
 
 type IdxStart[Key: Hashable] = Key | tuple[Key, *tuple[Any, ...]]
+type IdxEnd[Key: Hashable] = tuple[*tuple[Any, ...], Key]
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
 type IdxTupStartEnd[*IdxTup, Key2: Hashable] = tuple[*IdxTup, *tuple[Any], Key2]
 
 type RecInput[Rec: Record, Key: Hashable] = DataFrame | Iterable[Rec] | Mapping[
     Key, Rec
 ] | sqla.Select[tuple[Key, Rec]] | Rec
+
 type PartialRec[Rec: Record] = Mapping[AttrRef[Rec, Any] | str, Any]
+
 type PartialRecInput[Rec: Record, Key: Hashable] = RecInput[Rec, Any] | Iterable[
     PartialRec[Rec]
 ] | Mapping[Key, PartialRec[Rec]] | PartialRec[Rec]
-type ValInput[Key: Hashable, Val] = Series | Mapping[Key, Val] | sqla.Select[
+
+type ValInput[Val, Key: Hashable] = Series | Mapping[Key, Val] | sqla.Select[
     tuple[Key, Val]
 ] | Val
 
@@ -1133,119 +1136,178 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
     # Overloads: attribute selection:
 
-    # 1. Top-level attribute selection, relational index
+    # 1. Top-level attribute selection
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2]],
+        self: DataSet[Any, Record[Key2], Any],
         key: AttrRef[Rec_cov, Val_cov],
     ) -> DataSet[Name, Scalar[Val_cov, Key2], Idx_cov]: ...
 
-    # 2. Nested attribute selection, base index
+    # 2. Nested attribute selection, relational index
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2]], key: AttrRef[Any, Val_cov]
-    ) -> DataSet[Name, Scalar[Val_cov], IdxStart[Key2]]: ...
-
-    # 3. Nested attribute selection, relational index
-    @overload
-    def __getitem__(  # type: ignore
-        self: DataSet[Any, Record[Key2], Key], key: AttrRef[Any, Val_cov]
-    ) -> DataSet[Name, Scalar[Val_cov], IdxStart[Key | Key2]]: ...
+        self: DataSet[Any, Record[Key2], Any], key: AttrRef[Any, Val_cov]
+    ) -> DataSet[Name, Scalar[Val_cov], Idx_cov | Key2 | IdxStart[Key | Key2]]: ...
 
     # Overloads: relation selection:
 
-    # 4. Top-level relation selection, singular
+    # 3. Top-level relation selection, singular, base index
+    @overload
+    def __getitem__(  # type: ignore
+        self: DataSet[Any, Record[Key2], BaseIdx],
+        key: RelRef[Rec_cov, Rec2, Rec2],
+    ) -> DataSet[Name, Rec2, Key2]: ...
+
+    # 4. Top-level relation selection, singular, single index
+    @overload
+    def __getitem__(  # type: ignore
+        self: DataSet[Any, Record[Key2], SingleIdx],
+        key: RelRef[Rec_cov, Rec2, Rec2],
+    ) -> DataSet[Name, Rec2, Key2]: ...
+
+    # 5. Top-level relation selection, singular, custom index
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2], Key | BaseIdx],
+        self: DataSet[Any, Any, Key],
         key: RelRef[Rec_cov, Rec2, Rec2],
-    ) -> DataSet[Name, Rec2, Key | Key2]: ...
+    ) -> DataSet[Name, Rec2, Key]: ...
 
-    # 5. Top-level relation selection, indexed, tuple case
+    # 6. Top-level relation selection, mapping, base index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Record[Key2], BaseIdx],
+        key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
+    ) -> DataSet[Name, Rec2, tuple[Key2, Key3]]: ...
+
+    # 7. Top-level relation selection, mapping, single index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Any, SingleIdx],
+        key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
+    ) -> DataSet[Name, Rec2, Key3]: ...
+
+    # 8. Top-level relation selection, mapping, tuple index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3]]: ...
 
-    # 6. Top-level relation selection, indexed
+    # 9. Top-level relation selection, mapping, custom index
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2], Key],
+        self: DataSet[Any, Any, Key],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
-    ) -> DataSet[Name, Rec2, tuple[Key | Key2, Key3]]: ...
+    ) -> DataSet[Name, Rec2, tuple[Key, Key3]]: ...
 
-    # 7. Top-level relation selection, no index
+    # 10. Top-level relation selection, iterable, base index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], BaseIdx],
-        key: RelRef[Rec_cov, Iterable, Rec2],
-    ) -> DataSet[Name, Rec2, BaseIdx]: ...
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, tuple[Key2, Key4]]: ...
 
-    # 8. Nested relation selection, tuple case
+    # 11. Top-level relation selection, iterable, single index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Any, SingleIdx],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, Key4]: ...
+
+    # 12. Top-level relation selection, iterable, tuple index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
-        key: RelRef[Any, Mapping[Key3, Rec2], Rec2],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, tuple[*IdxTup, Key4] | tuple[Key2, Key4]]: ...
+
+    # 13. Top-level relation selection, iterable, custom index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Any, Key],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, tuple[Key, Key4]]: ...
+
+    # 14. Nested relation selection, base index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Record[Key2], BaseIdx],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4]]: ...
+
+    # 15. Nested relation selection, single index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Record[Key2], SingleIdx],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, IdxEnd[Key3 | Key4]]: ...
+
+    # 16. Nested relation selection, tuple index
+    @overload
+    def __getitem__(
+        self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
     ) -> DataSet[
-        Name, Rec2, IdxTupStartEnd[*IdxTup, Key3] | IdxStartEnd[Key2, Key3]
+        Name,
+        Rec2,
+        IdxTupStartEnd[*IdxTup, Key3 | Key4] | IdxStartEnd[Key2, Key3 | Key4],
     ]: ...
 
-    # 9. Nested relation selection
+    # 17. Nested relation selection, custom index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], Key],
-        key: RelRef[Any, Mapping[Key3, Rec2], Rec2],
-    ) -> DataSet[Name, Rec2, IdxStartEnd[Key | Key2, Key3]]: ...
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+    ) -> DataSet[Name, Rec2, IdxStartEnd[Key | Key2, Key3 | Key4]]: ...
 
-    # 9.B. Default relation selection
+    # 18. Default relation selection
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Any, Any],
-        key: RelRef,
-    ) -> DataSet[Name, Any, Any]: ...
+        key: RelRef[Any, Any, Rec2],
+    ) -> DataSet[Name, Rec2, Any]: ...
 
-    # 10. List selection, keep index
+    # 19. List selection
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2], Key], key: list[Key | Key2]
+        self: DataSet[Any, Record[Key2], Key], key: Iterable[Key | Key2]
     ) -> DataSet[Name, Rec_cov, Key]: ...
 
-    # 11. Merge selection
+    # 20. Merge selection
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Key], key: RelTree[Rec_cov, *RelTup]
     ) -> DataSet[Name, Rec_cov, Key, tuple[*RelTup]]: ...
 
-    # 12. Merge selection, single index
+    # 21. Merge selection, single index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, SingleIdx], key: RelTree[Rec_cov, *RelTup]
     ) -> DataSet[Name, Rec_cov, BaseIdx, tuple[*RelTup]]: ...
 
-    # 13. List selection from record (value) tuple, keep index
+    # 22. List selection from record (value) tuple, keep index
     @overload
-    def __getitem__(
-        self: DataSet[Any, Any, Any, tuple[Record, ...]], key: list[Hashable]
+    def __getitem__(  # type: ignore
+        self: DataSet[Any, Any, Any, tuple[Record, ...]], key: Iterable[Hashable]
     ) -> DataSet[Name, Rec_cov, Idx_cov]: ...
 
-    # 14. Index value selection
+    # 23. Index value selection
     @overload
     def __getitem__(
-        self: DataSet[Any, Record[Key2], Key], key: Key | Key2
+        self: DataSet[Any, Record[Key2], BaseIdx | Key], key: Key | Key2
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 15. Index value selection from record (value) tuple
+    # 24. Index value selection from record (value) tuple
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Any, tuple[Record, ...]], key: Hashable
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 16. Slice selection, keep index
+    # 25. Slice selection, keep index
     @overload
     def __getitem__(self, key: slice | tuple[slice, ...]) -> Self: ...
 
-    # 17. Expression filtering, keep index
+    # 26. Expression filtering, keep index
     @overload
     def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series) -> Self: ...
 
@@ -1404,91 +1466,209 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         return main_df, *extra_dfs
 
-    # 1. Top-level attribute assignment
+    # 1. Top-level attribute assignment, base index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Key | BaseIdx],
+        self: DataSet[Name, Record[Key2], BaseIdx],
         key: AttrRef[Rec_cov, Val_cov],
         value: (
-            DataSet[Name, Record[Key | Key2], BaseIdx]
-            | DataSet[Name, Record, Key | Key2]
-            | ValInput[Val_cov, Key | Key2]
+            DataSet[Name, Scalar[Val_cov, Key2], BaseIdx]
+            | DataSet[Name, Scalar[Val_cov], Key2]
+            | ValInput[Val_cov, Key2]
         ),
     ) -> None: ...
 
-    # 2. Nested attribute assignment
+    # 1. Top-level attribute assignment, custom index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Key | BaseIdx],
+        self: DataSet[Name, Any, Key],
+        key: AttrRef[Rec_cov, Val_cov],
+        value: (
+            DataSet[Name, Scalar[Val_cov, Key], BaseIdx]
+            | DataSet[Name, Scalar[Val_cov], Key]
+            | ValInput[Val_cov, Key]
+        ),
+    ) -> None: ...
+
+    # 2. Top-level attribute assignment, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: AttrRef[Rec_cov, Val_cov],
+        value: DataSet[Name, Scalar[Val_cov], SingleIdx] | Val_cov,
+    ) -> None: ...
+
+    # 3. Nested attribute assignment, base index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Record[Key2], BaseIdx],
         key: AttrRef[Any, Val_cov],
         value: (
-            DataSet[Name, Record[IdxStart[Key | Key2]], BaseIdx]
-            | DataSet[Name, Record[Any], IdxStart[Key | Key2]]
-            | ValInput[Val_cov, IdxStart[Key | Key2]]
+            DataSet[Name, Scalar[Val_cov, IdxStart[Key2]], BaseIdx]
+            | DataSet[Name, Scalar[Val_cov], IdxStart[Key2]]
+            | ValInput[Val_cov, IdxStart[Key2]]
         ),
     ) -> None: ...
 
-    # 3. Top-level relation assignment, singular
+    # 4. Nested attribute assignment, custom index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Key],
+        self: DataSet[Name, Any, Key],
+        key: AttrRef[Any, Val_cov],
+        value: (
+            DataSet[Name, Scalar[Val_cov, IdxStart[Key]], BaseIdx]
+            | DataSet[Name, Scalar[Val_cov], IdxStart[Key]]
+            | ValInput[Val_cov, IdxStart[Key]]
+        ),
+    ) -> None: ...
+
+    # 5. Nested attribute assignment, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: AttrRef[Any, Val_cov],
+        value: DataSet[Name, Scalar[Val_cov, Any], Any] | Val_cov,
+    ) -> None: ...
+
+    # 6. Top-level relation assignment, singular, base index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Rec2, Rec2],
-        value: DataSet[Name, Rec2, Key | Key2] | RecInput[Rec2, Key | Key2],
+        value: DataSet[Name, Rec2, Key2] | RecInput[Rec2, Key2],
     ) -> None: ...
 
-    # 4. Top-level relation assignment, indexed, tuple case
+    # 7. Top-level relation assignment, singular, custom index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], tuple[*IdxTup] | BaseIdx],
+        self: DataSet[Name, Any, Key],
+        key: RelRef[Rec_cov, Rec2, Rec2],
+        value: DataSet[Name, Rec2, Key] | RecInput[Rec2, Key],
+    ) -> None: ...
+
+    # 8. Top-level relation assignment, singular, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: RelRef[Rec_cov, Rec2, Rec2],
+        value: DataSet[Name, Rec2, SingleIdx] | Rec2,
+    ) -> None: ...
+
+    # 9. Top-level relation assignment, mapping, base index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3]]
-            | RecInput[Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3]]
+            DataSet[Name, Rec2, tuple[Key2, Key3]]
+            | Mapping[tuple[Key2, Key3], Rec2]
+            | Rec2
         ),
     ) -> None: ...
 
-    # 5. Top-level relation assignment, indexed
+    # 10. Top-level relation assignment, mapping, tuple index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Key | BaseIdx],
+        self: DataSet[Name, Record[Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, tuple[Key | Key2, Key3]]
-            | RecInput[Rec2, tuple[Key | Key2, Key3]]
+            DataSet[Name, Rec2, tuple[*IdxTup, Key3]]
+            | Mapping[tuple[*IdxTup, Key3], Rec2]
+            | Rec2
         ),
     ) -> None: ...
 
-    # 6. Top-level relation assignment, no index
+    # 11. Top-level relation assignment, mapping, custom index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Any],
-        key: RelRef[Rec_cov, Iterable[Rec2], Rec2],
-        value: DataSet[Name, Rec2, BaseIdx] | RecInput[Rec2, Any],
-    ) -> None: ...
-
-    # 7. Nested relation assignment, tuple case
-    @overload
-    def __setitem__(
-        self: DataSet[Name, Record[Key2], tuple[*IdxTup] | BaseIdx],
-        key: RelRef[Any, Mapping[Key3, Rec2], Rec2],
+        self: DataSet[Name, Any, Key],
+        key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, IdxTupStartEnd[*IdxTup, Key3] | IdxStartEnd[Key2, Key3]]
-            | RecInput[Rec2, IdxTupStartEnd[*IdxTup, Key3] | IdxStartEnd[Key2, Key3]]
+            DataSet[Name, Rec2, tuple[Key2, Key3]]
+            | Mapping[tuple[Key2, Key3], Rec2]
+            | Rec2
         ),
     ) -> None: ...
 
-    # 8. Nested relation assignment
+    # 12. Top-level relation assignment, mapping, single index
     @overload
     def __setitem__(
-        self: DataSet[Name, Record[Key2], Key | BaseIdx],
-        key: RelRef[Any, Mapping[Key3, Rec2], Rec2],
+        self: DataSet[Name, Any, SingleIdx],
+        key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
+        value: DataSet[Name, Rec2, Key3] | Mapping[Key3, Rec2] | Rec2,
+    ) -> None: ...
+
+    # 13. Top-level relation assignment, iterable, base index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Record[Key2], BaseIdx],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, IdxStartEnd[Key | Key2, Key3]]
-            | RecInput[Rec2, IdxStartEnd[Key | Key2, Key3]]
+            DataSet[Name, Rec2, tuple[Key2, Key4]] | RecInput[Rec2, tuple[Key2, Key4]]
         ),
     ) -> None: ...
 
-    # 9. Merge assignment
+    # 14. Top-level relation assignment, iterable, custom index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, Key],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+        value: DataSet[Name, Rec2, tuple[Key, Key4]] | RecInput[Rec2, tuple[Key, Key4]],
+    ) -> None: ...
+
+    # 15. Top-level relation assignment, iterable, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
+        value: DataSet[Name, Rec2, BaseIdx | Key4] | RecInput[Rec2, Key4],
+    ) -> None: ...
+
+    # 16. Nested relation assignment, base index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Record[Key2], BaseIdx],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        value: (
+            DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4]]
+            | RecInput[Rec2, IdxStartEnd[Key2, Key3 | Key4]]
+        ),
+    ) -> None: ...
+
+    # 17. Nested relation assignment, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        value: (
+            DataSet[Name, Rec2, IdxEnd[Key3 | Key4]]
+            | RecInput[Rec2, IdxEnd[Key3 | Key4]]
+        ),
+    ) -> None: ...
+
+    # 18. Nested relation assignment, tuple index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, tuple[*IdxTup]],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        value: (
+            DataSet[Name, Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
+            | RecInput[Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
+        ),
+    ) -> None: ...
+
+    # 19. Nested relation assignment, custom index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, Key],
+        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        value: (
+            DataSet[Name, Rec2, IdxStartEnd[Key, Key3 | Key4]]
+            | RecInput[Rec2, IdxStartEnd[Key, Key3 | Key4]]
+        ),
+    ) -> None: ...
+
+    # 20. Merge assignment
     @overload
     def __setitem__(
         self,
@@ -1499,7 +1679,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 10. List assignment with base index
+    # 21. List assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1507,7 +1687,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec_cov, Key2 | BaseIdx] | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
-    # 11. List assignment with relational index
+    # 22. List assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], Key],
@@ -1517,7 +1697,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 12. Single value assignment with base index
+    # 23. Single value assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], BaseIdx],
@@ -1525,7 +1705,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 13. Single value assignment with relational index
+    # 24. Single value assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], Key],
@@ -1533,7 +1713,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 14. Slice assignment
+    # 25. Slice assignment
     @overload
     def __setitem__(
         self,
@@ -1541,7 +1721,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Self | Iterable[Rec_cov] | DataFrame,
     ) -> None: ...
 
-    # 15. Filter assignment with base index
+    # 26. Filter assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1549,7 +1729,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec_cov, Key2] | RecInput[Rec_cov, Key2],
     ) -> None: ...
 
-    # 16. Filter assignment with relational index
+    # 27. Filter assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], Key],

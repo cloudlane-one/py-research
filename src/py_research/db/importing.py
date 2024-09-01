@@ -4,20 +4,23 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import reduce
 from itertools import chain
-from typing import Any, Literal, Self, overload
+from typing import Any, Literal, LiteralString, Self, cast, overload
 from uuid import uuid4
 
 import pandas as pd
 from lxml.etree import _ElementTree as ElementTree
+from typing_extensions import TypeVar
 
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import Backend, DataBase, DataSet, Name
+from .base import Backend, DataBase, DataSet
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
 from .schema import AttrRef, PropRef, Record, RelRef, Schema
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
+
+Name_def = TypeVar("Name_def", bound=LiteralString, default=Literal["default"])
 
 
 class All:
@@ -327,7 +330,7 @@ def _push_to_pull_map(
 def _map_record[  # noqa: C901
     Rec: Record, Dat
 ](
-    db: DataBase,
+    db: DataBase[Any],
     rec: type[Rec],
     xmap: XMap[Rec, Dat],
     in_data: Dat,
@@ -360,7 +363,7 @@ def _map_record[  # noqa: C901
         attrs["_id"] = (getattr(rec, "_id"), uuid4())
 
     rels = {
-        r: sel
+        cast(RelRef[Rec, Any, Record], r): sel
         for r, sel in mapping.items()
         if isinstance(r, RelRef) and isinstance(sel, SubMap)
     }
@@ -444,29 +447,29 @@ def _map_record[  # noqa: C901
 def tree_to_db(
     data: TreeData,
     mapping: RootMap,
-    backend: Backend[Name] = ...,  # type: ignore
+    backend: Backend[Name_def] = ...,  # type: ignore
     schema: type[Schema] | None = ...,
     collect_conflicts: Literal[True] = ...,
-) -> tuple[DataBase[Name], DataConflicts]: ...
+) -> tuple[DataBase[Name_def], DataConflicts]: ...
 
 
 @overload
 def tree_to_db(
     data: TreeData,
     mapping: RootMap,
-    backend: Backend[Name] = ...,  # type: ignore
+    backend: Backend[Name_def] = ...,  # type: ignore
     schema: type[Schema] | None = ...,
     collect_conflicts: Literal[False] = ...,
-) -> DataBase[Name]: ...
+) -> DataBase[Name_def]: ...
 
 
 def tree_to_db(
     data: TreeData,
     mapping: RootMap[Record, TreeData],
-    backend: Backend[Name] | None = None,
+    backend: Backend[Name_def] | None = None,
     schema: type[Schema] | None = None,
     collect_conflicts: bool = False,
-) -> DataBase[Name] | tuple[DataBase[Name], DataConflicts]:
+) -> DataBase[Name_def] | tuple[DataBase[Name_def], DataConflicts]:
     """Transform recursive data into relational format.
 
     Args:
@@ -485,7 +488,7 @@ def tree_to_db(
         If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
         is returned.
     """
-    db: DataBase[Name] = (
+    db: DataBase[Name_def] = (
         DataBase(backend, schema) if backend is not None else DataBase(schema=schema)
     )
 
