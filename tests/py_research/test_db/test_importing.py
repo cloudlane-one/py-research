@@ -19,7 +19,7 @@ class SearchResult(Record):
     score: Attr[float]
 
 
-class Search(Record[str, str]):
+class Search(Record[str]):
     """Defined search against the API."""
 
     term: Attr[str] = Attr(primary_key=True)

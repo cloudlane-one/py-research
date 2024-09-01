@@ -43,17 +43,20 @@ class BaseIdx:
     __hash__: ClassVar[None]  # type: ignore[assignment]
 
 
-class SingleIdx(BaseIdx):
+class SingleIdx:
     """Singleton to mark dataset index as a single value."""
 
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
-Idx = TypeVar("Idx", bound="Hashable | BaseIdx")
+
 Key = TypeVar("Key", bound=Hashable)
+Key_def = TypeVar("Key_def", contravariant=True, bound=Hashable, default=Any)
 
 Val = TypeVar("Val")
 Val2 = TypeVar("Val2")
 Val3 = TypeVar("Val3")
 Val_cov = TypeVar("Val_cov", covariant=True)
+Val_def = TypeVar("Val_def", covariant=True, default=Any)
 
 PVal = TypeVar("PVal", bound="Prop")
 
@@ -1131,7 +1134,7 @@ class RecordMeta(type):
         return {rel.target_type for rel in cls._rels.values()}
 
 
-class Record(Generic[Idx, Val_cov], metaclass=RecordMeta):
+class Record(Generic[Key_def], metaclass=RecordMeta):
     """Schema for a record in a database."""
 
     _table_name: ClassVar[str]
@@ -1350,6 +1353,13 @@ class Require:
     present: bool = True
 
 
+class Scalar(Record[Key_def], Generic[Val, Key_def]):
+    """Dynamically defined record type."""
+
+    _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
+    _value: Attr[Val]
+
+
 class DynRecordMeta(RecordMeta):
     """Metaclass for dynamically defined record types."""
 
@@ -1365,11 +1375,8 @@ class DynRecordMeta(RecordMeta):
         return AttrRef(_name=name, record_type=cls, prop_type=TypeDef())
 
 
-class DynRecord(Record[UUID, Val], metaclass=DynRecordMeta):  # noqa: N801
+class DynRecord(Record, metaclass=DynRecordMeta):
     """Dynamically defined record type."""
-
-    _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
-    _value: Attr[Val]
 
 
 a = DynRecord
