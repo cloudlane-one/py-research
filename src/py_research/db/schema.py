@@ -188,7 +188,7 @@ class Prop(Generic[Val_cov, RWT]):
 
             if isinstance(value, Unloaded) and instance._loader is not None:
                 try:
-                    value = instance._loader(getattr(owner, self.name))
+                    value = instance._loader(getattr(owner, self.name), instance._index)
                 except KeyError:
                     pass
 
@@ -294,12 +294,7 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, Rec3_def, RWT, Rec_def]):
     def __get__(  # noqa: D105 # type: ignore
         self, instance: object | None, owner: type | type[Rec2] | None
     ) -> Recs_cov | RelRef[Rec2, Recs_cov, Any] | Self:
-        recs = super().__get__(instance, owner)
-
-        if isinstance(instance, Record) and self.collection is not None:
-            recs = self.collection(recs)
-
-        return recs
+        return super().__get__(instance, owner)
 
 
 @dataclass(kw_only=True, eq=False)
@@ -330,6 +325,20 @@ class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
             *(self.parent.path if self.parent is not None else []),
             *([self] if isinstance(self, RelRef) else []),
         ]
+
+    @property
+    def path_idx(self) -> list[AttrRef] | None:
+        """Get the path index of the relation."""
+        p = [
+            a
+            for rel in self.path
+            for a in (
+                [rel.map_by]
+                if rel.map_by is not None
+                else rel.order_by.keys() if rel.order_by is not None else []
+            )
+        ]
+        return p if len(p) > 0 else None
 
     def __rrshift__(self, left: type[Record] | RelRef) -> Self:
         """Append a prop to the relation path."""
@@ -635,9 +644,30 @@ class RelRef(
         return self.target
 
     @cached_property
+    def link_rel(self) -> RelRef[Rec_cov, list[Rec3_def], Rec3_def] | None:
+        """Reference props of the link record type."""
+        if not isinstance(self.on, RelRef | tuple):
+            return None
+
+        backrel = self.on[0] if isinstance(self.on, tuple) else self.on
+
+        if not issubclass(backrel.record_type, self.link_type):
+            return None
+
+        prop_type = TypeDef(Prop[list[backrel.record_type]])
+
+        return RelRef[Rec_cov, list[Rec3_def], Rec3_def](
+            record_type=self.record_type, prop_type=prop_type, on=backrel
+        )
+
+    @cached_property
     def link(self) -> type[Rec3_def]:
         """Reference props of the link record type."""
-        return self.record_type.rel(self.link_type).target
+        return (
+            self.link_rel.t
+            if self.link_rel is not None
+            else cast(type[Rec3_def], Record)
+        )
 
     @property
     def path_str(self) -> str:
@@ -1267,7 +1297,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         UUID: UUIDType(binary=False),  # Binary type causes issues with DuckDB
     }
 
-    _loader: Callable[[PropRef], Any] | None = None
+    _loader: Callable[[PropRef, Key_def], Any] | None = None
     _edge_dict: dict[str, RecordValue] = prop(default_factory=dict, local=True)
 
     @classmethod
@@ -1536,7 +1566,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
             return DynRecord()
 
         if self._loader is not None and rel.name not in self._edge_dict:
-            self._edge_dict[rel.name] = self._loader(rel)
+            self._edge_dict[rel.name] = self._loader(rel, self._index)
 
         return self._edge_dict[rel.name]
 

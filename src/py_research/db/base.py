@@ -925,12 +925,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
     @cached_property
     def path_idx(self) -> list[AttrRef] | None:
         """Optional, alternative index of this dataset based on merge path."""
-        path = self.base.path if isinstance(self.base, PropRef) else []
-
-        if any(rel.order_by is None or rel.map_by is None for rel in path):
-            return None
-
-        return [rel.order_by or rel.map_by for rel in path]  # type: ignore
+        return self.base.path_idx if isinstance(self.base, PropRef) else None
 
     @cached_property
     def base_table(self) -> sqla.FromClause:
@@ -1385,8 +1380,8 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         select = sqla.select(
             *(
-                col
-                for col in selection_table.columns
+                col.label(f"{self.record_type._default_table_name()}.{col_name}")
+                for col_name, col in selection_table.columns.items()
                 if not index_only or col.primary_key
             ),
             *(
@@ -1405,16 +1400,27 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         return select
 
-    def _load_prop(
-        self, prop: PropRef[Record, Val], parent_idx: Hashable = None
-    ) -> Val:
-        base = cast(DataSet[Any, Record, Hashable], self.db[prop.record_type])
-        base_record = base[parent_idx] if parent_idx is not None else base
+    def _load_prop(self, prop: PropRef[Record[Key], Val], parent_idx: Key) -> Val:
+        base = self.db[prop.record_type]
+        base_record = base[parent_idx]
 
         if isinstance(prop, AttrRef):
             return getattr(base_record.load(), prop.name)
         elif isinstance(prop, RelRef):
-            return base_record[prop].load()
+            recs = base_record[prop].load()
+            recs_type = prop.prop_type.value_type()
+
+            if (
+                isinstance(recs, dict)
+                and not issubclass(recs_type, Mapping)
+                and issubclass(recs_type, Iterable)
+            ):
+                recs = list(recs.values())
+
+            if prop.collection is not None:
+                recs = prop.collection(recs)
+
+            return cast(Val, recs)
 
         raise TypeError("Invalid property reference.")
 
@@ -1442,99 +1448,108 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
     def load(
         self: DataSet[Name, Any, Hashable | BaseIdx, tuple[*RelTup]],
         kind: type[Record] = ...,
-    ) -> Sequence[tuple[Rec_cov, *RelTup]]: ...
+    ) -> dict[Hashable, tuple[Rec_cov, *RelTup]]: ...
 
     @overload
-    def load(self, kind: type[Record] = ...) -> Sequence[Rec_cov]: ...
+    def load(
+        self: DataSet[Name, Rec_cov, Key], kind: type[Record] = ...
+    ) -> dict[Key, Rec_cov]: ...
+
+    @overload
+    def load(self, kind: type[Record] = ...) -> list[Rec_cov]: ...
 
     def load(
-        self,
+        self: DataSet[Any, Record, Any, Any],
         kind: type[Record | Df] = Record,
     ) -> (
         Rec_cov
         | tuple[Rec_cov, *tuple[Any, ...]]
         | Df
         | tuple[Df, ...]
-        | Sequence[Rec_cov | tuple[Rec_cov, *tuple[Any, ...]]]
+        | dict[Any, Rec_cov]
+        | dict[Any, tuple[Rec_cov, *tuple[Any, ...]]]
+        | list[Rec_cov]
     ):
         """Download selection."""
         select = self.select()
+
+        idx_cols = [
+            f"{rel.path_str}.{pk}"
+            for rel in self.extensions.rels
+            for pk in rel.target_type._primary_keys
+        ]
+
+        main_cols = {
+            col: col.lstrip(self.record_type._default_table_name() + ".")
+            for col in select.columns.keys()
+            if col.startswith(self.record_type._default_table_name())
+        }
+
+        extra_cols = {
+            rel: {
+                col: col.lstrip(rel.path_str + ".")
+                for col in select.columns.keys()
+                if col.startswith(rel.path_str)
+            }
+            for rel in self.extensions.rels
+        }
 
         merged_df = None
         if kind is pd.DataFrame:
             with self.db.engine.connect() as con:
                 merged_df = pd.read_sql(select, con)
-                merged_df = merged_df.set_index(
-                    [
-                        col
-                        for relref in self.extensions.rels
-                        for col in merged_df.columns
-                        if col.startswith(relref.path_str)
-                        and col.lstrip(relref.path_str + ".")
-                        in relref.target_type._primary_keys
-                    ]
-                )
+                merged_df = merged_df.set_index(idx_cols)
         else:
             merged_df = pl.read_database(select, self.db.engine)
+
+        if issubclass(kind, Record):
+            assert isinstance(merged_df, pl.DataFrame)
+
+            rec_types = {
+                self.record_type: main_cols,
+                **{rel.target_type: cols for rel, cols in extra_cols.items()},
+            }
+
+            loaded: dict[type[Record], dict[Hashable, Record]] = {
+                r: {} for r in rec_types
+            }
+            records: dict[Any, Record | tuple[Record, ...]] = {}
+
+            for row in merged_df.iter_rows(named=True):
+                idx = tuple(row[i] for i in idx_cols)
+                idx = idx[0] if len(idx) == 1 else idx
+
+                rec_list = []
+                for rec_type, cols in rec_types.items():
+                    rec_data: dict[PropRef, Any] = {
+                        getattr(rec_type, attr): row[col] for col, attr in cols.items()
+                    }
+                    rec_idx = self.record_type._index_from_dict(rec_data)
+                    rec = loaded[rec_type].get(rec_idx) or self.record_type(
+                        _loader=self._load_prop,
+                        **{p.name: v for p, v in rec_data.items()},  # type: ignore
+                        **{r: Unloaded() for r in self.record_type._rels},
+                    )
+
+                    rec_list.append(rec)
+
+                records[idx] = tuple(rec_list) if len(rec_list) > 1 else rec_list[0]
+
+            return cast(
+                dict[Any, Rec_cov] | dict[Any, tuple[Rec_cov, *tuple[Any, ...]]],
+                records,
+            )
 
         main_df, *extra_dfs = cast(
             tuple[Df, ...],
             (
-                merged_df[
-                    list(
-                        col
-                        for col in merged_df.columns
-                        if col in self.record_type._attrs.keys()
-                    )
-                ],
+                merged_df[list(main_cols.keys())].rename(main_cols),
                 *(
-                    merged_df[
-                        list(
-                            col.lstrip(relref.path_str + ".")
-                            for col in merged_df.columns
-                            if col.startswith(relref.path_str)
-                        )
-                    ]
-                    for relref in self.extensions.rels
+                    merged_df[list(cols.keys())].rename(cols)
+                    for cols in extra_cols.values()
                 ),
             ),
         )
-
-        if issubclass(kind, Record):
-            assert isinstance(main_df, pl.DataFrame)
-
-            main_records = [
-                self.record_type(
-                    **row, **{name: r for name, r in self.record_type._rels}  # type: ignore
-                )
-                for row in main_df.iter_rows(named=True)
-            ]
-            for r in main_records:
-                r._loader = partial(self._load_prop, parent_idx=r._index)
-
-            extra_records = (
-                [
-                    cast(
-                        Record,
-                        rel.target_type(
-                            **row, **{name: r for name, r in rel.target_type._rels}  # type: ignore
-                        ),
-                    )
-                    for row in df.iter_rows(named=True)
-                ]
-                for df, rel in zip(extra_dfs, self.extensions.rels)
-                if isinstance(df, pl.DataFrame)
-            )
-            for er in extra_records:
-                for r in er:
-                    r._loader = partial(self._load_prop, parent_idx=r._index)
-
-            return list(
-                zip(
-                    main_records,
-                    *extra_records,
-                )
-            )
 
         return main_df, *extra_dfs
 
@@ -1924,7 +1939,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         statements = []
 
         for table in tables:
-            # Prepare update statement.
+            # Prepare delete statement.
             if self.db.engine.dialect.name in (
                 "postgres",
                 "postgresql",
@@ -2074,23 +2089,34 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
     @staticmethod
     def _normalize_rel_data(
-        rec_data: RecordValue[Record], parent_idx: Hashable, list_idx: bool
+        rec_data: RecordValue[Record],
+        parent_idx: Hashable,
+        list_idx: bool,
+        covered: set[int],
     ) -> dict[Any, Record]:
         """Convert record data to dictionary."""
-        if isinstance(rec_data, Record):
-            return {parent_idx: rec_data}
+        res = {}
+
+        if isinstance(rec_data, Record) and id(rec_data) not in covered:
+            res = {parent_idx: rec_data}
         elif isinstance(rec_data, Mapping):
-            return {(parent_idx, idx): rec for idx, rec in rec_data.items()}
+            res = {
+                (parent_idx, idx): rec
+                for idx, rec in rec_data.items()
+                if id(rec) not in covered
+            }
         elif isinstance(rec_data, Iterable):
-            return {
+            res = {
                 (parent_idx, idx if list_idx else rec._index): rec
                 for idx, rec in enumerate(rec_data)
+                if id(rec) not in covered
             }
-        else:
-            return {}
+
+        covered |= set(id(r) for r in res.values())
+        return res
 
     def _get_record_rels(
-        self, rec_data: dict[Any, dict[PropRef, Any]], list_idx: bool
+        self, rec_data: dict[Any, dict[PropRef, Any]], list_idx: bool, covered: set[int]
     ) -> dict[RelRef, dict[Any, Record]]:
         """Get relation data from record data."""
         rel_data: dict[RelRef, dict[Any, Record]] = {}
@@ -2100,7 +2126,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                 if isinstance(prop, RelRef) and not isinstance(prop_val, Unloaded):
                     rel_data[prop] = {
                         **rel_data.get(prop, {}),
-                        **self._normalize_rel_data(prop_val, idx, list_idx),
+                        **self._normalize_rel_data(prop_val, idx, list_idx, covered),
                     }
 
         return rel_data
@@ -2109,7 +2135,10 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         self,
         value: DataSet | PartialRecInput[Rec_cov, Any] | ValInput,
         mode: Literal["update", "upsert", "replace"] = "update",
+        covered: set[int] | None = None,
     ) -> Self:
+        covered = covered or set()
+
         record_data: dict[Any, dict[PropRef, Any]] | None = None
         rel_data: dict[RelRef[Rec_cov, Any, Any], dict[Any, Record]] | None = None
         df_data: DataFrame | None = None
@@ -2170,7 +2199,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                 idx: {p.name: v for p, v in rec.items() if isinstance(p, AttrRef)}
                 for idx, rec in record_data.items()
             }
-            rel_data = self._get_record_rels(record_data, list_idx)
+            rel_data = self._get_record_rels(record_data, list_idx, covered)
 
             # Transform attribute data into DataFrame.
             df_data = pd.DataFrame.from_records(attr_data)
@@ -2178,7 +2207,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         if rel_data is not None:
             # Recurse into relation data.
             for r, r_data in rel_data.items():
-                self[r]._set(r_data, mode="replace")
+                self[r]._set(r_data, mode="replace", covered=covered)
 
         # Load data into a temporary table.
         if df_data is not None:
@@ -2198,8 +2227,38 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         statements = []
 
-        # Construct the insert / update statement.
+        if mode == "replace":
+            # Delete all records in the current selection.
+            select = self.select()
+
+            for table in attrs_by_table:
+                # Prepare delete statement.
+                if self.db.engine.dialect.name in (
+                    "postgres",
+                    "postgresql",
+                    "duckdb",
+                    "mysql",
+                    "mariadb",
+                ):
+                    # Delete-from.
+                    statements.append(
+                        table.delete().where(
+                            reduce(
+                                sqla.and_,
+                                (
+                                    table.c[col.name] == select.c[col.name]
+                                    for col in table.primary_key.columns
+                                ),
+                            )
+                        )
+                    )
+                else:
+                    # Correlated update.
+                    raise NotImplementedError("Correlated update not supported yet.")
+
         if mode in ("replace", "upsert"):
+            # Construct the insert statements.
+
             assert (
                 isinstance(self.base, Record) and len(self.filters) == 0
             ), "Can only upsert into unfiltered base datasets."
@@ -2230,6 +2289,8 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
                 statements.append(statement)
         else:
+            # Construct the update statements.
+
             assert isinstance(self.base_table, sqla.Table), "Base must be a table."
 
             # Derive current select statement and join with value table, if exists.
@@ -2284,7 +2345,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                     # Correlated update.
                     raise NotImplementedError("Correlated update not supported yet.")
 
-        # Execute insert / update statements.
+        # Execute delete / insert / update statements.
         with self.db.engine.begin() as con:
             for statement in statements:
                 con.execute(statement)
@@ -2292,5 +2353,32 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         # Drop the temporary table, if any.
         if value_set is not None:
             cast(sqla.Table, value_set.base_table).drop(self.db.engine)
+
+        if mode in ("replace", "upsert") and isinstance(self.base, RelRef):
+            # Update incoming relations from parent records.
+            parent_set = DataSet(
+                self.db,
+                (
+                    self.base.parent
+                    if self.base.parent is not None
+                    else self.base.record_type
+                ),
+                self.extensions,
+                self.filters,
+                self.keys,
+            )
+
+            if issubclass(self.base.fk_record_type, self.base.record_type):
+                # Case: parent links directly to child (n -> 1)
+                # Somehow get list of all updated child record indexes.
+                # Update parent records with new child indexes.
+                raise NotImplementedError()
+            elif self.base.link_rel is not None:
+                # Case: parent and child are linked via assoc table (n <--> m)
+                # Update link table with new child indexes.
+                raise NotImplementedError()
+
+            # Note that the (1 <- n) case is already covered by updating
+            # the child record directly, which includes all its foreign keys.
 
         return self
