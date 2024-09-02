@@ -1361,6 +1361,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
     def select(
         self,
+        *,
         index_only: bool = False,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
@@ -1439,28 +1440,55 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         main_df, *extra_dfs = cast(
             tuple[Df, ...],
-            tuple(
+            (
                 merged_df[
                     list(
                         col
                         for col in merged_df.columns
-                        if col.startswith(relref.path_str)
+                        if col in self.record_type._attrs.keys()
                     )
-                ]
-                for relref in self.extensions.rels
+                ],
+                *(
+                    merged_df[
+                        list(
+                            col
+                            for col in merged_df.columns
+                            if col.startswith(relref.path_str)
+                        )
+                    ]
+                    for relref in self.extensions.rels
+                ),
             ),
         )
 
         if issubclass(kind, Record):
             assert isinstance(main_df, pl.DataFrame)
+
+            main_records = [
+                self.record_type(
+                    **row, **{name: r for name, r in self.record_type._rels}
+                )
+                for row in main_df.iter_rows(named=True)
+            ]
+
+            extra_records = (
+                [
+                    cast(
+                        Record,
+                        rel.target_type(
+                            **row, **{name: r for name, r in rel.target_type._rels}
+                        ),
+                    )
+                    for row in df.iter_rows(named=True)
+                ]
+                for df, rel in zip(extra_dfs, self.extensions.rels)
+                if isinstance(df, pl.DataFrame)
+            )
+
             return list(
                 zip(
-                    [self.record_type(**row) for row in main_df.iter_rows(named=True)],
-                    *(
-                        [rel.target_type(**row) for row in df.iter_rows(named=True)]
-                        for df, rel in zip(extra_dfs, self.extensions.rels)
-                        if isinstance(df, pl.DataFrame)
-                    ),
+                    main_records,
+                    *extra_records,
                 )
             )
 

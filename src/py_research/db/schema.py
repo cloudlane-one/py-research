@@ -337,7 +337,7 @@ class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
         )
 
         prefixed_rel = reduce(
-            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.a),  # type: ignore
+            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.r),  # type: ignore
             self.path,
             new_root,
         )
@@ -347,7 +347,7 @@ class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
             (
                 prefixed_rel
                 if isinstance(self, RelRef)
-                else getattr(prefixed_rel.a, self.name)
+                else getattr(prefixed_rel.r, self.name)
             ),
         )
 
@@ -606,7 +606,7 @@ class RelRef(
                 return [self.fk_map]
 
     @cached_property
-    def a(self) -> type[Rec2_cov]:
+    def r(self) -> type[Rec2_cov]:
         """Reference props of the target record type."""
         return cast(
             type[Rec2_cov], type(token_hex(5), (self.target_type,), {"_rel": self})
