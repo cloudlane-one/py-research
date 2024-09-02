@@ -47,6 +47,7 @@ from .schema import (
     Rec2,
     Rec_cov,
     Record,
+    RecordValue,
     Rel,
     RelDict,
     RelRef,
@@ -57,6 +58,8 @@ from .schema import (
     Schema,
     SingleIdx,
     TypeDef,
+    Unloaded,
+    Val,
     Val_cov,
     dynamic_record_type,
 )
@@ -90,7 +93,7 @@ type RecInput[Rec: Record, Key: Hashable] = DataFrame | Iterable[Rec] | Mapping[
     Key, Rec
 ] | sqla.Select[tuple[Key, Rec]] | Rec
 
-type PartialRec[Rec: Record] = Mapping[AttrRef[Rec, Any] | str, Any]
+type PartialRec[Rec: Record] = Mapping[PropRef[Rec, Any], Any]
 
 type PartialRecInput[Rec: Record, Key: Hashable] = RecInput[Rec, Any] | Iterable[
     PartialRec[Rec]
@@ -1155,159 +1158,172 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
     @overload
     def __getitem__(  # type: ignore
         self: DataSet[Any, Record[Key2], BaseIdx],
-        key: RelRef[Rec_cov, Rec2, Rec2],
+        key: RelRef[Rec_cov, Rec2 | None, Rec2],
     ) -> DataSet[Name, Rec2, Key2]: ...
 
     # 4. Top-level relation selection, singular, single index
     @overload
     def __getitem__(  # type: ignore
-        self: DataSet[Any, Record[Key2], SingleIdx],
+        self: DataSet[Any, Any, SingleIdx],
         key: RelRef[Rec_cov, Rec2, Rec2],
-    ) -> DataSet[Name, Rec2, Key2]: ...
+    ) -> DataSet[Name, Rec2, SingleIdx]: ...
 
-    # 5. Top-level relation selection, singular, custom index
+    # 5. Top-level relation selection, singular nullable, single index
+    @overload
+    def __getitem__(  # type: ignore
+        self: DataSet[Any, Any, SingleIdx],
+        key: RelRef[Rec_cov, Rec2 | None, Rec2],
+    ) -> DataSet[Name, Rec2 | Scalar[None], SingleIdx]: ...
+
+    # 6. Top-level relation selection, singular, custom index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Key],
-        key: RelRef[Rec_cov, Rec2, Rec2],
+        key: RelRef[Rec_cov, Rec2 | None, Rec2],
     ) -> DataSet[Name, Rec2, Key]: ...
 
-    # 6. Top-level relation selection, mapping, base index
+    # 7. Top-level relation selection, mapping, base index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, tuple[Key2, Key3]]: ...
 
-    # 7. Top-level relation selection, mapping, single index
+    # 8. Top-level relation selection, mapping, single index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, SingleIdx],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, Key3]: ...
 
-    # 8. Top-level relation selection, mapping, tuple index
+    # 9. Top-level relation selection, mapping, tuple index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3]]: ...
 
-    # 9. Top-level relation selection, mapping, custom index
+    # 10. Top-level relation selection, mapping, custom index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Key],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
     ) -> DataSet[Name, Rec2, tuple[Key, Key3]]: ...
 
-    # 10. Top-level relation selection, iterable, base index
+    # 11. Top-level relation selection, iterable, base index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
     ) -> DataSet[Name, Rec2, tuple[Key2, Key4]]: ...
 
-    # 11. Top-level relation selection, iterable, single index
+    # 12. Top-level relation selection, iterable, single index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, SingleIdx],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
     ) -> DataSet[Name, Rec2, Key4]: ...
 
-    # 12. Top-level relation selection, iterable, tuple index
+    # 13. Top-level relation selection, iterable, tuple index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
     ) -> DataSet[Name, Rec2, tuple[*IdxTup, Key4] | tuple[Key2, Key4]]: ...
 
-    # 13. Top-level relation selection, iterable, custom index
+    # 14. Top-level relation selection, iterable, custom index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Key],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
     ) -> DataSet[Name, Rec2, tuple[Key, Key4]]: ...
 
-    # 14. Nested relation selection, base index
+    # 15. Nested relation selection, base index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], BaseIdx],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
     ) -> DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4]]: ...
 
-    # 15. Nested relation selection, single index
+    # 16. Nested relation selection, single index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], SingleIdx],
         key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
     ) -> DataSet[Name, Rec2, IdxEnd[Key3 | Key4]]: ...
 
-    # 16. Nested relation selection, tuple index
+    # 17. Nested relation selection, tuple index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], tuple[*IdxTup]],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
     ) -> DataSet[
         Name,
         Rec2,
         IdxTupStartEnd[*IdxTup, Key3 | Key4] | IdxStartEnd[Key2, Key3 | Key4],
     ]: ...
 
-    # 17. Nested relation selection, custom index
+    # 18. Nested relation selection, custom index
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], Key],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
     ) -> DataSet[Name, Rec2, IdxStartEnd[Key | Key2, Key3 | Key4]]: ...
 
-    # 18. Default relation selection
+    # 19. Default relation selection
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Any, Any],
         key: RelRef[Any, Any, Rec2],
     ) -> DataSet[Name, Rec2, Any]: ...
 
-    # 19. List selection
+    # 20. List selection
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], Key], key: Iterable[Key | Key2]
     ) -> DataSet[Name, Rec_cov, Key]: ...
 
-    # 20. Merge selection
+    # 21. Merge selection
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Key], key: RelTree[Rec_cov, *RelTup]
     ) -> DataSet[Name, Rec_cov, Key, tuple[*RelTup]]: ...
 
-    # 21. Merge selection, single index
+    # 22. Merge selection, single index
     @overload
     def __getitem__(
         self: DataSet[Any, Any, SingleIdx], key: RelTree[Rec_cov, *RelTup]
     ) -> DataSet[Name, Rec_cov, BaseIdx, tuple[*RelTup]]: ...
 
-    # 22. List selection from record (value) tuple, keep index
+    # 23. List selection from record (value) tuple, keep index
     @overload
     def __getitem__(  # type: ignore
         self: DataSet[Any, Any, Any, tuple[Record, ...]], key: Iterable[Hashable]
     ) -> DataSet[Name, Rec_cov, Idx_cov]: ...
 
-    # 23. Index value selection
+    # 24. Index value selection
     @overload
     def __getitem__(
         self: DataSet[Any, Record[Key2], BaseIdx | Key], key: Key | Key2
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 24. Index value selection from record (value) tuple
+    # 25. Index value selection from record (value) tuple
     @overload
     def __getitem__(
         self: DataSet[Any, Any, Any, tuple[Record, ...]], key: Hashable
     ) -> DataSet[Name, Rec_cov, SingleIdx]: ...
 
-    # 25. Slice selection, keep index
+    # 26. Slice selection, keep index
     @overload
     def __getitem__(self, key: slice | tuple[slice, ...]) -> Self: ...
 
-    # 26. Expression filtering, keep index
+    # 27. Expression filtering, keep index
     @overload
     def __getitem__(self, key: sqla.ColumnElement[bool] | pd.Series) -> Self: ...
 
@@ -1389,6 +1405,19 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
         return select
 
+    def _load_prop(
+        self, prop: PropRef[Record, Val], parent_idx: Hashable = None
+    ) -> Val:
+        base = cast(DataSet[Any, Record, Hashable], self.db[prop.record_type])
+        base_record = base[parent_idx] if parent_idx is not None else base
+
+        if isinstance(prop, AttrRef):
+            return getattr(base_record.load(), prop.name)
+        elif isinstance(prop, RelRef):
+            return base_record[prop].load()
+
+        raise TypeError("Invalid property reference.")
+
     @overload
     def load(
         self: DataSet[Name, Rec_cov, SingleIdx],
@@ -1428,13 +1457,23 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         | tuple[Df, ...]
         | Sequence[Rec_cov | tuple[Rec_cov, *tuple[Any, ...]]]
     ):
-        """Download table selection."""
+        """Download selection."""
         select = self.select()
 
         merged_df = None
         if kind is pd.DataFrame:
             with self.db.engine.connect() as con:
                 merged_df = pd.read_sql(select, con)
+                merged_df = merged_df.set_index(
+                    [
+                        col
+                        for relref in self.extensions.rels
+                        for col in merged_df.columns
+                        if col.startswith(relref.path_str)
+                        and col.lstrip(relref.path_str + ".")
+                        in relref.target_type._primary_keys
+                    ]
+                )
         else:
             merged_df = pl.read_database(select, self.db.engine)
 
@@ -1451,7 +1490,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                 *(
                     merged_df[
                         list(
-                            col
+                            col.lstrip(relref.path_str + ".")
                             for col in merged_df.columns
                             if col.startswith(relref.path_str)
                         )
@@ -1466,17 +1505,19 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
             main_records = [
                 self.record_type(
-                    **row, **{name: r for name, r in self.record_type._rels}
+                    **row, **{name: r for name, r in self.record_type._rels}  # type: ignore
                 )
                 for row in main_df.iter_rows(named=True)
             ]
+            for r in main_records:
+                r._loader = partial(self._load_prop, parent_idx=r._index)
 
             extra_records = (
                 [
                     cast(
                         Record,
                         rel.target_type(
-                            **row, **{name: r for name, r in rel.target_type._rels}
+                            **row, **{name: r for name, r in rel.target_type._rels}  # type: ignore
                         ),
                     )
                     for row in df.iter_rows(named=True)
@@ -1484,6 +1525,9 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                 for df, rel in zip(extra_dfs, self.extensions.rels)
                 if isinstance(df, pl.DataFrame)
             )
+            for er in extra_records:
+                for r in er:
+                    r._loader = partial(self._load_prop, parent_idx=r._index)
 
             return list(
                 zip(
@@ -1582,7 +1626,20 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec2, SingleIdx] | Rec2 | PartialRec[Rec2],
     ) -> None: ...
 
-    # 10. Top-level relation assignment, mapping, base index
+    # 10. Top-level relation assignment, singular nullable, single index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, SingleIdx],
+        key: RelRef[Rec_cov, Rec2 | None, Rec2],
+        value: (
+            DataSet[Name, Rec2 | Scalar[None], SingleIdx]
+            | Rec2
+            | PartialRec[Rec2]
+            | None
+        ),
+    ) -> None: ...
+
+    # 11. Top-level relation assignment, mapping, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1593,7 +1650,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 11. Top-level relation assignment, mapping, tuple index
+    # 12. Top-level relation assignment, mapping, tuple index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], tuple[*IdxTup]],
@@ -1604,7 +1661,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 12. Top-level relation assignment, mapping, custom index
+    # 13. Top-level relation assignment, mapping, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
@@ -1615,7 +1672,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 13. Top-level relation assignment, mapping, single index
+    # 14. Top-level relation assignment, mapping, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
@@ -1623,7 +1680,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec2, Key3 | SingleIdx] | PartialRecInput[Rec2, Key3],
     ) -> None: ...
 
-    # 14. Top-level relation assignment, iterable, base index
+    # 15. Top-level relation assignment, iterable, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1634,7 +1691,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 15. Top-level relation assignment, iterable, custom index
+    # 16. Top-level relation assignment, iterable, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
@@ -1645,7 +1702,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 16. Top-level relation assignment, iterable, single index
+    # 17. Top-level relation assignment, iterable, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
@@ -1656,51 +1713,63 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 17. Nested relation assignment, base index
+    # 18. Nested relation assignment, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
         value: (
             DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4] | SingleIdx]
             | PartialRecInput[Rec2, IdxStartEnd[Key2, Key3 | Key4]]
+            | None
         ),
     ) -> None: ...
 
-    # 18. Nested relation assignment, single index
+    # 19. Nested relation assignment, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
         value: (
             DataSet[Name, Rec2, IdxEnd[Key3 | Key4] | BaseIdx | SingleIdx]
             | PartialRecInput[Rec2, IdxEnd[Key3 | Key4]]
+            | None
         ),
     ) -> None: ...
 
-    # 19. Nested relation assignment, tuple index
+    # 20. Nested relation assignment, tuple index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, tuple[*IdxTup]],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
         value: (
             DataSet[Name, Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4] | SingleIdx]
             | PartialRecInput[Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
+            | None
         ),
     ) -> None: ...
 
-    # 20. Nested relation assignment, custom index
+    # 21. Nested relation assignment, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
-        key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
+        key: RelRef[
+            Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2] | None, Record[Key4]
+        ],
         value: (
             DataSet[Name, Rec2, IdxStartEnd[Key, Key3 | Key4] | SingleIdx]
             | PartialRecInput[Rec2, IdxStartEnd[Key, Key3 | Key4]]
+            | None
         ),
     ) -> None: ...
 
-    # 21. Merge assignment
+    # 22. Merge assignment
     @overload
     def __setitem__(
         self,
@@ -1711,7 +1780,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 22. List assignment with base index
+    # 23. List assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1722,7 +1791,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 23. List assignment with custom index
+    # 24. List assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
@@ -1730,7 +1799,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec_cov, Key | SingleIdx] | PartialRecInput[Rec_cov, int],
     ) -> None: ...
 
-    # 24. Single value assignment with base index
+    # 25. Single value assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], BaseIdx],
@@ -1738,7 +1807,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 25. Single value assignment with custom index
+    # 26. Single value assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], Key],
@@ -1746,7 +1815,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 26. Slice assignment
+    # 27. Slice assignment
     @overload
     def __setitem__(
         self,
@@ -1756,7 +1825,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 27. Filter assignment with base index
+    # 28. Filter assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
@@ -1766,7 +1835,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         ),
     ) -> None: ...
 
-    # 28. Filter assignment with custom index
+    # 29. Filter assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], Key],
@@ -1810,7 +1879,79 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Rec_cov, Key2 | BaseIdx] | RecInput[Rec_cov, Key2],
     ) -> DataSet[Name, Record[Key2], BaseIdx]:
         """Merge update into unfiltered dataset."""
-        return self._set(value, insert=True)
+        return self._set(value, mode="upsert")
+
+    # 1. List deletion
+    @overload
+    def __delitem__(
+        self: DataSet[Any, Record[Key2], Key], key: Iterable[Key | Key2]
+    ) -> None: ...
+
+    # 2. Index value deletion
+    @overload
+    def __delitem__(
+        self: DataSet[Any, Record[Key2], BaseIdx | Key], key: Key | Key2
+    ) -> None: ...
+
+    # 3. Slice deletion
+    @overload
+    def __delitem__(self, key: slice | tuple[slice, ...]) -> None: ...
+
+    # 4. Expression filter deletion
+    @overload
+    def __delitem__(self, key: sqla.ColumnElement[bool] | pd.Series) -> None: ...
+
+    # Implementation:
+
+    def __delitem__(  # noqa: D105
+        self,
+        key: (
+            list[Hashable]
+            | Hashable
+            | slice
+            | tuple[slice, ...]
+            | sqla.ColumnElement[bool]
+            | Series
+        ),
+    ) -> None:
+        if not isinstance(key, slice) or key != slice(None):
+            del self[key][:]  # type: ignore
+
+        select = self.select()
+
+        tables = {self.db._get_table(rec) for rec in self.record_type._record_bases}
+
+        statements = []
+
+        for table in tables:
+            # Prepare update statement.
+            if self.db.engine.dialect.name in (
+                "postgres",
+                "postgresql",
+                "duckdb",
+                "mysql",
+                "mariadb",
+            ):
+                # Delete-from.
+                statements.append(
+                    table.delete().where(
+                        reduce(
+                            sqla.and_,
+                            (
+                                table.c[col.name] == select.c[col.name]
+                                for col in table.primary_key.columns
+                            ),
+                        )
+                    )
+                )
+            else:
+                # Correlated update.
+                raise NotImplementedError("Correlated update not supported yet.")
+
+        # Execute delete statements.
+        with self.db.engine.begin() as con:
+            for statement in statements:
+                con.execute(statement)
 
     def __or__(
         self, other: DataSet[Name, Rec_cov, Idx]
@@ -1931,55 +2072,122 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         """Return subquery for the current selection to be used inside SQL clauses."""
         return self.select().subquery()
 
-    def _set(  # noqa: D105
+    @staticmethod
+    def _normalize_rel_data(
+        rec_data: RecordValue[Record], parent_idx: Hashable, list_idx: bool
+    ) -> dict[Any, Record]:
+        """Convert record data to dictionary."""
+        if isinstance(rec_data, Record):
+            return {parent_idx: rec_data}
+        elif isinstance(rec_data, Mapping):
+            return {(parent_idx, idx): rec for idx, rec in rec_data.items()}
+        elif isinstance(rec_data, Iterable):
+            return {
+                (parent_idx, idx if list_idx else rec._index): rec
+                for idx, rec in enumerate(rec_data)
+            }
+        else:
+            return {}
+
+    def _get_record_rels(
+        self, rec_data: dict[Any, dict[PropRef, Any]], list_idx: bool
+    ) -> dict[RelRef, dict[Any, Record]]:
+        """Get relation data from record data."""
+        rel_data: dict[RelRef, dict[Any, Record]] = {}
+
+        for idx, rec in rec_data.items():
+            for prop, prop_val in rec.items():
+                if isinstance(prop, RelRef) and not isinstance(prop_val, Unloaded):
+                    rel_data[prop] = {
+                        **rel_data.get(prop, {}),
+                        **self._normalize_rel_data(prop_val, idx, list_idx),
+                    }
+
+        return rel_data
+
+    def _set(  # noqa: C901, D105
         self,
-        value: (
-            DataSet
-            | PartialRecInput[Rec_cov, Any]
-            | ValInput
-            | tuple[PartialRecInput, ...]
-        ),
-        insert: bool = False,
+        value: DataSet | PartialRecInput[Rec_cov, Any] | ValInput,
+        mode: Literal["update", "upsert", "replace"] = "update",
     ) -> Self:
-        if (
-            has_type(value, Record)
-            or has_type(value, list[Record])
-            or has_type(value, Mapping[Any, Record])
-            or has_type(value, tuple[Record | list[Record] | Mapping[Any, Record], ...])
-        ):
-            raise NotImplementedError(
-                "Inserting / updating via record instances not supported yet."
-            )
-            # Transform into mapping of records
-            # Get RelTree of all defined relations contained within all given records.
-            # Load all records and defined relations
+        record_data: dict[Any, dict[PropRef, Any]] | None = None
+        rel_data: dict[RelRef[Rec_cov, Any, Any], dict[Any, Record]] | None = None
+        df_data: DataFrame | None = None
+        partial: bool = False
 
-        if isinstance(value, tuple):
-            raise NotImplementedError(
-                "Inserting / updating via tuples of dataframes not supported yet."
-            )
+        list_idx = (
+            self.path_idx is not None
+            and len(self.path_idx) == 1
+            and issubclass(self.path_idx[0].prop_type.value_type(), int)
+        )
 
-        # Load data into a temporary table, if vectorized.
-        upload_df = (
-            value
-            if isinstance(value, DataFrame)
-            else (
-                (value if isinstance(value, pd.Series) else pd.Series(dict(value)))  # type: ignore
-                .rename("_value")
-                .to_frame()
-                if isinstance(value, Mapping | pd.Series)
-                else None
-            )
-        )
-        value_set = (
-            self.db.dataset(upload_df)
-            if upload_df is not None
-            else (
-                self.db.dataset(value)
-                if isinstance(value, sqla.Select)
-                else value if isinstance(value, DataSet) else None
-            )
-        )
+        if isinstance(value, Record):
+            record_data = {value._index: value._to_dict()}
+        elif isinstance(value, Mapping):
+            if has_type(value, Mapping[PropRef, Any]):
+                record_data = {
+                    self.record_type._index_from_dict(value): {
+                        p: v for p, v in value.items()
+                    }
+                }
+                partial = True
+            else:
+                assert has_type(value, Mapping[Any, PartialRec[Record]])
+
+                record_data = {}
+                for idx, rec in value.items():
+                    if isinstance(rec, Record):
+                        rec_dict = rec._to_dict()
+                    else:
+                        rec_dict = {p: v for p, v in rec.items()}
+                        partial = True
+                    record_data[idx] = rec_dict
+
+        elif isinstance(value, DataFrame):
+            df_data = value
+        elif isinstance(value, Series):
+            df_data = value.rename("_value").to_frame()
+        elif isinstance(value, Iterable):
+            record_data = {}
+            for idx, rec in enumerate(value):
+                if isinstance(rec, Record):
+                    rec_dict = rec._to_dict()
+                    rec_idx = rec._index
+                else:
+                    rec_dict = {p: v for p, v in rec.items()}
+                    rec_idx = self.record_type._index_from_dict(rec)
+                    partial = True
+
+                record_data[idx if list_idx else rec_idx] = rec_dict
+
+        assert not (
+            mode in ("upsert", "replace") and partial
+        ), "Partial record input requires update mode."
+
+        if record_data is not None:
+            # Split record data into attribute and relation data.
+            attr_data = {
+                idx: {p.name: v for p, v in rec.items() if isinstance(p, AttrRef)}
+                for idx, rec in record_data.items()
+            }
+            rel_data = self._get_record_rels(record_data, list_idx)
+
+            # Transform attribute data into DataFrame.
+            df_data = pd.DataFrame.from_records(attr_data)
+
+        if rel_data is not None:
+            # Recurse into relation data.
+            for r, r_data in rel_data.items():
+                self[r]._set(r_data, mode="replace")
+
+        # Load data into a temporary table.
+        if df_data is not None:
+            value_set = self.db.dataset(df_data)
+        elif isinstance(value, sqla.Select):
+            value_set = self.db.dataset(value)
+        else:
+            assert isinstance(value, DataSet)
+            value_set = value
 
         attrs_by_table = {
             self.db._get_table(rec): {
@@ -1991,7 +2199,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         statements = []
 
         # Construct the insert / update statement.
-        if insert:
+        if mode in ("replace", "upsert"):
             assert (
                 isinstance(self.base, Record) and len(self.filters) == 0
             ), "Can only upsert into unfiltered base datasets."
@@ -2028,11 +2236,11 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
             select = self.select()
             if value_set is not None:
                 select = select.join(
-                    self.base_table,
+                    value_set.base_table,
                     reduce(
                         sqla.and_,
                         (
-                            idx_col == self.base_table.c[idx_col.name]
+                            self.base_table.c[idx_col.name] == idx_col
                             for idx_col in value_set.base_table.primary_key
                         ),
                     ),
@@ -2076,7 +2284,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
                     # Correlated update.
                     raise NotImplementedError("Correlated update not supported yet.")
 
-        # Execute insert / update statement.
+        # Execute insert / update statements.
         with self.db.engine.begin() as con:
             for statement in statements:
                 con.execute(statement)

@@ -160,7 +160,7 @@ def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RootMap):
     reveal_type(s := db[Search])
     reveal_type(s[Search.result_count])
     reveal_type(sr := s[Search.results])
-    reveal_type(s[Search.results.r.org])
+    reveal_type(s[Search.results.t.org])
     reveal_type(sr0 := sr[("first", 0)])
     reveal_type(sr[[("first", 0), ("second", 1)]])
     reveal_type(db[Project][0:3])

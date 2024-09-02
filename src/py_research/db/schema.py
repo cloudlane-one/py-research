@@ -65,8 +65,9 @@ Rec3 = TypeVar("Rec3", bound="Record")
 Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
 Rec2_cov = TypeVar("Rec2_cov", covariant=True, bound="Record")
 Rec_def = TypeVar("Rec_def", covariant=True, bound="Record", default="Record")
+Rec3_def = TypeVar("Rec3_def", covariant=True, bound="Record", default="Record")
 
-type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec]
+type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec] | None
 Recs_cov = TypeVar("Recs_cov", bound=RecordValue, covariant=True)
 
 Sch = TypeVar("Sch", bound="Schema")
@@ -187,7 +188,7 @@ class Prop(Generic[Val_cov, RWT]):
 
             if isinstance(value, Unloaded) and instance._loader is not None:
                 try:
-                    value = instance._loader(self.name)
+                    value = instance._loader(getattr(owner, self.name))
                 except KeyError:
                     pass
 
@@ -251,7 +252,7 @@ class Attr(Prop[Val_cov, RWT]):
 
 
 @dataclass(eq=False)
-class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, RWT, Rec_def]):
+class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, Rec3_def, RWT, Rec_def]):
     """Define a relation to another record."""
 
     index: bool = False
@@ -262,9 +263,10 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, RWT, Rec_def]):
         | Iterable[AttrRef]
         | dict[AttrRef, AttrRef[Rec_def, Any]]
         | RelRef[Rec_def, Any, Any]
-        | tuple[RelRef, RelRef[Rec_def, Any, Any]]
+        | RelRef[Rec3_def, Any, Rec_def]
+        | tuple[RelRef[Rec3_def, Any, Any], RelRef[Any, Any, Rec_def]]
         | type[Rec_def]
-        | type[Record]
+        | type[Rec3_def]
         | None
     ) = None
     order_by: Mapping[AttrRef, int] | None = None
@@ -276,7 +278,7 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, RWT, Rec_def]):
 
     @overload
     def __get__(
-        self: Rel[Rec | Iterable[Rec] | Mapping[Any, Rec]],
+        self: Rel[Rec | Iterable[Rec] | Mapping[Any, Rec] | None],
         instance: None,
         owner: type[Rec2],
     ) -> RelRef[Rec2, Recs_cov, Rec]: ...
@@ -294,7 +296,7 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, RWT, Rec_def]):
     ) -> Recs_cov | RelRef[Rec2, Recs_cov, Any] | Self:
         recs = super().__get__(instance, owner)
 
-        if self.collection is not None:
+        if isinstance(instance, Record) and self.collection is not None:
             recs = self.collection(recs)
 
         return recs
@@ -337,7 +339,7 @@ class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
         )
 
         prefixed_rel = reduce(
-            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.r),  # type: ignore
+            lambda r1, r2: RelRef(**asdict(r2), record_type=r1.t),  # type: ignore
             self.path,
             new_root,
         )
@@ -347,7 +349,7 @@ class PropRef(Prop[Val_cov], Generic[Rec_cov, Val_cov]):
             (
                 prefixed_rel
                 if isinstance(self, RelRef)
-                else getattr(prefixed_rel.r, self.name)
+                else getattr(prefixed_rel.t, self.name)
             ),
         )
 
@@ -395,9 +397,9 @@ class AttrRef(  # type: ignore
 
 @dataclass(kw_only=True, eq=False)
 class RelRef(
-    Rel[Recs_cov, RW, Rec2_cov],
+    Rel[Recs_cov, Rec3_def, RW, Rec2_cov],
     PropRef[Rec_cov, Recs_cov],
-    Generic[Rec_cov, Recs_cov, Rec2_cov],
+    Generic[Rec_cov, Recs_cov, Rec2_cov, Rec3_def],
 ):
     """Reference a relation to another record."""
 
@@ -417,15 +419,30 @@ class RelRef(
                 return cast(type[Rec2_cov], self.on)
             case RelRef():
                 if issubclass(self.record_type, self.on.target_type):
-                    return self.on.record_type
+                    return cast(type[Rec2_cov], self.on.record_type)
                 else:
-                    return self.on.target_type
+                    return cast(type[Rec2_cov], self.on.target_type)
             case tuple():
                 via_1 = self.on[1]
                 assert isinstance(via_1, RelRef)
                 return via_1.target_type
             case _:
                 raise ValueError("Invalid relation definition.")
+
+    @property
+    def link_type(self) -> type[Rec3_def]:
+        """Dynamic target type of the relation."""
+        match self.on:
+            case type() if not issubclass(self.on, self.target_type):
+                return cast(type[Rec3_def], self.on)
+            case RelRef() if not issubclass(self.record_type, self.on.target_type):
+                return cast(type[Rec3_def], self.on.record_type)
+            case tuple():
+                via_1 = self.on[1]
+                assert isinstance(via_1, RelRef)
+                return via_1.record_type
+            case _:
+                return cast(type[Rec3_def], Record)
 
     @cached_property
     def fk_record_type(self) -> type[Record]:
@@ -606,11 +623,21 @@ class RelRef(
                 return [self.fk_map]
 
     @cached_property
-    def r(self) -> type[Rec2_cov]:
+    def target(self) -> type[Rec2_cov]:
         """Reference props of the target record type."""
         return cast(
             type[Rec2_cov], type(token_hex(5), (self.target_type,), {"_rel": self})
         )
+
+    @property
+    def t(self) -> type[Rec2_cov]:
+        """Reference props of the target record type."""
+        return self.target
+
+    @cached_property
+    def link(self) -> type[Rec3_def]:
+        """Reference props of the link record type."""
+        return self.record_type.rel(self.link_type).target
 
     @property
     def path_str(self) -> str:
@@ -667,7 +694,7 @@ type RelDict = dict[RelRef, RelDict]
 class RelTree(Generic[*RelTup]):
     """Tree of relations starting from the same root."""
 
-    rels: Iterable[RelRef] = field(default_factory=set)
+    rels: Iterable[RelRef[Record, RecordValue, Record]] = field(default_factory=set)
 
     def __post_init__(self) -> None:  # noqa: D105
         assert all(
@@ -723,6 +750,27 @@ type BiLink[Rec: Record, Rec2: Record] = (
     | tuple[RelRef[Rec2, Any, Any], RelRef[Rec2, Any, Rec]]
     | type[Rec2]
 )
+
+
+@overload
+def prop(
+    *,
+    default: Val | Rec | None = ...,  # type: ignore
+    default_factory: Callable[[], Val | Rec | Val2] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: bool = ...,
+    collection: None = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: Literal[True],
+) -> Any: ...
 
 
 @overload
@@ -936,13 +984,13 @@ def prop(
     collection: None = ...,
     link_on: None = ...,
     link_from: BackLink[Rec] | None = ...,
-    link_via: BiLink[Rec, Rec2] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,  # type: ignore
     order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
-) -> Rel[list[Rec]]: ...
+) -> Rel[list[Rec], Rec2]: ...
 
 
 @overload
@@ -956,13 +1004,13 @@ def prop(
     collection: Callable[[Iterable[Rec]], Recs_cov],
     link_on: None = ...,
     link_from: BackLink[Rec] | None = ...,
-    link_via: BiLink[Rec, Rec2] | None = ...,
+    link_via: BiLink[Rec, Rec2] | None = ...,  # type: ignore
     order_by: Mapping[AttrRef[Rec | Rec2, Any], int] | None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
-) -> Rel[Recs_cov]: ...
+) -> Rel[Recs_cov, Rec2]: ...
 
 
 @overload
@@ -982,7 +1030,7 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
-) -> Rel[dict[Val3, Rec]]: ...
+) -> Rel[dict[Val3, Rec], Rec2]: ...
 
 
 @overload
@@ -1002,7 +1050,7 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
-) -> Rel[Recs_cov]: ...
+) -> Rel[Recs_cov, Rec2]: ...
 
 
 def prop(
@@ -1021,8 +1069,16 @@ def prop(
     getter: Callable[[Record], Any] | None = None,
     setter: Callable[[Record, Any], None] | None = None,
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None,
-) -> Prop[Any, Any]:
+    local: bool = False,
+) -> Any:
     """Define a backlinking relation to another record."""
+    if local:
+        return Prop(
+            default=default,
+            default_factory=default_factory,
+            alias=alias,
+        )
+
     if any(a is not None for a in (link_on, link_from, link_via)) or any(
         a == "fk" for a in (index, primary_key)
     ):
@@ -1061,11 +1117,6 @@ def prop(
         setter=setter,
         sql_getter=sql_getter,
     )
-
-
-# def computed(func: Callable[[Record], Val]) -> CompProp[Val, RO]:
-#     """Define a computed property."""
-#     return CompProp(getter=func)
 
 
 @dataclass_transform(kw_only_default=True, field_specifiers=(prop,))
@@ -1216,9 +1267,8 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         UUID: UUIDType(binary=False),  # Binary type causes issues with DuckDB
     }
 
-    def __post_init__(self):
-        """Initialize a new record."""
-        self._loader: Callable[[str], Any] | None = None
+    _loader: Callable[[PropRef], Any] | None = None
+    _edge_dict: dict[str, RecordValue] = prop(default_factory=dict, local=True)
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -1402,31 +1452,96 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         """Check if the record is equal to another record."""
         return hash(self) == hash(value)
 
+    @overload
+    def _to_dict(
+        self,
+        only_loaded: bool = ...,
+        load: bool = ...,
+        include: tuple[type[Prop], ...] = ...,
+        name_keys: Literal[False] = ...,
+    ) -> dict[PropRef[Self, Any], Any]: ...
+
+    @overload
+    def _to_dict(
+        self,
+        only_loaded: bool = ...,
+        load: bool = ...,
+        include: tuple[type[Prop], ...] = ...,
+        name_keys: Literal[True] = ...,
+    ) -> dict[str, Any]: ...
+
     def _to_dict(
         self,
         only_loaded: bool = True,
         load: bool = False,
         include: tuple[type[Prop], ...] = (Attr, Rel),
-    ) -> dict[PropRef[Self, Any], Any]:
+        name_keys: bool = False,
+    ) -> dict[PropRef[Self, Any], Any] | dict[str, Any]:
         """Convert the record to a dictionary."""
 
         def getter(r, n):
             return r.__dict__[n] if not load else getattr(r, n)
 
         vals = {
-            p: getter(self, p.name)
+            p if not name_keys else p.name: getter(self, p.name)
             for p in type(self)._props.values()
             if isinstance(p, include)
         }
 
         return cast(
-            dict[PropRef[Self, Any], Any],
+            dict,
             (
                 vals
                 if not only_loaded
                 else {k: v for k, v in vals.items() if not isinstance(v, Unloaded)}
             ),
         )
+
+    @property
+    def _index(self: Record[Key]) -> Key:
+        """Return the index of the record."""
+        pks = type(self)._primary_keys
+        if len(pks) == 1:
+            return getattr(self, next(iter(pks)))
+        return cast(Key, tuple(getattr(self, pk) for pk in pks))
+
+    @classmethod
+    def _index_from_dict(cls: type[Record[Key]], data: Mapping[PropRef, Any]) -> Key:
+        """Return the index contained in a dict representation of this record."""
+        pks = cls._primary_keys
+        if len(pks) == 1:
+            return data[next(iter(pks.values()))]
+        return cast(Key, tuple(data[pk] for pk in pks.values()))
+
+    @overload
+    def _link(self, rel: RelRef[Self, Rec, Rec, Rec2]) -> Rec2: ...
+
+    @overload
+    def _link(self, rel: RelRef[Self, Rec | None, Rec, Rec2]) -> Rec2 | None: ...
+
+    @overload
+    def _link(
+        self, rel: RelRef[Self, Mapping[Val, Rec], Rec, Rec2]
+    ) -> Mapping[Val, Rec2]: ...
+
+    @overload
+    def _link(self, rel: RelRef[Self, list[Rec], Rec, Rec2]) -> list[Rec2]: ...
+
+    @overload
+    def _link(self, rel: RelRef[Self, Iterable[Rec], Rec, Rec2]) -> Iterable[Rec2]: ...
+
+    def _link(self, rel: RelRef[Self, RecordValue, Any]) -> RecordValue:
+        """Return the model of the given relation, if any."""
+        if rel.link_type is Record:
+            return DynRecord()
+
+        if self._loader is not None and rel.name not in self._edge_dict:
+            self._edge_dict[rel.name] = self._loader(rel)
+
+        return self._edge_dict[rel.name]
+
+
+Record(_edge_dict={})
 
 
 class Schema:
