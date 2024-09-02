@@ -86,7 +86,7 @@ class RW(RO):
 RWT = TypeVar("RWT", RW, RO, default=RW, covariant=True)
 
 
-class Unfetched:
+class Unloaded:
     """Singleton to mark unfetched values."""
 
 
@@ -183,24 +183,24 @@ class Prop(Generic[Val_cov, RWT]):
             if self.getter is not None:
                 value = self.getter(instance)
             else:
-                value = instance._values[self.name]
+                value = instance.__dict__[self.name]
 
-            if isinstance(value, Unfetched) and instance._fetcher is not None:
+            if isinstance(value, Unloaded) and instance._loader is not None:
                 try:
-                    value = instance._fetcher(self.name)
+                    value = instance._loader(self.name)
                 except KeyError:
                     pass
 
-            if isinstance(value, Unfetched):
+            if isinstance(value, Unloaded):
                 if self.default_factory is not None:
                     value = self.default_factory()
                 elif self.default is not None:
                     value = self.default
 
-            if isinstance(value, Unfetched):
+            if isinstance(value, Unloaded):
                 raise ValueError("Property value could not fetched.")
 
-            instance._values[self.name] = value
+            instance.__dict__[self.name] = value
             return value
         elif owner is not None and issubclass(owner, Record):
             t = (
@@ -219,11 +219,11 @@ class Prop(Generic[Val_cov, RWT]):
             )
         return self
 
-    def __set__(self: Prop[Val, RW], instance: Record, value: Val | Unfetched) -> None:
+    def __set__(self: Prop[Val, RW], instance: Record, value: Val | Unloaded) -> None:
         """Set the value of the property."""
-        if self.setter is not None and not isinstance(value, Unfetched):
+        if self.setter is not None and not isinstance(value, Unloaded):
             self.setter(instance, value)
-        instance._values[self.name] = value
+        instance.__dict__[self.name] = value
 
 
 @dataclass(eq=False)
@@ -1176,11 +1176,11 @@ class RecordMeta(type):
         return {name: p for name, p in cls._defined_attrs.items() if p.primary_key}
 
     @property
-    def _rels(cls) -> dict[str, RelRef]:
+    def _props(cls) -> dict[str, PropRef]:
         return reduce(
             lambda x, y: {**x, **y},
-            (c._rels for c in cls._record_bases),
-            cls._defined_rels,
+            (c._props for c in cls._record_bases),
+            cls._defined_props,
         )
 
     @property
@@ -1189,6 +1189,14 @@ class RecordMeta(type):
             lambda x, y: {**x, **y},
             (c._attrs for c in cls._record_bases),
             cls._defined_attrs,
+        )
+
+    @property
+    def _rels(cls) -> dict[str, RelRef]:
+        return reduce(
+            lambda x, y: {**x, **y},
+            (c._rels for c in cls._record_bases),
+            cls._defined_rels,
         )
 
     @property
@@ -1210,8 +1218,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
 
     def __post_init__(self):
         """Initialize a new record."""
-        self._values: dict[str, Any] = {}
-        self._fetcher: Callable[[str], Any] | None = None
+        self._loader: Callable[[str], Any] | None = None
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -1394,6 +1401,32 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
     def __eq__(self, value: Hashable) -> bool:
         """Check if the record is equal to another record."""
         return hash(self) == hash(value)
+
+    def _to_dict(
+        self,
+        only_loaded: bool = True,
+        load: bool = False,
+        include: tuple[type[Prop], ...] = (Attr, Rel),
+    ) -> dict[PropRef[Self, Any], Any]:
+        """Convert the record to a dictionary."""
+
+        def getter(r, n):
+            return r.__dict__[n] if not load else getattr(r, n)
+
+        vals = {
+            p: getter(self, p.name)
+            for p in type(self)._props.values()
+            if isinstance(p, include)
+        }
+
+        return cast(
+            dict[PropRef[Self, Any], Any],
+            (
+                vals
+                if not only_loaded
+                else {k: v for k, v in vals.items() if not isinstance(v, Unloaded)}
+            ),
+        )
 
 
 class Schema:

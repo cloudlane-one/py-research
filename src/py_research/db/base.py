@@ -1790,7 +1790,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
             | sqla.ColumnElement[bool]
             | pd.Series
         ),
-        value: DataSet | RecInput[Rec_cov, Any] | ValInput,
+        value: DataSet | PartialRecInput | ValInput | tuple[PartialRecInput, ...],
     ) -> None:
         if isinstance(key, list):
             # Ensure that index is alignable.
@@ -1933,17 +1933,30 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
 
     def _set(  # noqa: D105
         self,
-        value: DataSet | RecInput[Rec_cov, Any] | ValInput,
+        value: (
+            DataSet
+            | PartialRecInput[Rec_cov, Any]
+            | ValInput
+            | tuple[PartialRecInput, ...]
+        ),
         insert: bool = False,
     ) -> Self:
         if (
             has_type(value, Record)
             or has_type(value, list[Record])
-            or has_type(value, set[Record])
             or has_type(value, Mapping[Any, Record])
+            or has_type(value, tuple[Record | list[Record] | Mapping[Any, Record], ...])
         ):
             raise NotImplementedError(
                 "Inserting / updating via record instances not supported yet."
+            )
+            # Transform into mapping of records
+            # Get RelTree of all defined relations contained within all given records.
+            # Load all records and defined relations
+
+        if isinstance(value, tuple):
+            raise NotImplementedError(
+                "Inserting / updating via tuples of dataframes not supported yet."
             )
 
         # Load data into a temporary table, if vectorized.
