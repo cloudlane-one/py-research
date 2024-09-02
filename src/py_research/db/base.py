@@ -1500,25 +1500,25 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: AttrRef[Rec_cov, Val_cov],
         value: (
-            DataSet[Name, Scalar[Val_cov, Key2], BaseIdx]
-            | DataSet[Name, Scalar[Val_cov], Key2]
+            DataSet[Name, Scalar[Val_cov, Key2], BaseIdx | SingleIdx]
+            | DataSet[Name, Scalar[Val_cov], Key2 | SingleIdx]
             | ValInput[Val_cov, Key2]
         ),
     ) -> None: ...
 
-    # 1. Top-level attribute assignment, custom index
+    # 2. Top-level attribute assignment, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: AttrRef[Rec_cov, Val_cov],
         value: (
-            DataSet[Name, Scalar[Val_cov, Key], BaseIdx]
-            | DataSet[Name, Scalar[Val_cov], Key]
+            DataSet[Name, Scalar[Val_cov, Key], BaseIdx | SingleIdx]
+            | DataSet[Name, Scalar[Val_cov], Key | SingleIdx]
             | ValInput[Val_cov, Key]
         ),
     ) -> None: ...
 
-    # 2. Top-level attribute assignment, single index
+    # 3. Top-level attribute assignment, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
@@ -1526,31 +1526,31 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Scalar[Val_cov], SingleIdx] | Val_cov,
     ) -> None: ...
 
-    # 3. Nested attribute assignment, base index
+    # 4. Nested attribute assignment, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: AttrRef[Any, Val_cov],
         value: (
             DataSet[Name, Scalar[Val_cov, IdxStart[Key2]], BaseIdx]
-            | DataSet[Name, Scalar[Val_cov], IdxStart[Key2]]
+            | DataSet[Name, Scalar[Val_cov], IdxStart[Key2] | SingleIdx]
             | ValInput[Val_cov, IdxStart[Key2]]
         ),
     ) -> None: ...
 
-    # 4. Nested attribute assignment, custom index
+    # 5. Nested attribute assignment, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: AttrRef[Any, Val_cov],
         value: (
             DataSet[Name, Scalar[Val_cov, IdxStart[Key]], BaseIdx]
-            | DataSet[Name, Scalar[Val_cov], IdxStart[Key]]
+            | DataSet[Name, Scalar[Val_cov], IdxStart[Key] | SingleIdx]
             | ValInput[Val_cov, IdxStart[Key]]
         ),
     ) -> None: ...
 
-    # 5. Nested attribute assignment, single index
+    # 6. Nested attribute assignment, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
@@ -1558,174 +1558,179 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: DataSet[Name, Scalar[Val_cov, Any], Any] | Val_cov,
     ) -> None: ...
 
-    # 6. Top-level relation assignment, singular, base index
+    # 7. Top-level relation assignment, singular, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Rec2, Rec2],
-        value: DataSet[Name, Rec2, Key2] | RecInput[Rec2, Key2],
+        value: DataSet[Name, Rec2, Key2 | SingleIdx] | PartialRecInput[Rec2, Key2],
     ) -> None: ...
 
-    # 7. Top-level relation assignment, singular, custom index
+    # 8. Top-level relation assignment, singular, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: RelRef[Rec_cov, Rec2, Rec2],
-        value: DataSet[Name, Rec2, Key] | RecInput[Rec2, Key],
+        value: DataSet[Name, Rec2, Key | SingleIdx] | PartialRecInput[Rec2, Key],
     ) -> None: ...
 
-    # 8. Top-level relation assignment, singular, single index
+    # 9. Top-level relation assignment, singular, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
         key: RelRef[Rec_cov, Rec2, Rec2],
-        value: DataSet[Name, Rec2, SingleIdx] | Rec2,
+        value: DataSet[Name, Rec2, SingleIdx] | Rec2 | PartialRec[Rec2],
     ) -> None: ...
 
-    # 9. Top-level relation assignment, mapping, base index
+    # 10. Top-level relation assignment, mapping, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, tuple[Key2, Key3]]
-            | Mapping[tuple[Key2, Key3], Rec2]
-            | Rec2
+            DataSet[Name, Rec2, tuple[Key2, Key3] | SingleIdx]
+            | PartialRecInput[Rec2, tuple[Key2, Key3]]
         ),
     ) -> None: ...
 
-    # 10. Top-level relation assignment, mapping, tuple index
+    # 11. Top-level relation assignment, mapping, tuple index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], tuple[*IdxTup]],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, tuple[*IdxTup, Key3]]
-            | Mapping[tuple[*IdxTup, Key3], Rec2]
-            | Rec2
+            DataSet[Name, Rec2, tuple[*IdxTup, Key3] | SingleIdx]
+            | PartialRecInput[Rec2, tuple[*IdxTup, Key3]]
         ),
     ) -> None: ...
 
-    # 11. Top-level relation assignment, mapping, custom index
+    # 12. Top-level relation assignment, mapping, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
         value: (
-            DataSet[Name, Rec2, tuple[Key2, Key3]]
-            | Mapping[tuple[Key2, Key3], Rec2]
-            | Rec2
+            DataSet[Name, Rec2, tuple[Key2, Key3] | SingleIdx]
+            | PartialRecInput[Rec2, tuple[Key2, Key3]]
         ),
     ) -> None: ...
 
-    # 12. Top-level relation assignment, mapping, single index
+    # 13. Top-level relation assignment, mapping, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
         key: RelRef[Rec_cov, Mapping[Key3, Rec2], Rec2],
-        value: DataSet[Name, Rec2, Key3] | Mapping[Key3, Rec2] | Rec2,
+        value: DataSet[Name, Rec2, Key3 | SingleIdx] | PartialRecInput[Rec2, Key3],
     ) -> None: ...
 
-    # 13. Top-level relation assignment, iterable, base index
+    # 14. Top-level relation assignment, iterable, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, tuple[Key2, Key4]] | RecInput[Rec2, tuple[Key2, Key4]]
+            DataSet[Name, Rec2, tuple[Key2, Key4] | SingleIdx]
+            | PartialRecInput[Rec2, tuple[Key2, Key4]]
         ),
     ) -> None: ...
 
-    # 14. Top-level relation assignment, iterable, custom index
+    # 15. Top-level relation assignment, iterable, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
-        value: DataSet[Name, Rec2, tuple[Key, Key4]] | RecInput[Rec2, tuple[Key, Key4]],
+        value: (
+            DataSet[Name, Rec2, tuple[Key, Key4] | SingleIdx]
+            | PartialRecInput[Rec2, tuple[Key, Key4]]
+        ),
     ) -> None: ...
 
-    # 15. Top-level relation assignment, iterable, single index
+    # 16. Top-level relation assignment, iterable, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
         key: RelRef[Rec_cov, Iterable[Rec2], Record[Key4]],
-        value: DataSet[Name, Rec2, BaseIdx | Key4] | RecInput[Rec2, Key4],
+        value: (
+            DataSet[Name, Rec2, Key4 | BaseIdx | SingleIdx]
+            | PartialRecInput[Rec2, Key4]
+        ),
     ) -> None: ...
 
-    # 16. Nested relation assignment, base index
+    # 17. Nested relation assignment, base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4]]
-            | RecInput[Rec2, IdxStartEnd[Key2, Key3 | Key4]]
+            DataSet[Name, Rec2, IdxStartEnd[Key2, Key3 | Key4] | SingleIdx]
+            | PartialRecInput[Rec2, IdxStartEnd[Key2, Key3 | Key4]]
         ),
     ) -> None: ...
 
-    # 17. Nested relation assignment, single index
+    # 18. Nested relation assignment, single index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, SingleIdx],
         key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, IdxEnd[Key3 | Key4]]
-            | RecInput[Rec2, IdxEnd[Key3 | Key4]]
+            DataSet[Name, Rec2, IdxEnd[Key3 | Key4] | BaseIdx | SingleIdx]
+            | PartialRecInput[Rec2, IdxEnd[Key3 | Key4]]
         ),
     ) -> None: ...
 
-    # 18. Nested relation assignment, tuple index
+    # 19. Nested relation assignment, tuple index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, tuple[*IdxTup]],
         key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
-            | RecInput[Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
+            DataSet[Name, Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4] | SingleIdx]
+            | PartialRecInput[Rec2, IdxTupStartEnd[*IdxTup, Key3 | Key4]]
         ),
     ) -> None: ...
 
-    # 19. Nested relation assignment, custom index
+    # 20. Nested relation assignment, custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Any, Key],
         key: RelRef[Any, Rec2 | Iterable[Rec2] | Mapping[Key3, Rec2], Record[Key4]],
         value: (
-            DataSet[Name, Rec2, IdxStartEnd[Key, Key3 | Key4]]
-            | RecInput[Rec2, IdxStartEnd[Key, Key3 | Key4]]
+            DataSet[Name, Rec2, IdxStartEnd[Key, Key3 | Key4] | SingleIdx]
+            | PartialRecInput[Rec2, IdxStartEnd[Key, Key3 | Key4]]
         ),
     ) -> None: ...
 
-    # 20. Merge assignment
+    # 21. Merge assignment
     @overload
     def __setitem__(
         self,
         key: RelTree[Rec_cov, *RelTup],
         value: (
             DataSet[Name, Rec_cov, Any, tuple[*RelTup]]
-            | tuple[RecInput[Rec_cov, Any], *tuple[RecInput, ...]]
+            | tuple[PartialRecInput[Rec_cov, Any], *tuple[PartialRecInput, ...]]
         ),
     ) -> None: ...
 
-    # 21. List assignment with base index
+    # 22. List assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: list[Key2],
-        value: DataSet[Name, Rec_cov, Key2 | BaseIdx] | Iterable[Rec_cov] | DataFrame,
-    ) -> None: ...
-
-    # 22. List assignment with custom index
-    @overload
-    def __setitem__(
-        self: DataSet[Name, Record[Key2], Key],
-        key: list[Key] | list[Key2],
         value: (
-            DataSet[Name, Rec_cov, Key | Key2 | BaseIdx] | Iterable[Rec_cov] | DataFrame
+            DataSet[Name, Rec_cov, Key2 | BaseIdx | SingleIdx]
+            | PartialRecInput[Rec_cov, int]
         ),
     ) -> None: ...
 
-    # 23. Single value assignment with base index
+    # 23. List assignment with custom index
+    @overload
+    def __setitem__(
+        self: DataSet[Name, Any, Key],
+        key: list[Key] | list[Key2],
+        value: DataSet[Name, Rec_cov, Key | SingleIdx] | PartialRecInput[Rec_cov, int],
+    ) -> None: ...
+
+    # 24. Single value assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], BaseIdx],
@@ -1733,7 +1738,7 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 24. Single value assignment with custom index
+    # 25. Single value assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2] | Scalar[Val_cov], Key],
@@ -1741,28 +1746,35 @@ class DataSet(Generic[Name, Rec_cov, Idx_cov, RecMerge]):
         value: Rec_cov | Val_cov,
     ) -> None: ...
 
-    # 25. Slice assignment
+    # 26. Slice assignment
     @overload
     def __setitem__(
         self,
         key: slice | tuple[slice, ...],
-        value: Self | Iterable[Rec_cov] | DataFrame,
+        value: (
+            DataSet[Name, Rec_cov, Idx_cov | SingleIdx] | PartialRecInput[Rec_cov, int]
+        ),
     ) -> None: ...
 
-    # 26. Filter assignment with base index
+    # 27. Filter assignment with base index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], BaseIdx],
         key: sqla.ColumnElement[bool] | pd.Series,
-        value: DataSet[Name, Rec_cov, Key2] | RecInput[Rec_cov, Key2],
+        value: (
+            DataSet[Name, Rec_cov, Key2 | SingleIdx] | PartialRecInput[Rec_cov, Key2]
+        ),
     ) -> None: ...
 
-    # 27. Filter assignment with custom index
+    # 28. Filter assignment with custom index
     @overload
     def __setitem__(
         self: DataSet[Name, Record[Key2], Key],
         key: sqla.ColumnElement[bool] | pd.Series,
-        value: DataSet[Name, Rec_cov, Key | Key2] | RecInput[Rec_cov, Key | Key2],
+        value: (
+            DataSet[Name, Rec_cov, Key | Key2 | SingleIdx]
+            | PartialRecInput[Rec_cov, Key | Key2]
+        ),
     ) -> None: ...
 
     def __setitem__(  # noqa: D105
