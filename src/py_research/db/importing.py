@@ -16,7 +16,7 @@ from py_research.reflect.types import SupportsItems, has_type
 
 from .base import Backend, DataBase, DataSet
 from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
-from .schema import AttrRef, PropRef, Record, RelRef, Schema
+from .schema import Record, RelRef, Schema, Set, ValueSet
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
 
@@ -105,8 +105,8 @@ type NodeSelector = str | int | TreePath | type[All]
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
-type PushMap[Rec: Record] = _PushMapping[Rec] | AttrRef[Rec, Any] | RelMap | Iterable[
-    AttrRef | RelMap
+type PushMap[Rec: Record] = _PushMapping[Rec] | ValueSet[Rec, Any] | RelMap | Iterable[
+    ValueSet | RelMap
 ] | Callable[[TreeData | str], PushMap[Rec]]
 """Mapping of hierarchical attributes to record props or other records."""
 
@@ -144,8 +144,8 @@ class XSelect:
                 return self.sel.select(data)
 
 
-type PullMap[Rec: Record] = SupportsItems[PropRef[Rec, Any], "NodeSelector | XSelect"]
-type _PullMapping[Rec: Record] = Mapping[PropRef[Rec, Any], XSelect]
+type PullMap[Rec: Record] = SupportsItems[Set[Rec, Any], "NodeSelector | XSelect"]
+type _PullMapping[Rec: Record] = Mapping[Set[Rec, Any], XSelect]
 
 
 @dataclass(kw_only=True)
@@ -161,7 +161,7 @@ class XMap[Rec: Record, Dat]:
     load: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match: bool | AttrRef[Rec, Any] | list[AttrRef[Rec, Any]] = False
+    match: bool | ValueSet[Rec, Any] | list[ValueSet[Rec, Any]] = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
@@ -239,13 +239,14 @@ def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
-        case AttrRef() | RelMap() | str():
+        case ValueSet() | RelMap() | str():
             return {All: push_map}
         case Callable():
             return _parse_pushmap(push_map(data), data)
-        case Iterable() if has_type(push_map, Iterable[AttrRef | RelMap]):
+        case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
             return {
-                k.name if isinstance(k, AttrRef) else k.rel.name: True for k in push_map
+                k.name if isinstance(k, ValueSet) else k.rel.name: True
+                for k in push_map
             }
         case _:
             raise TypeError(
@@ -275,11 +276,11 @@ def _push_to_pull_map(
         **{
             (
                 target
-                if isinstance(target, AttrRef)
+                if isinstance(target, ValueSet)
                 else getattr(rec, _get_selector_name(sel))
             ): XSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, AttrRef | bool)
+            if isinstance(target, ValueSet | bool)
         },
         **{
             (
@@ -336,8 +337,8 @@ def _map_record[  # noqa: C901
     in_data: Dat,
     collect_conflicts: bool = False,
 ) -> tuple[
-    dict[str, tuple[AttrRef[Rec, Any], Any]],
-    dict[str, tuple[AttrRef, Any]] | None,
+    dict[str, tuple[ValueSet[Rec, Any], Any]],
+    dict[str, tuple[ValueSet, Any]] | None,
     DataConflicts,
 ]:
     """Map a data record to its relational representation."""
@@ -356,7 +357,7 @@ def _map_record[  # noqa: C901
     attrs = {
         a.name: (a, sel.select(data)[0])
         for a, sel in mapping.items()
-        if isinstance(a, AttrRef)
+        if isinstance(a, ValueSet)
     }
 
     if "_id" not in attrs:
@@ -422,7 +423,7 @@ def _map_record[  # noqa: C901
             else {
                 a: attrs[a.name]
                 for a in (
-                    [xmap.match] if isinstance(xmap.match, AttrRef) else xmap.match
+                    [xmap.match] if isinstance(xmap.match, ValueSet) else xmap.match
                 )
             }
         )
