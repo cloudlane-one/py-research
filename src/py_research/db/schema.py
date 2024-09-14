@@ -17,6 +17,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    LiteralString,
     Self,
     cast,
     dataclass_transform,
@@ -57,6 +58,8 @@ from py_research.reflect.types import has_type
 
 DataFrame = pd.DataFrame | pl.DataFrame
 Series = pd.Series | pl.Series
+
+Name = TypeVar("Name", bound=LiteralString)
 
 B_def = TypeVar("B_def", bound="Backend", default="Backend", covariant=True)
 B_nul = TypeVar(
@@ -151,10 +154,10 @@ class FilteredIdx(Generic[Idx_cov]):
 
 
 @dataclass(frozen=True)
-class Backend:
+class Backend(Generic[Name]):
     """SQL backend for DB."""
 
-    name: str | None = None
+    name: Name
     """Unique name to identify this backend by."""
 
     url: sqla.URL | CloudPath | HttpFile | Path | None = None
@@ -1084,6 +1087,66 @@ class RecordMeta(type):
         return {rel.target_type for rel in cls._rels.values()}
 
 
+@dataclass
+class RecordLinks(Generic[Rec]):
+    """Descriptor to access the link records of a record's rels."""
+
+    rec: Rec
+
+    @overload
+    def __getitem__(
+        self, rel: RelSet[Record, SingleIdx, None, RW, Rec, Rec2]
+    ) -> Rec2: ...
+
+    @overload
+    def __getitem__(
+        self, rel: RelSet[Record, SingleIdx | None, None, RW, Rec, Rec2]
+    ) -> Rec2 | None: ...
+
+    @overload
+    def __getitem__(
+        self, rel: RelSet[Record, Key, None, RW, Rec, Rec2]
+    ) -> dict[Key, Rec2]: ...
+
+    @overload
+    def __getitem__(
+        self, rel: RelSet[Record, BaseIdx, None, RW, Rec, Rec2]
+    ) -> list[Rec2]: ...
+
+    def __getitem__(self, rel: RelSet[Record, Any, None, RW, Rec, Rec2]) -> RecordValue:
+        """Return the model of the given relation, if any."""
+        if rel.link_type is Record:
+            return DynRecord()
+
+        if self.rec._loader is not None and rel.prop.name not in self.rec._edge_dict:
+            self.rec._edge_dict[rel.prop.name] = self.rec._loader(rel, self.rec._index)
+
+        return self.rec._edge_dict[rel.prop.name]
+
+    @overload
+    def __setitem__(
+        self, rel: RelSet[Record, SingleIdx | None, None, RW, Rec, Rec2], value: Rec2
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self, rel: RelSet[Record, Key, None, RW, Rec, Rec2], value: Mapping[Key, Rec2]
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        rel: RelSet[Record, BaseIdx, None, RW, Rec, Rec2],
+        value: Mapping[Any, Rec2] | Iterable[Rec2],
+    ): ...
+
+    def __setitem__(
+        self, rel: RelSet[Record, Any, None, RW, Rec, Rec2], value: RecordValue
+    ) -> None:
+        """Return the model of the given relation, if any."""
+        self.rec._edge_dict[rel.prop.name] = value
+
+
 class Record(Generic[Key_def], metaclass=RecordMeta):
     """Schema for a record in a database."""
 
@@ -1288,6 +1351,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         only_loaded: bool = ...,
         load: bool = ...,
         include: tuple[type[Prop], ...] = ...,
+        with_links: bool = ...,
     ) -> dict[Set[Self, Any], Any]: ...
 
     @overload
@@ -1297,6 +1361,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         only_loaded: bool = ...,
         load: bool = ...,
         include: tuple[type[Prop], ...] = ...,
+        with_links: Literal[False] = ...,
     ) -> dict[str, Any]: ...
 
     def _to_dict(
@@ -1305,6 +1370,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         only_loaded: bool = True,
         load: bool = False,
         include: tuple[type[Prop], ...] = (Attr, Rel),
+        with_links: bool = False,
     ) -> dict[Set[Self, Any], Any] | dict[str, Any]:
         """Convert the record to a dictionary."""
 
@@ -1316,6 +1382,16 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
             for p in type(self)._props.values()
             if isinstance(p, include)
         }
+
+        if with_links and Rel in include and not name_keys:
+            vals = {
+                **vals,
+                **{
+                    r.link_set: self._edge_dict[r.prop.name]
+                    for r in type(self)._rels.values()
+                    if r.link_set is not None and r.prop.name in self._edge_dict
+                },
+            }
 
         return cast(
             dict,
@@ -1342,31 +1418,10 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
             return data[next(iter(pks.values()))]
         return cast(Key, tuple(data[pk] for pk in pks.values()))
 
-    @overload
-    def _link(self, rel: RelSet[Rec, SingleIdx, None, RW, Self, Rec2]) -> Rec2: ...
-
-    @overload
-    def _link(
-        self, rel: RelSet[Rec, SingleIdx | None, None, RW, Self, Rec2]
-    ) -> Rec2 | None: ...
-
-    @overload
-    def _link(
-        self, rel: RelSet[Rec, Key, None, RW, Self, Rec2]
-    ) -> Mapping[Key, Rec2]: ...
-
-    @overload
-    def _link(self, rel: RelSet[Rec, BaseIdx, None, RW, Self, Rec2]) -> list[Rec2]: ...
-
-    def _link(self, rel: RelSet[Rec, Any, None, RW, Self, Rec2]) -> RecordValue:
-        """Return the model of the given relation, if any."""
-        if rel.link_type is Record:
-            return DynRecord()
-
-        if self._loader is not None and rel.prop.name not in self._edge_dict:
-            self._edge_dict[rel.prop.name] = self._loader(rel, self._index)
-
-        return self._edge_dict[rel.prop.name]
+    @property
+    def _links(self) -> RecordLinks[Self]:
+        """Descriptor to access the link records of a record's rels."""
+        return RecordLinks(self)
 
 
 class Schema:
@@ -1640,18 +1695,18 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
         """SQLA Engine for this DB."""
         # Create engine based on backend type
         # For Excel-backends, use duckdb in-memory engine
+        assert self.backend is not None
         return (
             sqla.create_engine(
                 self.backend.url
                 if isinstance(self.backend.url, sqla.URL)
                 else str(self.backend.url)
             )
-            if self.backend is not None
-            and (
+            if (
                 self.backend.type == "sql-connection"
                 or self.backend.type == "sqlite-file"
             )
-            else (sqla.create_engine("duckdb:///:memory:"))
+            else (sqla.create_engine(f"duckdb:///:memory:{self.backend.name}"))
         )
 
     @cached_property
@@ -1892,80 +1947,6 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
             self.backend.url.set(file)
 
         raise TypeError("Invalid property reference.")
-
-    def _load_prop(
-        self: Set[Any, Any, Backend],
-        p: Set[Val, Record[Key]],
-        parent_idx: Key,
-    ) -> Val:
-        base = self.db[p.record_type]
-        base_record = base[parent_idx]
-
-        if isinstance(p, ValueSet):
-            return getattr(base_record.load(), p.name)
-        elif isinstance(p, RecordSet):
-            recs = base_record[p].load()
-            recs_type = p.target_type
-
-            if (
-                isinstance(recs, dict)
-                and not issubclass(recs_type, Mapping)
-                and issubclass(recs_type, Iterable)
-            ):
-                recs = list(recs.values())
-
-            if p.prop is not None and p.prop.collection is not None:
-                recs = p.prop.collection(recs)
-
-            return cast(Val, recs)
-
-        raise TypeError("Invalid property reference.")
-
-    @staticmethod
-    def _normalize_rel_data(
-        rec_data: RecordValue[Record],
-        parent_idx: Hashable,
-        list_idx: bool,
-        covered: set[int],
-    ) -> dict[Any, Record]:
-        """Convert record data to dictionary."""
-        res = {}
-
-        if isinstance(rec_data, Record) and id(rec_data) not in covered:
-            res = {parent_idx: rec_data}
-        elif isinstance(rec_data, Mapping):
-            res = {
-                (parent_idx, idx): rec
-                for idx, rec in rec_data.items()
-                if id(rec) not in covered
-            }
-        elif isinstance(rec_data, Iterable):
-            res = {
-                (parent_idx, idx if list_idx else rec._index): rec
-                for idx, rec in enumerate(rec_data)
-                if id(rec) not in covered
-            }
-
-        covered |= set(id(r) for r in res.values())
-        return res
-
-    @staticmethod
-    def _get_record_rels(
-        rec_data: dict[Any, dict[Set, Any]], list_idx: bool, covered: set[int]
-    ) -> dict[RelSet, dict[Any, Record]]:
-        """Get relation data from record data."""
-        rel_data: dict[RelSet, dict[Any, Record]] = {}
-
-        for idx, rec in rec_data.items():
-            for prop, prop_val in rec.items():
-                if isinstance(prop, RecordSet) and not isinstance(prop_val, Unloaded):
-                    prop = cast(RelSet, prop)
-                    rel_data[prop] = {
-                        **rel_data.get(prop, {}),
-                        **Set._normalize_rel_data(prop_val, idx, list_idx, covered),
-                    }
-
-        return rel_data
 
 
 @dataclass(kw_only=True, eq=False)
@@ -3028,6 +3009,82 @@ class RecordSet(
             for rel in next_rel._get_subdag(backlink_records, _traversed)
         }
 
+    def _load_prop(
+        self: Set[Any, Any, Backend],
+        p: Set[Val, Record[Key]],
+        parent_idx: Key,
+    ) -> Val:
+        base = self.db[p.record_type]
+        base_record = base[parent_idx]
+
+        if isinstance(p, ValueSet):
+            return getattr(base_record.load(), p.name)
+        elif isinstance(p, RecordSet):
+            recs = base_record[p].load()
+            recs_type = p.target_type
+
+            if (
+                isinstance(recs, dict)
+                and not issubclass(recs_type, Mapping)
+                and issubclass(recs_type, Iterable)
+            ):
+                recs = list(recs.values())
+
+            if p.prop is not None and p.prop.collection is not None:
+                recs = p.prop.collection(recs)
+
+            return cast(Val, recs)
+
+        raise TypeError("Invalid property reference.")
+
+    @staticmethod
+    def _normalize_rel_data(
+        rec_data: RecordValue[Record],
+        parent_idx: Hashable,
+        list_idx: bool,
+        covered: set[int],
+    ) -> dict[Any, Record]:
+        """Convert record data to dictionary."""
+        res = {}
+
+        if isinstance(rec_data, Record) and id(rec_data) not in covered:
+            res = {parent_idx: rec_data}
+        elif isinstance(rec_data, Mapping):
+            res = {
+                (parent_idx, idx): rec
+                for idx, rec in rec_data.items()
+                if id(rec) not in covered
+            }
+        elif isinstance(rec_data, Iterable):
+            res = {
+                (parent_idx, idx if list_idx else rec._index): rec
+                for idx, rec in enumerate(rec_data)
+                if id(rec) not in covered
+            }
+
+        covered |= set(id(r) for r in res.values())
+        return res
+
+    @staticmethod
+    def _get_record_rels(
+        rec_data: dict[Any, dict[Set, Any]], list_idx: bool, covered: set[int]
+    ) -> dict[RelSet, dict[Any, Record]]:
+        """Get relation data from record data."""
+        rel_data: dict[RelSet, dict[Any, Record]] = {}
+
+        for idx, rec in rec_data.items():
+            for prop, prop_val in rec.items():
+                if isinstance(prop, RelSet) and not isinstance(prop_val, Unloaded):
+                    prop = cast(RelSet, prop)
+                    rel_data[prop] = {
+                        **rel_data.get(prop, {}),
+                        **RecordSet._normalize_rel_data(
+                            prop_val, idx, list_idx, covered
+                        ),
+                    }
+
+        return rel_data
+
     def _set(  # noqa: C901, D105
         self: RecordSet[Rec_cov, Any, Backend, RW],
         value: RecordSet | PartialRecInput[Rec_cov, Any] | ValInput,
@@ -3050,7 +3107,7 @@ class RecordSet(
         )
 
         if isinstance(value, Record):
-            record_data = {value._index: value._to_dict()}
+            record_data = {value._index: value._to_dict(with_links=True)}
         elif isinstance(value, Mapping):
             if has_type(value, Mapping[Set, Any]):
                 record_data = {
@@ -3065,7 +3122,7 @@ class RecordSet(
                 record_data = {}
                 for idx, rec in value.items():
                     if isinstance(rec, Record):
-                        rec_dict = rec._to_dict()
+                        rec_dict = rec._to_dict(with_links=True)
                     else:
                         rec_dict = {p: v for p, v in rec.items()}
                         partial = True
@@ -3079,7 +3136,7 @@ class RecordSet(
             record_data = {}
             for idx, rec in enumerate(value):
                 if isinstance(rec, Record):
-                    rec_dict = rec._to_dict()
+                    rec_dict = rec._to_dict(with_links=True)
                     rec_idx = rec._index
                 else:
                     rec_dict = {p: v for p, v in rec.items()}
@@ -3558,6 +3615,8 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
 class DB(RecordSet[Record, BaseIdx, B_def, RWT, Record, Record, None]):
     """Database class."""
 
+    backend: B_def = Backend("default")
+    typedef: PropType[Prop[Record, Any]] | type[Record] = Record
     schema: (
         type[Schema]
         | Mapping[
