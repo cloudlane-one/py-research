@@ -2907,6 +2907,10 @@ class RecordSet(
             assert isinstance(res, int)
             return res
 
+    def __contains__(self: RecordSet[Any, Any, Backend], key: Hashable) -> bool:
+        """Check if a record is in the dataset."""
+        return len(self[key]) > 0
+
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
         return self.select().subquery()

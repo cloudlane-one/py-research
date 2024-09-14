@@ -9,7 +9,6 @@ from .base import Rel as Rel
 from .base import Schema as Schema
 from .base import prop as prop
 from .conflicts import DataConflictError as DataConflictError
+from .importing import DataSource as DataSource
 from .importing import RelMap as RelMap
-from .importing import RootMap as RootMap
 from .importing import SubMap as SubMap
-from .importing import parse_datasource as parse_datasource

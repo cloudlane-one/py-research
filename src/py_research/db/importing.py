@@ -1,6 +1,6 @@
 """Utilities for importing different data representations into relational format."""
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from itertools import chain
 from typing import Any, Self, cast
@@ -151,7 +151,7 @@ class XMap[Rec: Record, Dat]:
     pull: PullMap[Rec] | None = None
     """Mapping of record props to hierarchical attributes."""
 
-    load: Callable[[Dat], TreeData] | None = None
+    loader: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
     match: bool | ValueSet[Rec, Any] | list[ValueSet[Rec, Any]] = False
@@ -216,15 +216,8 @@ class RelMap[Rec: Record, Rec2: Record, Dat](XMap[Rec2, Dat]):
     rel: RelSet[Rec2, Any, None, Any, Rec]
     """Relation to use for mapping."""
 
-    link: "RootMap | None" = None
+    link: "DataSource | None" = None
     """Mapping to optional attributes of the link record."""
-
-
-@dataclass(kw_only=True)
-class RootMap[Rec: Record, Dat](XMap[Rec, Dat]):
-    """Root mapping for hierarchical data."""
-
-    rec: type[Rec]
 
 
 def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
@@ -323,17 +316,34 @@ def _push_to_pull_map(
 
 def _map_record[  # noqa: C901
     Rec: Record, Dat
-](db: DB, rec: type[Rec], xmap: XMap[Rec, Dat], in_data: Dat,) -> Rec:
+](
+    rec_type: type[Rec],
+    xmap: XMap[Rec, Dat],
+    in_data: Dat,
+    py_cache: dict[type[Record], dict[Hashable, Any]],
+    db_cache: DB | None = None,
+) -> Rec:
     """Map a data source to a record."""
+    if rec_type in py_cache:
+        py_cache[rec_type] = {}
+
     data: TreeData
-    if xmap.load is not None:
-        data = xmap.load(in_data)
+    if xmap.loader is not None:
+        if db_cache is not None and isinstance(in_data, Hashable):
+            # Try to load from cache directly.
+            rec_set = db_cache[rec_type]
+            if in_data in rec_set:
+                rec = rec_set[in_data].load()
+                py_cache[rec_type][in_data] = rec
+                return rec
+        # Load data from source and continue mapping.
+        data = xmap.loader(in_data)
     else:
         if not has_type(in_data, TreeData):  # type: ignore
             raise ValueError(f"Supplied data has unsupported type {type(in_data)}")
         data = in_data
 
-    mapping = xmap.full_map(rec, data)
+    mapping = xmap.full_map(rec_type, data)
 
     attrs = {
         a.name: (a, sel.select(data)[0])
@@ -341,13 +351,24 @@ def _map_record[  # noqa: C901
         if isinstance(a, ValueSet)
     }
 
+    rec_dict: dict[Set, Any] = {a[0]: a[1] for a in attrs.values()}
+    rec_id = rec_type._index_from_dict(rec_dict)
+
+    if rec_id in py_cache[rec_type]:
+        return py_cache[rec_type][rec_id]
+
+    if db_cache is not None:
+        rec_set = db_cache[rec_type]
+        if rec_id in rec_set:
+            rec = rec_set[rec_id].load()
+            py_cache[rec_type][rec_id] = rec
+            return rec
+
     rels = {
         cast(RelSet[Any, Any, Any, Any, Rec], rel): sel
         for rel, sel in mapping.items()
         if isinstance(rel, RelSet) and isinstance(sel, SubMap)
     }
-
-    rec_dict = {name: a[1] for name, a in attrs.items()}
 
     # Handle nested data, which is to be extracted into separate records and referenced.
     for rel, target_map in rels.items():
@@ -355,50 +376,66 @@ def _map_record[  # noqa: C901
         target_type = rel.target_type
 
         for sub_data in sub_data_items:
-            target_rec = _map_record(db, target_type, target_map, sub_data)
+            target_rec = _map_record(
+                target_type, target_map, sub_data, py_cache, db_cache
+            )
 
             if rel.link_set is not None and target_map.link is not None:
-                link_rec = _map_record(db, rel.link_type, target_map.link, sub_data)
+                link_rec = _map_record(
+                    rel.link_type, target_map.link, sub_data, py_cache, db_cache
+                )
             else:
                 link_rec = None
 
             if rel.direct_rel is True:
-                rec_dict[rel.prop.name] = target_rec
+                rec_dict[rel] = target_rec
             elif rel.prop.map_by is not None:
                 idx = (
                     getattr(target_rec, rel.prop.map_by.name)
                     if issubclass(target_type, rel.prop.map_by.record_type)
                     else getattr(link_rec, rel.prop.map_by.name)
                 )
-                rec_dict[rel.prop.name] = {
-                    **rec_dict.get(rel.prop.name, {}),
+                rec_dict[rel] = {
+                    **rec_dict.get(rel, {}),
                     idx: target_rec,
                 }
             else:
-                rec_dict[rel.prop.name] = [*rec_dict.get(rel.prop.name, []), target_rec]
+                rec_dict[rel] = [*rec_dict.get(rel, []), target_rec]
 
-    return rec(**rec_dict)
+    rec = rec_type(
+        **{s.prop.name: v for s, v in rec_dict.items() if s.prop is not None}
+    )
+
+    py_cache[rec_type][rec_id] = rec
+
+    if db_cache is not None and isinstance(in_data, Hashable) and in_data == rec._index:
+        db_cache[rec_type] |= rec
+
+    return rec
 
 
-def parse_datasource[
-    Rec: Record
-](data: TreeData, mapping: RootMap[Rec, TreeData],) -> Rec:
-    """Transform recursive data into relational format.
+@dataclass(kw_only=True)
+class DataSource[Rec: Record, Dat](XMap[Rec, Dat]):
+    """Root mapping for hierarchical data."""
 
-    Args:
-        data: The data to be transformed
-        mapping:
-            Configuration for how to performm the mapping.
-        backend:
-            The backend to use for the database.
-        schema:
-            The schema to use for the database.
-        collect_conflicts:
-            Collect all conflicts and return them, rather than stopping right away.
+    rec: type[Rec]
+    """Root record type to load."""
 
-    Returns:
-        The relational database representation of the data.
-        If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
-        is returned.
-    """
-    return _map_record(DB(), mapping.rec, mapping, data)
+    cache: DB | bool | None = None
+    """Use a database for caching loaded data."""
+
+    def load(self, input_data: Dat) -> Rec:
+        """Parse recursive data from a data source.
+
+        Args:
+            input_data:
+                Input for the data source
+
+        Returns:
+            A Record instance
+        """
+        py_cache = {}
+        db_cache = (
+            self.cache if isinstance(self.cache, DB) else DB() if self.cache else None
+        )
+        return _map_record(self.rec, self, input_data, py_cache, db_cache)
