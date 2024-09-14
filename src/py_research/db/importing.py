@@ -2,25 +2,18 @@
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
-from functools import reduce
 from itertools import chain
-from typing import Any, Literal, LiteralString, Self, cast, overload
-from uuid import uuid4
+from typing import Any, Self, cast
 
-import pandas as pd
 from lxml.etree import _ElementTree as ElementTree
-from typing_extensions import TypeVar
 
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import Backend, DataBase, DataSet
-from .conflicts import DataConflictError, DataConflictPolicy, DataConflicts
-from .schema import Record, RelRef, Schema, Set, ValueSet
+from .base import DB, Record, RelSet, Set, ValueSet
+from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
-
-Name_def = TypeVar("Name_def", bound=LiteralString, default=Literal["default"])
 
 
 class All:
@@ -212,7 +205,7 @@ class SubMap(XMap, XSelect):
 
     sel: NodeSelector = All
 
-    link: "RootMap | None" = None
+    link: "XMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
@@ -220,7 +213,7 @@ class SubMap(XMap, XSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](XMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelRef[Rec, Any, Rec2]
+    rel: RelSet[Rec2, Any, None, Any, Rec]
     """Relation to use for mapping."""
 
     link: "RootMap | None" = None
@@ -245,7 +238,7 @@ def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
             return _parse_pushmap(push_map(data), data)
         case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
             return {
-                k.name if isinstance(k, ValueSet) else k.rel.name: True
+                k.name if isinstance(k, ValueSet) else k.rel.prop.name: True
                 for k in push_map
             }
         case _:
@@ -330,20 +323,8 @@ def _push_to_pull_map(
 
 def _map_record[  # noqa: C901
     Rec: Record, Dat
-](
-    db: DataBase[Any],
-    rec: type[Rec],
-    xmap: XMap[Rec, Dat],
-    in_data: Dat,
-    collect_conflicts: bool = False,
-) -> tuple[
-    dict[str, tuple[ValueSet[Rec, Any], Any]],
-    dict[str, tuple[ValueSet, Any]] | None,
-    DataConflicts,
-]:
-    """Map a data record to its relational representation."""
-    conflicts = {}
-
+](db: DB, rec: type[Rec], xmap: XMap[Rec, Dat], in_data: Dat,) -> Rec:
+    """Map a data source to a record."""
     data: TreeData
     if xmap.load is not None:
         data = xmap.load(in_data)
@@ -360,117 +341,48 @@ def _map_record[  # noqa: C901
         if isinstance(a, ValueSet)
     }
 
-    if "_id" not in attrs:
-        attrs["_id"] = (getattr(rec, "_id"), uuid4())
-
     rels = {
-        cast(RelRef[Rec, Any, Record], r): sel
-        for r, sel in mapping.items()
-        if isinstance(r, RelRef) and isinstance(sel, SubMap)
+        cast(RelSet[Any, Any, Any, Any, Rec], rel): sel
+        for rel, sel in mapping.items()
+        if isinstance(rel, RelSet) and isinstance(sel, SubMap)
     }
 
-    # Handle nested data, which is to be extracted into separate tables and referenced.
-    for rel, sub_map in rels.items():
-        sub_data_items = sub_map.select(data)
-        rel_rec = rel.target_type
+    rec_dict = {name: a[1] for name, a in attrs.items()}
+
+    # Handle nested data, which is to be extracted into separate records and referenced.
+    for rel, target_map in rels.items():
+        sub_data_items = target_map.select(data)
+        target_type = rel.target_type
 
         for sub_data in sub_data_items:
-            sub_attrs, sub_link_attrs, sub_conflicts = _map_record(
-                db, rel_rec, sub_map, sub_data, collect_conflicts
-            )
-            conflicts = {**conflicts, **sub_conflicts}
+            target_rec = _map_record(db, target_type, target_map, sub_data)
 
-            # Get the foreign keys via `rel.fk_map` and
-            # use `rel.fk_record_type` to determine where to insert them.
-            if issubclass(rec, rel.fk_record_type):
-                # - Case 1: Insert into attrs of current record.
-                for fk_attr, fk in rel.fk_map.items():
-                    attrs[fk_attr.name] = (fk_attr, sub_attrs[fk.name])
-            elif issubclass(rel_rec, rec):
-                # - Case 2: Fks are already included in linked record (backlink).
-                pass
+            if rel.link_set is not None and target_map.link is not None:
+                link_rec = _map_record(db, rel.link_type, target_map.link, sub_data)
             else:
-                # - Case 3: Create record in link table and insert there.
-                sub_link_attrs = sub_link_attrs or {}
+                link_rec = None
 
-                for _, fk_maps in rel.inter_joins.items():
-                    for fk_map in fk_maps:
-                        for fk_attr, fk in fk_map.items():
-                            sub_link_attrs[fk_attr.name] = (fk_attr, attrs[fk.name])
-
-                for fk_map in rel.joins:
-                    for fk_attr, fk in rel.fk_map.items():
-                        sub_link_attrs[fk_attr.name] = (fk_attr, sub_attrs[fk.name])
-
-                db[rel.fk_record_type] <<= dict(sub_link_attrs.values())
-
-    link_map = xmap.link if isinstance(xmap, SubMap) else None
-    link_attrs = None
-    if link_map is not None:
-        link_attrs, _, link_conflicts = _map_record(
-            db, rec, link_map, data, collect_conflicts
-        )
-        conflicts = {**conflicts, **link_conflicts}
-
-    if len(conflicts) > 0:
-        raise DataConflictError(conflicts)
-
-    if xmap.match is not False:
-        # Match against existing records in the database and update them.
-        match_attrs = (
-            attrs
-            if xmap.match is True
-            else {
-                a: attrs[a.name]
-                for a in (
-                    [xmap.match] if isinstance(xmap.match, ValueSet) else xmap.match
+            if rel.direct_rel is True:
+                rec_dict[rel.prop.name] = target_rec
+            elif rel.prop.map_by is not None:
+                idx = (
+                    getattr(target_rec, rel.prop.map_by.name)
+                    if issubclass(target_type, rel.prop.map_by.record_type)
+                    else getattr(link_rec, rel.prop.map_by.name)
                 )
-            }
-        )
-        match_expr = reduce(
-            lambda x, y: x & y, [a == v for a, v in match_attrs.values()]
-        )
-        existing: DataSet = db[rec][match_expr]
+                rec_dict[rel.prop.name] = {
+                    **rec_dict.get(rel.prop.name, {}),
+                    idx: target_rec,
+                }
+            else:
+                rec_dict[rel.prop.name] = [*rec_dict.get(rel.prop.name, []), target_rec]
 
-        if len(existing) > 1:
-            for a, v in attrs.items():
-                existing[a] = v
-    else:
-        # Do an index-based upsert.
-        db[rec] <<= pd.DataFrame.from_records(dict(attrs.values())).set_index(
-            [a.name for a in rec._primary_keys.values()]
-        )
-
-    return attrs, link_attrs, conflicts
+    return rec(**rec_dict)
 
 
-@overload
-def tree_to_db(
-    data: TreeData,
-    mapping: RootMap,
-    backend: Backend[Name_def] = ...,  # type: ignore
-    schema: type[Schema] | None = ...,
-    collect_conflicts: Literal[True] = ...,
-) -> tuple[DataBase[Name_def], DataConflicts]: ...
-
-
-@overload
-def tree_to_db(
-    data: TreeData,
-    mapping: RootMap,
-    backend: Backend[Name_def] = ...,  # type: ignore
-    schema: type[Schema] | None = ...,
-    collect_conflicts: Literal[False] = ...,
-) -> DataBase[Name_def]: ...
-
-
-def tree_to_db(
-    data: TreeData,
-    mapping: RootMap[Record, TreeData],
-    backend: Backend[Name_def] | None = None,
-    schema: type[Schema] | None = None,
-    collect_conflicts: bool = False,
-) -> DataBase[Name_def] | tuple[DataBase[Name_def], DataConflicts]:
+def parse_datasource[
+    Rec: Record
+](data: TreeData, mapping: RootMap[Rec, TreeData],) -> Rec:
     """Transform recursive data into relational format.
 
     Args:
@@ -489,10 +401,4 @@ def tree_to_db(
         If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts
         is returned.
     """
-    db: DataBase[Name_def] = (
-        DataBase(backend, schema) if backend is not None else DataBase(schema=schema)
-    )
-
-    _, _, conflicts = _map_record(db, mapping.rec, mapping, data, collect_conflicts)
-
-    return (db, conflicts) if collect_conflicts else db
+    return _map_record(DB(), mapping.rec, mapping, data)
