@@ -13,17 +13,23 @@
       "tasks": [
         {
           "task_name": "task1",
-          "task_assignee": "John",
+          "task_assignees": [
+            "John"
+          ],
           "task_status": "todo"
         },
         {
           "task_name": "task2",
-          "task_assignee": "John",
+          "task_assignees": [
+            "John"
+          ],
           "task_status": "todo"
         },
         {
           "task_name": "task3",
-          "task_assignee": "Jane",
+          "task_assignees": [
+            "Jane"
+          ],
           "task_status": "done"
         }
       ],
@@ -51,12 +57,16 @@
       "tasks": [
         {
           "task_name": "task4",
-          "task_assignee": "John",
+          "task_assignees": [
+            "John"
+          ],
           "task_status": "todo"
         },
         {
           "task_name": "task5",
-          "task_assignee": "Jane",
+          "task_assignees": [
+            "Jane"
+          ],
           "task_status": "todo"
         }
       ],
@@ -84,7 +94,9 @@
       "tasks": [
         {
           "task_name": "task6",
-          "task_assignee": "John",
+          "task_assignees": [
+            "John"
+          ],
           "task_status": "todo"
         }
       ],

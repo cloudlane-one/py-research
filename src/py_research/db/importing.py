@@ -2,6 +2,7 @@
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
+from functools import cached_property
 from itertools import chain
 from typing import Any, Self, cast
 
@@ -98,22 +99,24 @@ type NodeSelector = str | int | TreePath | type[All]
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
-type PushMap[Rec: Record] = _PushMapping[Rec] | ValueSet[Rec, Any] | RelMap | Iterable[
-    ValueSet | RelMap
-] | Callable[[TreeData | str], PushMap[Rec]]
+type PushMap[Rec: Record] = _PushMapping[Rec] | ValueSet[
+    Any, Any, None, Rec
+] | RelMap | Iterable[ValueSet[Any, Any, None, Rec] | RelMap] | Callable[
+    [TreeData | str], PushMap[Rec]
+]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
 @dataclass
-class XSelect:
+class DataSelect:
     """Select node for further processing."""
 
     @staticmethod
-    def parse(obj: "NodeSelector | XSelect") -> "XSelect":
+    def parse(obj: "NodeSelector | DataSelect") -> "DataSelect":
         """Parse the object into an x selector."""
-        if isinstance(obj, XSelect):
+        if isinstance(obj, DataSelect):
             return obj
-        return XSelect(sel=obj)
+        return DataSelect(sel=obj)
 
     sel: NodeSelector
     """Node selector to use."""
@@ -137,12 +140,12 @@ class XSelect:
                 return self.sel.select(data)
 
 
-type PullMap[Rec: Record] = SupportsItems[Set[Rec, Any], "NodeSelector | XSelect"]
-type _PullMapping[Rec: Record] = Mapping[Set[Rec, Any], XSelect]
+type PullMap[Rec: Record] = SupportsItems[Set[Rec, Any], "NodeSelector | DataSelect"]
+type _PullMapping[Rec: Record] = Mapping[Set[Rec, Any], DataSelect]
 
 
 @dataclass(kw_only=True)
-class XMap[Rec: Record, Dat]:
+class RecMap[Rec: Record, Dat]:
     """Configuration for how to map (nested) dictionary items to relational tables."""
 
     push: PushMap[Rec]
@@ -154,7 +157,9 @@ class XMap[Rec: Record, Dat]:
     loader: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match: bool | ValueSet[Rec, Any] | list[ValueSet[Rec, Any]] = False
+    match: (
+        bool | ValueSet[Any, Any, None, Rec] | list[ValueSet[Any, Any, None, Rec]]
+    ) = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
@@ -166,23 +171,23 @@ class XMap[Rec: Record, Dat]:
         """Get the full mapping."""
         return {
             **_push_to_pull_map(rec, self.push, data),
-            **{k: XSelect.parse(v) for k, v in (self.pull or {}).items()},
+            **{k: DataSelect.parse(v) for k, v in (self.pull or {}).items()},
         }
 
 
 @dataclass
-class Transform(XSelect):
+class Transform(DataSelect):
     """Select and transform attributes."""
 
     func: Callable
 
     def select(self, data: TreeData) -> list:
         """Select the node in the data structure."""
-        return [self.func(v) for v in XSelect.select(self, data)]
+        return [self.func(v) for v in DataSelect.select(self, data)]
 
 
 @dataclass
-class Hash(XSelect):
+class Hash(DataSelect):
     """Hash the selected attribute."""
 
     with_path: bool = False
@@ -191,7 +196,7 @@ class Hash(XSelect):
 
     def select(self, data: TreeData) -> list[str]:
         """Select the node in the data structure."""
-        value_hashes = [gen_str_hash(v) for v in XSelect.select(self, data)]
+        value_hashes = [gen_str_hash(v) for v in DataSelect.select(self, data)]
         return (
             [gen_str_hash((v, self.sel)) for v in value_hashes]
             if self.with_path
@@ -200,23 +205,23 @@ class Hash(XSelect):
 
 
 @dataclass(kw_only=True)
-class SubMap(XMap, XSelect):
+class SubMap(RecMap, DataSelect):
     """Select and map nested data to another record."""
 
     sel: NodeSelector = All
 
-    link: "XMap | None" = None
+    link: "RecMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
 @dataclass(kw_only=True)
-class RelMap[Rec: Record, Rec2: Record, Dat](XMap[Rec2, Dat]):
+class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
     rel: RelSet[Rec2, Any, None, Any, Rec]
     """Relation to use for mapping."""
 
-    link: "DataSource | None" = None
+    link: "RecMap | None" = None
     """Mapping to optional attributes of the link record."""
 
 
@@ -264,7 +269,7 @@ def _push_to_pull_map(
                 target
                 if isinstance(target, ValueSet)
                 else getattr(rec, _get_selector_name(sel))
-            ): XSelect(sel)
+            ): DataSelect(sel)
             for sel, target in mapping.items()
             if isinstance(target, ValueSet | bool)
         },
@@ -279,24 +284,24 @@ def _push_to_pull_map(
                         **{
                             f.name: getattr(target, f.name)
                             for f in fields(target)
-                            if f in fields(XMap)
+                            if f in fields(RecMap)
                         },
                         "sel": sel,
                     }
                 )
                 if isinstance(target, RelMap)
-                else XSelect.parse(sel)
+                else DataSelect.parse(sel)
             )
             for sel, targets in mapping.items()
-            if has_type(targets, XMap) or has_type(targets, Iterable[XMap])
-            for target in ([targets] if isinstance(targets, XMap) else targets)
+            if has_type(targets, RecMap) or has_type(targets, Iterable[RecMap])
+            for target in ([targets] if isinstance(targets, RecMap) else targets)
         },
     }
 
     # Handle nested data attributes (which come as dict types).
     for sel, target in mapping.items():
         if has_type(target, Mapping):
-            sub_node = XSelect.parse(sel).select(node)
+            sub_node = DataSelect.parse(sel).select(node)
             if has_type(sub_node, TreeData):  # type: ignore
                 sub_pull_map = _push_to_pull_map(
                     rec,
@@ -318,7 +323,7 @@ def _map_record[  # noqa: C901
     Rec: Record, Dat
 ](
     rec_type: type[Rec],
-    xmap: XMap[Rec, Dat],
+    xmap: RecMap[Rec, Dat],
     in_data: Dat,
     py_cache: dict[type[Record], dict[Hashable, Any]],
     db_cache: DB | None = None,
@@ -415,14 +420,19 @@ def _map_record[  # noqa: C901
 
 
 @dataclass(kw_only=True)
-class DataSource[Rec: Record, Dat](XMap[Rec, Dat]):
+class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
     """Root mapping for hierarchical data."""
 
     rec: type[Rec]
     """Root record type to load."""
 
-    cache: DB | bool | None = None
+    use_cache: DB | bool = True
     """Use a database for caching loaded data."""
+
+    @cached_property
+    def cache(self) -> DB:
+        """Automatically created DB instance for caching."""
+        return self.use_cache if isinstance(self.use_cache, DB) else DB()
 
     def load(self, input_data: Dat) -> Rec:
         """Parse recursive data from a data source.
@@ -435,7 +445,5 @@ class DataSource[Rec: Record, Dat](XMap[Rec, Dat]):
             A Record instance
         """
         py_cache = {}
-        db_cache = (
-            self.cache if isinstance(self.cache, DB) else DB() if self.cache else None
-        )
+        db_cache = self.cache if self.use_cache is not False else None
         return _map_record(self.rec, self, input_data, py_cache, db_cache)

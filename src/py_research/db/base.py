@@ -94,6 +94,7 @@ IdxTup = TypeVarTuple("IdxTup")
 type IdxStart[Key: Hashable] = Key | tuple[Key, *tuple[Any, ...]]
 type IdxEnd[Key: Hashable] = tuple[*tuple[Any, ...], Key]
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
+type IdxTupStart[*IdxTup] = tuple[*IdxTup, *tuple[Any]]
 type IdxTupStartEnd[*IdxTup, Key2: Hashable] = tuple[*IdxTup, *tuple[Any], Key2]
 
 Val = TypeVar("Val")
@@ -112,6 +113,7 @@ Rec_cov = TypeVar("Rec_cov", covariant=True, bound="Record")
 Rec_def = TypeVar("Rec_def", covariant=True, bound="Record", default="Record")
 Rec2_def = TypeVar("Rec2_def", covariant=True, bound="Record", default="Record")
 Rec3_def = TypeVar("Rec3_def", covariant=True, bound="Record", default="Record")
+Rec4_def = TypeVar("Rec4_def", covariant=True, bound="Record", default="Record")
 Rec2_nul = TypeVar(
     "Rec2_nul", bound="Record | None", default="Record | None", covariant=True
 )
@@ -281,7 +283,7 @@ def props_from_data(
         value_type = (
             map_df_dtype(data) if isinstance(data, Series) else map_col_dtype(data)
         ) or Any
-        attr = ValueSet(
+        attr = ValueSet[value_type, Any, None, Any, RW](
             prop=Attr(primary_key=True, _name=name if not is_rel else f"fk_{name}"),
             typedef=PropType(Attr[value_type]),
             record_type=DynRecord,
@@ -352,20 +354,33 @@ class PropType(Generic[P_nul]):
         else:
             return Attr if "Attr" in hint else Rel if "Rel" in hint else Prop
 
-    def value_type(self: PropType[Prop[Val, Any]]) -> type[Val]:
-        """Resolve the value type reference."""
+    @cached_property
+    def _generic_type(self) -> type[P_nul]:
+        """Resolve the generic property type reference."""
         hint = self.hint or Prop
-
         generic = (
             cast(type[P_nul], eval(hint, vars(self.ctx) if self.ctx else None))
             if isinstance(hint, str)
             else hint
         )
-
         assert issubclass(get_origin(generic) or generic, Prop)
 
+        return generic  # type: ignore
+
+    def value_type(self: PropType[Prop[Val, Any]]) -> type[Val]:
+        """Resolve the value type reference."""
+        generic = self._generic_type
         args = get_args(generic)
+
         return cast(type[Val], args[0] if len(args) > 0 else object)
+
+    def link_type(self: PropType[Prop[Val, Any]]) -> type[Record]:
+        """Resolve the record type reference."""
+        generic = self._generic_type
+        assert issubclass(get_origin(generic) or generic, Rel)
+        args = get_args(generic)
+
+        return cast(type[Record], args[1] if len(args) > 1 else object)
 
 
 @dataclass(eq=False)
@@ -375,6 +390,7 @@ class Prop(Generic[Val_cov, RWT]):
     alias: str | None = None
     default: Val_cov | None = None
     default_factory: Callable[[], Val_cov] | None = None
+    init: bool = True
 
     getter: Callable[[Record], Val_cov] | None = None
     setter: Callable[[Record, Val_cov], None] | None = None
@@ -446,7 +462,7 @@ class Prop(Generic[Val_cov, RWT]):
                     **{f.name: getattr(self, f.name) for f in fields(self)}
                 ),  # type: ignore
                 record_type=cast(type[Rec], owner),
-                type=owner._prop_defs[self.name],  # type: ignore
+                typedef=owner._prop_defs[self.name],
             )
         return self
 
@@ -492,8 +508,8 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, Rec2_def, RWT, Rec_def]):
 
     on: (
         ValueSet
-        | Iterable[ValueSet]
-        | dict[ValueSet, ValueSet]
+        | Iterable[ValueSet[Any, Any, None]]
+        | dict[ValueSet[Any, Any, None], ValueSet[Any, Any, None]]
         | RelSet[Any, Any, None, Any, Rec_def]
         | RelSet[Rec_def, Any, None, Any, Rec2_def]
         | tuple[
@@ -504,8 +520,8 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, Rec2_def, RWT, Rec_def]):
         | type[Rec2_def]
         | None
     ) = None
-    order_by: Mapping[ValueSet, int] | None = None
-    map_by: ValueSet | None = None
+    order_by: Mapping[ValueSet[Any, Any, None], int] | None = None
+    map_by: ValueSet[Any, Any, None] | None = None
     collection: Callable[[Any], Recs_cov] | None = None
 
     @property
@@ -526,38 +542,38 @@ class Rel(Prop[Recs_cov, RWT], Generic[Recs_cov, Rec2_def, RWT, Rec_def]):
 
     @overload
     def __get__(
-        self: Rel[Mapping[Key, Rec2], Rec3, RWT, Rec2],
+        self: Rel[Mapping[Key, Rec2], Rec3, RWT],
         instance: None,
         owner: type[Rec],
-    ) -> RelSet[Rec2, Key, None, RWT, Rec, Rec3]: ...
+    ) -> RelSet[Rec2, Key, None, RWT, Rec, Rec3, Rec2, None]: ...
 
     @overload
     def __get__(
-        self: Rel[Sequence[Rec2], Rec3, RWT, Rec2],
+        self: Rel[Sequence[Rec2], Rec3, RWT],
         instance: None,
         owner: type[Rec],
-    ) -> RelSet[Rec2, int, None, RWT, Rec, Rec3]: ...
+    ) -> RelSet[Rec2, int, None, RWT, Rec, Rec3, Rec2, None]: ...
 
     @overload
     def __get__(
-        self: Rel[Iterable[Rec2], Rec3, RWT, Record[Key2]],
+        self: Rel[Iterable[Rec2], Rec3, RWT],
         instance: None,
         owner: type[Rec],
-    ) -> RelSet[Rec2, Key2, None, RWT, Rec, Rec3]: ...
+    ) -> RelSet[Rec2, BaseIdx, None, RWT, Rec, Rec3, Rec2, None]: ...
 
     @overload
     def __get__(
-        self: Rel[Rec2, Rec3, RWT, Rec2],
+        self: Rel[Rec2, Rec3, RWT],
         instance: None,
         owner: type[Rec],
-    ) -> RelSet[Rec2, SingleIdx, None, RWT, Rec, Rec3]: ...
+    ) -> RelSet[Rec2, SingleIdx, None, RWT, Rec, Rec3, Rec2, None]: ...
 
     @overload
     def __get__(
-        self: Rel[Rec2 | None, Rec3, RWT, Rec2],
+        self: Rel[Rec2 | None, Rec3, RWT],
         instance: None,
         owner: type[Rec],
-    ) -> RelSet[Rec2, SingleIdx | None, None, RWT, Rec, Rec3]: ...
+    ) -> RelSet[Rec2, SingleIdx | None, None, RWT, Rec, Rec3, Rec2, None]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -572,11 +588,11 @@ type DirectLink[Rec: Record] = (
     ValueSet | Iterable[ValueSet] | dict[ValueSet, ValueSet[Rec, Any]]
 )
 
-type BackLink[Rec: Record] = (RecordSet[Any, Any, Any, Any, Rec] | type[Rec])
+type BackLink[Rec: Record] = (RelSet[Any, Any, None, Any, Rec] | type[Rec])
 
 type BiLink[Rec: Record, Rec2: Record] = (
-    RecordSet[Rec, Any, Any, Any, Rec2]
-    | tuple[RecordSet[Any, Any, Any, Any, Rec2], RecordSet[Rec, Any, Any, Any, Rec2]]
+    RelSet[Rec, Any, None, Any, Rec2]
+    | tuple[RelSet[Any, Any, None, Any, Rec2], RelSet[Rec, Any, None, Any, Rec2]]
     | type[Rec2]
 )
 
@@ -599,6 +615,7 @@ def prop(
     setter: None = ...,
     sql_getter: None = ...,
     local: Literal[True],
+    init: bool = ...,
 ) -> Any: ...
 
 
@@ -619,6 +636,8 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Attr[Val]: ...
 
 
@@ -639,6 +658,8 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[Rec]: ...
 
 
@@ -659,6 +680,8 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[Rec]: ...
 
 
@@ -679,6 +702,8 @@ def prop(
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[Rec]: ...
 
 
@@ -699,6 +724,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Prop[Val, RO]: ...
 
 
@@ -719,6 +746,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: Callable[[Record, Val], None],
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Prop[Val, RW]: ...
 
 
@@ -739,6 +768,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: None = ...,
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+    local: bool = ...,
+    init: bool = ...,
 ) -> Attr[Val, RO]: ...
 
 
@@ -759,6 +790,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: Callable[[Record, Val], None],
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+    local: bool = ...,
+    init: bool = ...,
 ) -> Attr[Val, RW]: ...
 
 
@@ -779,6 +812,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: None = ...,
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Attr[Val, RO]: ...
 
 
@@ -799,6 +834,8 @@ def prop(
     getter: Callable[[Record], Val],
     setter: Callable[[Record, Val], None],
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Attr[Val, RW]: ...
 
 
@@ -814,11 +851,13 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[Rec] | None = ...,
     link_via: BiLink[Rec, Rec2] | None = ...,  # type: ignore
-    order_by: Mapping[ValueSet[Rec | Rec2, Any], int] | None = ...,
+    order_by: Mapping[ValueSet[Any, Any, None, Rec | Rec2], int] | None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[list[Rec], Rec2]: ...
 
 
@@ -834,11 +873,13 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[Rec] | None = ...,
     link_via: BiLink[Rec, Rec2] | None = ...,  # type: ignore
-    order_by: Mapping[ValueSet[Rec | Rec2, Any], int] | None = ...,
+    order_by: Mapping[ValueSet[Any, Any, None, Rec | Rec2], int] | None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[Recs_cov, Rec2]: ...
 
 
@@ -855,10 +896,12 @@ def prop(
     link_from: BackLink[Rec] | None = ...,
     link_via: BiLink[Rec, Rec2] | None = ...,
     order_by: None = ...,
-    map_by: ValueSet[Rec | Rec2, Val3],
+    map_by: ValueSet[Val3, Any, None, Rec | Rec2],
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[dict[Val3, Rec], Rec2]: ...
 
 
@@ -875,10 +918,12 @@ def prop(
     link_from: BackLink[Rec] | None = ...,
     link_via: BiLink[Rec, Rec2] | None = ...,
     order_by: None = ...,
-    map_by: ValueSet[Rec | Rec2, Val3],
+    map_by: ValueSet[Val3, Any, None, Rec | Rec2],
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
 ) -> Rel[Recs_cov, Rec2]: ...
 
 
@@ -893,12 +938,13 @@ def prop(
     link_on: DirectLink[Record] | None = None,
     link_from: BackLink[Record] | None = None,
     link_via: BiLink[Record, Record] | None = None,
-    order_by: Mapping[ValueSet[Record, Any], int] | None = None,
-    map_by: ValueSet[Record, Any] | None = None,
+    order_by: Mapping[ValueSet[Any, Any, None], int] | None = None,
+    map_by: ValueSet[Any, Any, None] | None = None,
     getter: Callable[[Record], Any] | None = None,
     setter: Callable[[Record, Any], None] | None = None,
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None,
     local: bool = False,
+    init: bool = True,
 ) -> Any:
     """Define a backlinking relation to another record."""
     if local:
@@ -906,6 +952,7 @@ def prop(
             default=default,
             default_factory=default_factory,
             alias=alias,
+            init=init,
         )
 
     if any(a is not None for a in (link_on, link_from, link_via)) or any(
@@ -915,6 +962,7 @@ def prop(
             default=default,
             default_factory=default_factory,
             alias=alias,
+            init=init,
             index=index == "fk",
             primary_key=primary_key == "fk",
             on=(
@@ -932,6 +980,7 @@ def prop(
             default=default,
             default_factory=default_factory,
             alias=alias,
+            init=init,
             getter=getter,
             setter=setter,
         )
@@ -940,6 +989,7 @@ def prop(
         default=default,
         default_factory=default_factory,
         alias=alias,
+        init=init,
         index=index is not False,
         primary_key=primary_key is not False,
         getter=getter,
@@ -957,7 +1007,7 @@ class RecordMeta(type):
         return super().__new__(cls, name, bases, namespace)
 
     @property
-    def _prop_defs(cls) -> dict[str, PropType]:
+    def _prop_defs(cls) -> dict[str, PropType[Prop]]:
         return {
             name: PropType(hint, ctx=getmodule(cls))
             for name, hint in cls.__annotations__.items()
@@ -984,7 +1034,11 @@ class RecordMeta(type):
         ]
 
     @property
-    def _base_pks(cls: type[Record]) -> dict[type[Record], dict[ValueSet, ValueSet]]:
+    def _base_pks(
+        cls: type[Record],
+    ) -> dict[
+        type[Record], dict[ValueSet[Hashable, Any, None], ValueSet[Hashable, Any, None]]
+    ]:
         return {
             base: {
                 ValueSet(
@@ -1025,7 +1079,7 @@ class RecordMeta(type):
         }
 
     @property
-    def _defined_attrs(cls) -> dict[str, ValueSet]:
+    def _defined_attrs(cls) -> dict[str, ValueSet[Any, Any, None]]:
         return {
             name: getattr(cls, name)
             for name, attr in cls._defined_props.items()
@@ -1033,7 +1087,7 @@ class RecordMeta(type):
         }
 
     @property
-    def _defined_rels(cls) -> dict[str, RelSet]:
+    def _defined_rels(cls) -> dict[str, RelSet[Any, Any, None]]:
         return {
             name: getattr(cls, name)
             for name, rel in cls._defined_props.items()
@@ -1041,13 +1095,13 @@ class RecordMeta(type):
         }
 
     @property
-    def _defined_rel_attrs(cls) -> dict[str, ValueSet]:
+    def _defined_rel_attrs(cls) -> dict[str, ValueSet[Hashable, Any, None]]:
         return {
             a.name: a for rel in cls._defined_rels.values() for a in rel.fk_map.keys()
         }
 
     @property
-    def _primary_keys(cls) -> dict[str, ValueSet]:
+    def _primary_keys(cls) -> dict[str, ValueSet[Hashable, Any, None]]:
         """Return the defined primary key attributes of this record."""
         base_pks = {v.name: v for vs in cls._base_pks.values() for v in vs.keys()}
 
@@ -1066,7 +1120,7 @@ class RecordMeta(type):
         )
 
     @property
-    def _attrs(cls) -> dict[str, ValueSet]:
+    def _attrs(cls) -> dict[str, ValueSet[Any, Any, None]]:
         return reduce(
             lambda x, y: {**x, **y},
             (c._attrs for c in cls._record_bases),
@@ -1074,7 +1128,7 @@ class RecordMeta(type):
         )
 
     @property
-    def _rels(cls) -> dict[str, RelSet]:
+    def _rels(cls) -> dict[str, RelSet[Any, Any, None]]:
         return reduce(
             lambda x, y: {**x, **y},
             (c._rels for c in cls._record_bases),
@@ -1445,9 +1499,18 @@ class Require:
 
 
 class RecUUID(Record[UUID]):
-    """Dynamically defined record type."""
+    """Record type with a default UUID primary key."""
 
     _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
+
+
+class RecHashed(Record[int]):
+    """Record ttype with a default hashed primary key."""
+
+    _id: Attr[int] = prop(primary_key=True, init=False)
+
+    def __post_init__(self) -> None:  # noqa: D105
+        self._id = gen_int_hash(self)
 
 
 class Scalar(Record[Key_def], Generic[Val, Key_def]):
@@ -1482,6 +1545,21 @@ a = DynRecord
 def dynamic_record_type(name: str, props: Iterable[Prop] = []) -> type[DynRecord]:
     """Create a dynamically defined record type."""
     return type(name, (DynRecord,), {p.name: p for p in props})
+
+
+class LinkRec(RecHashed, Generic[Rec, Rec2]):
+    """Automatically defined relation record type."""
+
+    _from: Rel[Rec]
+    _to: Rel[Rec2]
+
+
+type Link[Rec: Record, Rec2: Record] = type[LinkRec[Rec, Rec2]]
+
+
+def auto_link() -> Link:
+    """Create a relation record type with automatically defined relations."""
+    return type(f"Rel_{token_hex(5)}", (LinkRec,), {})
 
 
 type DataDict = dict[RelSet, DataDict]
@@ -2200,10 +2278,12 @@ class RecordSet(
     """Dataset."""
 
     @cached_property
-    def rec(self: RecordSet[Rec, Any, Any, Any, Any, Any]) -> type[Rec]:
+    def rec(self) -> type[Rec_cov]:
         """Reference props of the target record type."""
         assert issubclass(self.target_type, Record)
-        return cast(type[Rec], type(token_hex(5), (self.target_type,), {"_rel": self}))
+        return cast(
+            type[Rec_cov], type(token_hex(5), (self.target_type,), {"_rel": self})
+        )
 
     # Overloads: attribute selection:
 
@@ -2272,72 +2352,174 @@ class RecordSet(
         key: RelSet[Rec2, SingleIdx | None, None, Any, Rec_cov, Rec3],
     ) -> RecordSet[Rec2, Key, B_nul, R_def, Rec_cov, Rec3]: ...
 
-    # 10. Top-level relation selection, plural, base index
+    # 10. Top-level relation selection, base plural, base index
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
-        key: RelSet[Rec2, Key3, None, Any, Rec_cov, Rec3],
-    ) -> RecordSet[Rec2, tuple[Key2, Key3], B_nul, R_def, Rec_cov, Rec3]: ...
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec_cov, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, tuple[Key2, Key4], B_nul, R_def, Rec_cov, Rec3]: ...
 
-    # 11. Top-level relation selection, plural, single index
+    # 11. Top-level relation selection, base plural, single index
     @overload
-    def __getitem__(
+    def __getitem__(  # type: ignore
         self: RecordSet[Any, SingleIdx],
-        key: RelSet[Rec2, Key3, None, Any, Rec_cov, Rec3],
-    ) -> RecordSet[Rec2, Key3, B_nul, R_def, Rec_cov, Rec3]: ...
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec_cov, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, Key4, B_nul, R_def, Rec_cov, Rec3]: ...
 
-    # 12. Top-level relation selection, plural, tuple index
+    # 12. Top-level relation selection, base plural, tuple index
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], tuple[*IdxTup] | FilteredIdx[tuple[*IdxTup]]],
-        key: RelSet[Rec2, Key3, None, Any, Rec_cov, Rec3],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec_cov, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[
+        Rec2, tuple[*IdxTup, Key4] | tuple[Key2, Key4], B_nul, R_def, Rec_cov, Rec3
+    ]: ...
+
+    # 13. Top-level relation selection, base plural, custom index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, Key | FilteredIdx[Key]],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec_cov, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, tuple[Key, Key4], B_nul, R_def, Rec_cov, Rec3]: ...
+
+    # 14. Top-level relation selection, plural, base index
+    @overload
+    def __getitem__(
+        self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec_cov, Rec3],
+    ) -> RecordSet[Rec2, tuple[Key2, Key3], B_nul, R_def, Rec_cov, Rec3]: ...
+
+    # 15. Top-level relation selection, plural, single index
+    @overload
+    def __getitem__(  # type: ignore
+        self: RecordSet[Any, SingleIdx],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec_cov, Rec3],
+    ) -> RecordSet[Rec2, Key3, B_nul, R_def, Rec_cov, Rec3]: ...
+
+    # 16. Top-level relation selection, plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecordSet[Record[Key2], tuple[*IdxTup] | FilteredIdx[tuple[*IdxTup]]],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec_cov, Rec3],
     ) -> RecordSet[
         Rec2, tuple[*IdxTup, Key3] | tuple[Key2, Key3], B_nul, R_def, Rec_cov, Rec3
     ]: ...
 
-    # 13. Top-level relation selection, plural, custom index
+    # 17. Top-level relation selection, plural, custom index
     @overload
     def __getitem__(
         self: RecordSet[Any, Key | FilteredIdx[Key]],
-        key: RelSet[Rec2, Key3, None, Any, Rec_cov, Rec3],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec_cov, Rec3],
     ) -> RecordSet[Rec2, tuple[Key, Key3], B_nul, R_def, Rec_cov, Rec3]: ...
 
-    # 14. Nested relation selection, base index
+    # 18. Nested relation selection, singular, base index
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
-        key: RelSet[Rec2, Key3 | SingleIdx, None, Any, Rec, Rec3],
-    ) -> RecordSet[Rec2, IdxStartEnd[Key2, Key3], B_nul, R_def, Rec, Rec3]: ...
+        key: RelSet[Rec2, SingleIdx, None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxStart[Key2], B_nul, R_def, Rec, Rec3]: ...
 
-    # 15. Nested relation selection, single index
+    # 19. Nested relation selection, singular, single index
     @overload
     def __getitem__(
         self: RecordSet[Any, SingleIdx],
-        key: RelSet[Rec2, Key3 | SingleIdx, None, Any, Rec, Rec3],
-    ) -> RecordSet[Rec2, IdxEnd[Key3], B_nul, R_def, Rec, Rec3]: ...
+        key: RelSet[Rec2, SingleIdx, None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, Hashable | SingleIdx, B_nul, R_def, Rec, Rec3]: ...
 
-    # 16. Nested relation selection, tuple index
+    # 20. Nested relation selection, singular, tuple index
     @overload
     def __getitem__(
         self: RecordSet[Any, tuple[*IdxTup] | FilteredIdx[tuple[*IdxTup]]],
-        key: RelSet[Rec2, Key3 | SingleIdx, None, Any, Rec, Rec3],
-    ) -> RecordSet[Rec2, IdxTupStartEnd[*IdxTup, Key3], B_nul, R_def, Rec, Rec3]: ...
+        key: RelSet[Rec2, SingleIdx, None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxTupStart[*IdxTup], B_nul, R_def, Rec, Rec3]: ...
 
-    # 17. Nested relation selection, custom index
+    # 21. Nested relation selection, singular, custom index
     @overload
     def __getitem__(
         self: RecordSet[Any, Key | FilteredIdx[Key]],
-        key: RelSet[Rec2, Key3 | SingleIdx, None, Any, Rec, Rec3],
+        key: RelSet[Rec2, SingleIdx, None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxStart[Key], B_nul, R_def, Rec, Rec3]: ...
+
+    # 22. Nested relation selection, base plural, base index
+    @overload
+    def __getitem__(
+        self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, IdxStartEnd[Key2, Key4], B_nul, R_def, Rec, Rec3]: ...
+
+    # 23. Nested relation selection, base plural, single index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, SingleIdx],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, IdxEnd[Key4], B_nul, R_def, Rec, Rec3]: ...
+
+    # 24. Nested relation selection, base plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, tuple[*IdxTup] | FilteredIdx[tuple[*IdxTup]]],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, IdxTupStartEnd[*IdxTup, Key4], B_nul, R_def, Rec, Rec3]: ...
+
+    # 25. Nested relation selection, base plural, custom index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, Key | FilteredIdx[Key]],
+        key: RelSet[
+            Rec2, BaseIdx | FilteredIdx[BaseIdx], None, Any, Rec, Rec3, Record[Key4]
+        ],
+    ) -> RecordSet[Rec2, IdxStartEnd[Key, Key4], B_nul, R_def, Rec, Rec3]: ...
+
+    # 26. Nested relation selection, plural, base index
+    @overload
+    def __getitem__(
+        self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxStartEnd[Key2, Key3], B_nul, R_def, Rec, Rec3]: ...
+
+    # 27. Nested relation selection, plural, single index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, SingleIdx],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxEnd[Key3], B_nul, R_def, Rec, Rec3]: ...
+
+    # 28. Nested relation selection, plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, tuple[*IdxTup] | FilteredIdx[tuple[*IdxTup]]],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec, Rec3],
+    ) -> RecordSet[Rec2, IdxTupStartEnd[*IdxTup, Key3], B_nul, R_def, Rec, Rec3]: ...
+
+    # 29. Nested relation selection, plural, custom index
+    @overload
+    def __getitem__(
+        self: RecordSet[Any, Key | FilteredIdx[Key]],
+        key: RelSet[Rec2, Key3 | FilteredIdx[Key3], None, Any, Rec, Rec3],
     ) -> RecordSet[Rec2, IdxStartEnd[Key, Key3], B_nul, R_def, Rec, Rec3]: ...
 
-    # 18. Default relation selection
+    # 30. Default relation selection
     @overload
     def __getitem__(
         self: RecordSet,
         key: RelSet[Rec2, Any, None, Any, Rec, Rec3],
     ) -> RecordSet[Rec2, Any, B_nul, R_def, Rec, Rec3]: ...
 
-    # 19. Merge selection, single index
+    # 31. Merge selection, single index
     @overload
     def __getitem__(
         self: RecordSet[Any, SingleIdx, Any, Any, Any, Any, None],
@@ -2346,7 +2528,7 @@ class RecordSet(
         Rec_cov, BaseIdx, B_nul, R_def, Rec2_nul, Rec3_def, tuple[Rec_cov, *RelTup]
     ]: ...
 
-    # 20. Merge selection, default
+    # 32. Merge selection, default
     @overload
     def __getitem__(
         self: RecordSet[Any, Any, Any, Any, Any, Any, None],
@@ -2355,19 +2537,19 @@ class RecordSet(
         Rec_cov, Idx_def, B_nul, R_def, Rec2_nul, Rec3_def, tuple[Rec_cov, *RelTup]
     ]: ...
 
-    # 21. Expression filtering, keep index
+    # 33. Expression filtering, keep index
     @overload
     def __getitem__(
         self: RecordSet, key: sqla.ColumnElement[bool]
     ) -> RecordSet[Rec_cov, FilteredIdx[Idx_def], B_nul, R_def, Rec2_nul, Rec3_def]: ...
 
-    # 22. List selection
+    # 34. List selection
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], Key | Index], key: Iterable[Key | Key2]
     ) -> RecordSet[Rec_cov, FilteredIdx[Idx_def], B_nul, R_def, Rec2_nul, Rec3_def]: ...
 
-    # 23. Filtering based on dataset, base index
+    # 35. Filtering based on dataset, base index
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], BaseIdx | FilteredIdx[BaseIdx]],
@@ -2378,7 +2560,7 @@ class RecordSet(
         ),
     ) -> RecordSet[Rec_cov, FilteredIdx[Idx_def], B_nul, R_def, Rec2_nul, Rec3_def]: ...
 
-    # 24. Filtering based on dataset, custom index
+    # 36. Filtering based on dataset, custom index
     @overload
     def __getitem__(
         self: RecordSet[Any, Key | FilteredIdx[Key]],
@@ -2389,13 +2571,13 @@ class RecordSet(
         ),
     ) -> RecordSet[Rec_cov, FilteredIdx[Idx_def], B_nul, R_def, Rec2_nul, Rec3_def]: ...
 
-    # 25. Slice selection
+    # 37. Slice selection
     @overload
     def __getitem__(
         self: RecordSet[Any], key: slice | tuple[slice, ...]
     ) -> RecordSet[Rec_cov, FilteredIdx[Idx_def], B_nul, R_def, Rec2_nul, Rec3_def]: ...
 
-    # 26. Index value selection
+    # 38. Index value selection
     @overload
     def __getitem__(
         self: RecordSet[Record[Key2], Key | Index], key: Key | Key2
@@ -3323,11 +3505,13 @@ class RecordSet(
 
 
 @dataclass(unsafe_hash=True)
-class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
+class RelSet(
+    RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM],
+    Generic[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, Rec4_def, RM],
+):
     """Relation set class."""
 
     prop: Rel[Rec2_def, Rec3_def, R_def, Rec_def]  # type: ignore
-    link_type: type[Rec3_def] = Record
 
     @cached_property
     def parent(self) -> RelSet | type[Record]:
@@ -3356,6 +3540,14 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
             arg_dict["record_type"] = parent_rel.record_type
 
         return cast(RecordSet[Rec2_def, Any, B_nul, R_def], t(**arg_dict))
+
+    @cached_property
+    def link_type(self) -> type[Rec3_def]:
+        """Get the link record type."""
+        return cast(
+            type[Rec3_def],
+            self.typedef.link_type() if isinstance(self.typedef, PropType) else Record,
+        )
 
     @cached_property
     def link_set(
@@ -3443,7 +3635,9 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
         )
 
     @cached_property
-    def fk_map(self) -> bidict[ValueSet, ValueSet]:
+    def fk_map(
+        self,
+    ) -> bidict[ValueSet[Hashable, Any, None], ValueSet[Hashable, Any, None]]:
         """Map source foreign keys to target attrs."""
         target = self.target_type
 
@@ -3467,7 +3661,7 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
                     if isinstance(self.prop.on, Iterable)
                     else [self.prop.on]
                 )
-                source_attrs: list[ValueSet] = [
+                source_attrs: list[ValueSet[Hashable, Any, None]] = [
                     ValueSet(
                         prop=Attr(_name=attr.name),
                         record_type=self.record_type,
@@ -3480,10 +3674,8 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
 
                 assert all(
                     issubclass(
-                        self.record_type._static_props[
-                            fk_attr.name
-                        ].typedef.value_type(),
-                        pk_attr.typedef.value_type(),
+                        self.record_type._static_props[fk_attr.name].target_type,
+                        pk_attr.target_type,
                     )
                     for fk_attr, pk_attr in fk_map.items()
                     if pk_attr.typedef is not None
@@ -3493,11 +3685,11 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
             case None:
                 return bidict(
                     {
-                        ValueSet(
+                        ValueSet[Hashable, Any, None](
                             prop=Attr(_name=f"{self.prop.name}_{target_attr.name}"),
                             record_type=self.record_type,
                             typedef=target_attr.prop_type,
-                        ): target_attr
+                        ): cast(ValueSet[Hashable, Any, None], target_attr)
                         for target_attr in target._primary_keys.values()
                     }
                 )
@@ -3505,7 +3697,10 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
     @cached_property
     def inter_joins(
         self,
-    ) -> dict[type[Record], list[Mapping[ValueSet, ValueSet]]]:
+    ) -> dict[
+        type[Record],
+        list[Mapping[ValueSet[Hashable, Any, None], ValueSet[Hashable, Any, None]]],
+    ]:
         """Intermediate joins required by this rel."""
         match self.prop.on:
             case RecordSet():
@@ -3561,7 +3756,9 @@ class RelSet(RecordSet[Rec_def, Idx_def, B_nul, R_def, Rec2_def, Rec3_def, RM]):
                 return {}
 
     @cached_property
-    def target_joins(self) -> list[Mapping[ValueSet, ValueSet]]:
+    def target_joins(
+        self,
+    ) -> list[Mapping[ValueSet[Hashable, Any, None], ValueSet[Hashable, Any, None]]]:
         """Mappings of column keys to join the target on."""
         match self.prop.on:
             case RecordSet():

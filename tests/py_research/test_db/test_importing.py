@@ -7,8 +7,20 @@ from datetime import date
 from typing import Literal, reveal_type
 
 import pytest
-from py_research.db import Attr, DataBase, Record, RecUUID, Rel, RootMap, prop
-from py_research.db.importing import RelMap, SubMap, tree_to_db
+from py_research.db import (
+    DB,
+    Attr,
+    DataSource,
+    Link,
+    RecMap,
+    Record,
+    RecUUID,
+    Rel,
+    RelMap,
+    SubMap,
+    auto_link,
+    prop,
+)
 
 
 class SearchResult(Record):
@@ -24,11 +36,13 @@ class Search(Record[str]):
 
     term: Attr[str] = prop(primary_key=True)
     result_count: Attr[int]
-    results: Rel[dict[int, Project]] = prop(
-        link_via=SearchResult.result,
+    results: Rel[dict[int, Project], SearchResult] = prop(
         order_by={SearchResult.score: -1},
         collection=lambda s: dict(enumerate(s)),
     )
+
+
+Assignments: Link[Task, User] = auto_link()
 
 
 class Task(RecUUID):
@@ -36,7 +50,7 @@ class Task(RecUUID):
 
     name: Attr[str]
     project: Rel[Project]
-    assignee: Rel[User]
+    assignees: Rel[list[User], Assignments]
     status: Attr[Literal["todo", "done"]]
 
 
@@ -45,7 +59,7 @@ class User(RecUUID):
 
     name: Attr[str]
     age: Attr[int]
-    tasks: Rel[list[Task]] = prop(link_from=Task.assignee)
+    tasks: Rel[list[Task], Assignments]
 
     @property
     def all_done(self) -> bool:
@@ -91,9 +105,9 @@ def nested_db_dict() -> dict:
 
 
 @pytest.fixture
-def root_table_mapping() -> RootMap:
+def data_source() -> DataSource:
     """Return root table mapping for import testing."""
-    return RootMap(
+    return DataSource(
         rec=Search,
         push={
             "resultCount": Search.result_count,
@@ -109,8 +123,8 @@ def root_table_mapping() -> RootMap:
                         rel=Project.tasks,
                         push={
                             "task_name": Task.name,
-                            "task_assignee": RelMap(
-                                rel=Task.assignee,
+                            "task_assignees": RelMap(
+                                rel=Task.assignees,
                                 push=User.name,
                                 match=User.name,
                             ),
@@ -120,8 +134,7 @@ def root_table_mapping() -> RootMap:
                     "members": RelMap(
                         rel=Project.members,
                         push={User.name, User.age},
-                        link=RootMap(
-                            rec=Membership,
+                        link=RecMap(
                             push={
                                 Membership.role,
                             },
@@ -142,12 +155,13 @@ def root_table_mapping() -> RootMap:
     )
 
 
-def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RootMap):
+def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     """Test importing nested data dict to database."""
-    db, conflicts = tree_to_db(nested_db_dict, root_table_mapping)
+    rec = data_source.load(nested_db_dict)
+    db = data_source.cache
 
-    assert isinstance(db, DataBase)
-    assert len(conflicts) == 0
+    assert isinstance(rec, Search)
+    assert isinstance(db, DB)
 
     assert len(db[Search]) == 1
     assert len(db[Project]) == 3
@@ -160,7 +174,7 @@ def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RootMap):
     reveal_type(s := db[Search])
     reveal_type(s[Search.result_count])
     reveal_type(sr := s[Search.results])
-    reveal_type(s[Search.results.t.org])
+    reveal_type(s[Search.results.rec.org])
     reveal_type(sr0 := sr[("first", 0)])
     reveal_type(sr[[("first", 0), ("second", 1)]])
     reveal_type(db[Project][0:3])
@@ -169,6 +183,6 @@ def test_import_db_from_tree(nested_db_dict: dict, root_table_mapping: RootMap):
     reveal_type(sr[Project.name == "Project 1"])
     reveal_type(sr0.load())
 
-    s[Search.result_count] = 10
-    s[Search.term == "first"][Search.result_count] = 5
-    s[Search.results] = {("first", 0): db[Project][0].load()}
+    s[Search.result_count] @= 10
+    s[Search.term == "first"][Search.result_count] @= 5
+    # s[Search.results] |= {("first", 0): db[Project][0].load()}
