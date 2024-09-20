@@ -329,7 +329,7 @@ def _map_record[  # noqa: C901
     db_cache: DB | None = None,
 ) -> Rec:
     """Map a data source to a record."""
-    if rec_type in py_cache:
+    if rec_type not in py_cache:
         py_cache[rec_type] = {}
 
     data: TreeData
@@ -351,7 +351,7 @@ def _map_record[  # noqa: C901
     mapping = xmap.full_map(rec_type, data)
 
     attrs = {
-        a.name: (a, sel.select(data)[0])
+        a.prop.name: (a, sel.select(data)[0])
         for a, sel in mapping.items()
         if isinstance(a, ValueSet)
     }
@@ -378,7 +378,7 @@ def _map_record[  # noqa: C901
     # Handle nested data, which is to be extracted into separate records and referenced.
     for rel, target_map in rels.items():
         sub_data_items = target_map.select(data)
-        target_type = rel.target_type
+        target_type = rel.item_type
 
         for sub_data in sub_data_items:
             target_rec = _map_record(
@@ -397,7 +397,7 @@ def _map_record[  # noqa: C901
             elif rel.prop.map_by is not None:
                 idx = (
                     getattr(target_rec, rel.prop.map_by.name)
-                    if issubclass(target_type, rel.prop.map_by.record_type)
+                    if issubclass(target_type, rel.prop.map_by.parent_type)
                     else getattr(link_rec, rel.prop.map_by.name)
                 )
                 rec_dict[rel] = {
