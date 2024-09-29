@@ -1313,7 +1313,7 @@ class RecordMeta(type):
                 base: {
                     ValueSet(
                         prop=Attr(
-                            _name=pk.name,
+                            _name=pk.prop.name,
                             primary_key=True,
                             _type=PropType(Attr[pk.value_type]),
                         ),
@@ -1519,22 +1519,26 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
         sub = subs.get(cls)
 
+        cols = cls._columns(registry)
+
         # Create a partial SQLAlchemy table object from the class definition
         # without foreign keys to avoid circular dependencies.
         # This adds the table to the metadata.
         sqla.Table(
             table_name,
             registry.metadata,
-            *cls._columns(registry),
+            *cols,
             schema=(sub.schema if sub is not None else None),
         )
+
+        fks = cls._foreign_keys(metadata, subs)
 
         # Re-create the table object with foreign keys and return it.
         return sqla.Table(
             table_name,
             registry.metadata,
-            *cls._columns(registry),
-            *cls._foreign_keys(metadata, subs),
+            *cols,
+            *fks,
             schema=(sub.schema if sub is not None else None),
             extend_existing=True,
         )
@@ -1758,10 +1762,15 @@ class RelTree(Generic[*RelTup]):
         rels = {rel.prefix(prefix) for rel in self.rels}
         return cast(Self, RelTree(rels))
 
-    def __rmul__(self, other: RelSet[Rec] | RelTree) -> RelTree[*RelTup, Rec]:
+    def __mul__(self, other: RelSet[Rec] | RelTree) -> RelTree[*RelTup, Rec]:
         """Append more rels to the set."""
         other = other if isinstance(other, RelTree) else RelTree([other])
         return RelTree([*self.rels, *other.rels])
+
+    def __rmul__(self, other: RelSet[Rec] | RelTree) -> RelTree[Rec, *RelTup]:
+        """Append more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*other.rels, *self.rels])
 
     def __or__(
         self: RelTree[Rec], other: RelSet[Rec2] | RelTree[Rec2]
@@ -3599,7 +3608,7 @@ class RecordSet(
         if record_data is not None:
             # Split record data into attribute and relation data.
             attr_data = {
-                idx: {p.name: v for p, v in rec.items() if isinstance(p, ValueSet)}
+                idx: {p.prop.name: v for p, v in rec.items() if isinstance(p, ValueSet)}
                 for idx, rec in record_data.items()
             }
             rel_data = self._get_record_rels(record_data, list_idx, covered)

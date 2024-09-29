@@ -486,13 +486,13 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
     rec: type[Rec]
     """Root record type to load."""
 
-    use_cache: DB | bool = True
+    cache: DB | bool = True
     """Use a database for caching loaded data."""
 
     @cached_property
-    def cache(self) -> DB:
+    def db(self) -> DB:
         """Automatically created DB instance for caching."""
-        return self.use_cache if isinstance(self.use_cache, DB) else DB()
+        return self.cache if isinstance(self.cache, DB) else DB()
 
     def load(self, input_data: Dat) -> Rec:
         """Parse recursive data from a data source.
@@ -505,7 +505,7 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
             A Record instance
         """
         py_cache = {}
-        db_cache = self.cache if self.use_cache is not False else None
+        db_cache = self.db if self.cache is not False else None
 
         rec = _map_record(self.rec, self, input_data, py_cache, db_cache)
 
