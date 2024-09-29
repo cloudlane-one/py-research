@@ -1695,15 +1695,16 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         return cast(Key, tuple(getattr(self, pk) for pk in pks))
 
     @classmethod
-    def _index_from_dict(cls: type[Record[Key]], data: Mapping[Set, Any]) -> Key | None:
+    def _from_partial_dict(
+        cls,
+        data: Mapping[Set, Any],
+        loader: Callable[[Set, Key_def], Any] | None = None,
+    ) -> Self:
         """Return the index contained in a dict representation of this record."""
-        pks = cls._primary_keys
-
-        values = tuple(data.get(pk) for pk in pks.values())
-        if any(v is None for v in values):
-            return None
-
-        return cast(Key, values if len(values) == 1 else values[0])
+        args = {
+            p.prop.name: data.get(p, LoadStatus.unloaded) for p in cls._props.values()
+        }
+        return cls(**args, _loader=loader)
 
     @property
     def _links(self) -> RecordLinks[Self]:
@@ -3019,16 +3020,8 @@ class RecordSet(
                     rec_data: dict[Set, Any] = {
                         getattr(rec_type, attr): row[col] for col, attr in cols.items()
                     }
-                    rec_idx = self.record_type._index_from_dict(rec_data)
-                    rec = loaded[rec_type].get(rec_idx) or self.parent_type(
-                        _loader=self._load_prop,
-                        **{
-                            p.prop.name: v
-                            for p, v in rec_data.items()
-                            if p.prop is not None
-                        },
-                        **{r: LoadStatus.unloaded for r in self.record_type._rels},
-                    )
+                    new_rec = self.record_type._from_partial_dict(rec_data)
+                    rec = loaded[rec_type].get(new_rec._index) or new_rec
 
                     rec_list.append(rec)
 
@@ -4443,15 +4436,6 @@ class RecUUID(Record[UUID]):
     _template = True
     _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
 
-    @classmethod
-    def _index_from_dict(cls, data: Mapping[Set, Any]) -> UUID:
-        """Return the index contained in a dict representation of this record."""
-        idx = super()._index_from_dict(data)
-        if idx is None:
-            idx = uuid4()
-
-        return idx
-
 
 class RecHashed(Record[int]):
     """Record type with a default hashed primary key."""
@@ -4466,13 +4450,6 @@ class RecHashed(Record[int]):
                 a.prop.name: getattr(self, a.prop.name)
                 for a in self._defined_attrs.values()
             }
-        )
-
-    @classmethod
-    def _index_from_dict(cls, data: Mapping[Set, Any]) -> int:
-        """Return the index contained in a dict representation of this record."""
-        return gen_int_hash(
-            {a.prop.name: v for a, v in data.items() if isinstance(a, ValueSet)}
         )
 
 

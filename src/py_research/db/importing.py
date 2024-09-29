@@ -406,21 +406,16 @@ def _map_record[  # noqa: C901
     }
 
     rec_dict: dict[Set, Any] = {a[0]: a[2] for a in attrs.values()}
-    rec_id = rec_type._index_from_dict(rec_dict)
+    rec = rec_type._from_partial_dict(rec_dict)
 
-    if rec_id is None:
-        raise ValueError(
-            f"Could not determine index for record of type {rec_type} with data {data}"
-        )
-
-    if rec_id in py_cache[rec_type]:
-        return py_cache[rec_type][rec_id]
+    if rec._index in py_cache[rec_type]:
+        return py_cache[rec_type][rec._index]
 
     if db_cache is not None:
-        recs = db_cache[rec_type][[rec_id]].load()
+        recs = db_cache[rec_type][[rec._index]].load()
         if len(recs) == 1:
             rec = next(iter(recs.values()))
-            py_cache[rec_type][rec_id] = rec
+            py_cache[rec_type][rec._index] = rec
             return rec
 
     rels = {
@@ -457,25 +452,29 @@ def _map_record[  # noqa: C901
                 link_rec = None
 
             if rel.direct_rel is True:
-                rec_dict[rel] = target_rec
+                setattr(rec, rel.prop.name, target_rec)
             elif rel.prop.map_by is not None:
                 idx = (
                     getattr(target_rec, rel.prop.map_by.name)
                     if issubclass(target_type, rel.prop.map_by.parent_type)
                     else getattr(link_rec, rel.prop.map_by.name)
                 )
-                rec_dict[rel] = {
-                    **rec_dict.get(rel, {}),
-                    idx: target_rec,
-                }
+                setattr(
+                    rec,
+                    rel.prop.name,
+                    {
+                        **rec._to_dict(name_keys=True).get(rel.prop.name, {}),
+                        idx: target_rec,
+                    },
+                )
             else:
-                rec_dict[rel] = [*rec_dict.get(rel, []), target_rec]
+                setattr(
+                    rec,
+                    rel.prop.name,
+                    [*rec._to_dict(name_keys=True).get(rel.prop.name, []), target_rec],
+                )
 
-    rec = rec_type(
-        **{s.prop.name: v for s, v in rec_dict.items() if s.prop is not None}
-    )
-
-    py_cache[rec_type][rec_id] = rec
+    py_cache[rec_type][rec._index] = rec
 
     return rec
 
