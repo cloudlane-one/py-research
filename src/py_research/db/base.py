@@ -364,7 +364,11 @@ def props_from_data(
         return (
             attr.prop
             if not is_rel
-            else Rel(on={attr: foreign_keys[name]}, _type=PropType(Rel[Record]))
+            else Rel(
+                on={attr: foreign_keys[name]},
+                _type=PropType(Rel[Record]),
+                _name=f"rel_{name}",
+            )
         )
 
     columns = (
@@ -558,6 +562,8 @@ class Prop(Generic[Val_cov, RWT]):
     getter: Callable[[Record], Val_cov] | None = None
     setter: Callable[[Record, Val_cov], None] | None = None
 
+    local: bool = False
+
     @property
     def name(self) -> str:
         """Property name."""
@@ -595,9 +601,13 @@ class Prop(Generic[Val_cov, RWT]):
             if self.getter is not None:
                 value = self.getter(instance)
             else:
-                value = instance.__dict__[self.name]
+                value = instance.__dict__.get(self.name, Unloaded())
 
-            if isinstance(value, Unloaded) and instance._loader is not None:
+            if (
+                isinstance(value, Unloaded)
+                and instance._loader is not None
+                and not self.local
+            ):
                 try:
                     value = instance._loader(getattr(owner, self.name), instance._index)
                 except KeyError:
@@ -610,7 +620,7 @@ class Prop(Generic[Val_cov, RWT]):
                     value = self.default
 
             if isinstance(value, Unloaded):
-                raise ValueError("Property value could not fetched.")
+                raise ValueError("Property value could not be fetched.")
 
             instance.__dict__[self.name] = value
             return value
@@ -1107,6 +1117,7 @@ def prop(
             alias=alias,
             init=init,
             _type=PropType(),
+            local=True,
         )
 
     if any(
@@ -2148,16 +2159,17 @@ class ValueSet(
     ) -> Val_cov | Series | dict[Any, Val_cov]:
         """Download selection."""
         select = self.select()
+        engine = self.record_set.backend.engine
 
         if kind is pd.Series:
-            with self.engine.connect() as con:
+            with engine.connect() as con:
                 return pd.read_sql(select, con).set_index(
                     [c.key for c in self._idx_cols]
                 )[self.prop.name]
         elif kind is pl.Series:
-            return pl.read_database(select, self.engine)[self.prop.name]
+            return pl.read_database(str(select.compile(engine)), engine)[self.prop.name]
 
-        with self.engine.connect() as con:
+        with engine.connect() as con:
             return (
                 pd.read_sql(select, con)
                 .set_index([c.key for c in self._idx_cols])[self.prop.name]
@@ -2965,7 +2977,9 @@ class RecordSet(
                 merged_df = pd.read_sql(select, con)
                 merged_df = merged_df.set_index(idx_cols)
         else:
-            merged_df = pl.read_database(select, self.backend.engine)
+            merged_df = pl.read_database(
+                str(select.compile(self.backend.engine)), self.backend.engine
+            )
 
         if issubclass(kind, Record):
             assert isinstance(merged_df, pl.DataFrame)
@@ -3516,8 +3530,6 @@ class RecordSet(
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
         covered: set[int] | None = None,
     ) -> RecordSet[Rec_cov, Idx_def, B_def, RW, Rec2_nul, None]:
-        assert issubclass(self.parent_type, Record), "Record type must be defined."
-
         covered = covered or set()
 
         record_data: dict[Any, dict[Set, Any]] | None = None

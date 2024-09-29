@@ -21,31 +21,32 @@ class All:
     """Select all nodes on a level."""
 
 
-def _select_on_level(data: TreeData, selector: str | int | slice | type[All]) -> list:
+def _select_on_level(data: TreeData, selector: str | int | slice | type[All]) -> Any:
     """Select attribute from hierarchical data."""
     if isinstance(selector, type):
         assert selector is All
-        if isinstance(data, Iterable):
-            return list(data)
-        else:
-            return [data]
+        return data
 
     match data:
         case Mapping():
             assert not isinstance(selector, slice)
-            return [data.get(selector)]
+            return data.get(selector)
         case Sequence():
             match selector:
                 case int() | slice():
-                    res = data[selector]
-                    return list(res) if isinstance(res, Sequence) else [res]
+                    return data[selector]
                 case str():
+                    assert not isinstance(data, str)
                     return list(
                         chain(*(_select_on_level(item, selector) for item in data))
                     )
         case ElementTree():
             assert not isinstance(selector, int | slice)
-            return data.findall(selector, namespaces={})
+            res = data.findall(selector, namespaces={})
+            assert isinstance(res, Sequence)
+            if len(res) == 1:
+                return res[0]
+            return res
 
 
 type PathLevel = str | int | slice | set[str] | set[int] | type[All] | Callable[
@@ -59,9 +60,10 @@ class TreePath:
 
     path: Iterable[PathLevel]
 
-    def select(self, data: TreeData) -> list:
+    def select(self, data: TreeData) -> Any:
         """Select the node in the data structure."""
-        node = data if isinstance(data, list) else [data]
+        node = data
+
         for part in self.path:
             match part:
                 case str() | int() | slice():
@@ -74,11 +76,9 @@ class TreePath:
                 case Callable():
                     node = (
                         list(filter(part, node))
-                        if isinstance(node, list)
+                        if isinstance(node, Iterable) and not isinstance(node, str)
                         else node if part(node) else []
                     )
-                case _:
-                    raise ValueError(f"Unsupported path part {part}")
 
         return node
 
@@ -131,7 +131,7 @@ class DataSelect:
             }
         )
 
-    def select(self, data: TreeData) -> list:
+    def select(self, data: TreeData) -> Any:
         """Select the node in the data structure."""
         match self.sel:
             case str() | int() | slice() | type():
@@ -338,9 +338,9 @@ def _map_record[  # noqa: C901
     if xmap.loader is not None:
         if db_cache is not None and isinstance(in_data, Hashable):
             # Try to load from cache directly.
-            rec_set = db_cache[rec_type]
-            if in_data in rec_set:
-                rec = rec_set[in_data].load()
+            recs = db_cache[rec_type][[in_data]].load()
+            if len(recs) == 1:
+                rec = next(iter(recs.values()))
                 py_cache[rec_type][in_data] = rec
                 return rec
         # Load data from source and continue mapping.
@@ -353,7 +353,7 @@ def _map_record[  # noqa: C901
     mapping = xmap.full_map(rec_type, data)
 
     attrs = {
-        a.prop.name: (a, sel.select(data)[0])
+        a.prop.name: (a, sel.select(data))
         for a, sel in mapping.items()
         if isinstance(a, ValueSet)
     }
@@ -365,9 +365,9 @@ def _map_record[  # noqa: C901
         return py_cache[rec_type][rec_id]
 
     if db_cache is not None:
-        rec_set = db_cache[rec_type]
-        if rec_id in rec_set:
-            rec = rec_set[rec_id].load()
+        recs = db_cache[rec_type][[rec_id]].load()
+        if len(recs) == 1:
+            rec = next(iter(recs.values()))
             py_cache[rec_type][rec_id] = rec
             return rec
 
@@ -380,6 +380,12 @@ def _map_record[  # noqa: C901
     # Handle nested data, which is to be extracted into separate records and referenced.
     for rel, target_map in rels.items():
         sub_data_items = target_map.select(data)
+
+        if isinstance(sub_data_items, Mapping | str) or not isinstance(
+            sub_data_items, Iterable
+        ):
+            sub_data_items = [sub_data_items]
+
         target_type = rel.record_type
 
         for sub_data in sub_data_items:
@@ -415,9 +421,6 @@ def _map_record[  # noqa: C901
 
     py_cache[rec_type][rec_id] = rec
 
-    if db_cache is not None and isinstance(in_data, Hashable) and in_data == rec._index:
-        db_cache[rec_type] |= rec
-
     return rec
 
 
@@ -448,4 +451,10 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
         """
         py_cache = {}
         db_cache = self.cache if self.use_cache is not False else None
-        return _map_record(self.rec, self, input_data, py_cache, db_cache)
+
+        rec = _map_record(self.rec, self, input_data, py_cache, db_cache)
+
+        if db_cache is not None:
+            db_cache[type(rec)] |= rec
+
+        return rec
