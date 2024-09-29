@@ -140,8 +140,10 @@ class DataSelect:
                 return self.sel.select(data)
 
 
-type PullMap[Rec: Record] = SupportsItems[Set[Rec, Any], "NodeSelector | DataSelect"]
-type _PullMapping[Rec: Record] = Mapping[Set[Rec, Any], DataSelect]
+type PullMap[Rec: Record] = SupportsItems[
+    Set[Any, Any, None, Rec], "NodeSelector | DataSelect"
+]
+type _PullMapping[Rec: Record] = Mapping[Set[Any, Any, None, Rec], DataSelect]
 
 
 @dataclass(kw_only=True)
@@ -236,7 +238,7 @@ def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
             return _parse_pushmap(push_map(data), data)
         case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
             return {
-                k.name if isinstance(k, ValueSet) else k.rel.prop.name: True
+                k.prop.name if isinstance(k, ValueSet) else k.rel.prop.name: True
                 for k in push_map
             }
         case _:
@@ -378,14 +380,14 @@ def _map_record[  # noqa: C901
     # Handle nested data, which is to be extracted into separate records and referenced.
     for rel, target_map in rels.items():
         sub_data_items = target_map.select(data)
-        target_type = rel.item_type
+        target_type = rel.record_type
 
         for sub_data in sub_data_items:
             target_rec = _map_record(
                 target_type, target_map, sub_data, py_cache, db_cache
             )
 
-            if rel.link_set is not None and target_map.link is not None:
+            if issubclass(rel.link_type, Record) and target_map.link is not None:
                 link_rec = _map_record(
                     rel.link_type, target_map.link, sub_data, py_cache, db_cache
                 )

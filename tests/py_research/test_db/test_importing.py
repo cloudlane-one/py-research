@@ -18,7 +18,6 @@ from py_research.db import (
     Rel,
     RelMap,
     SubMap,
-    auto_link,
     prop,
 )
 
@@ -42,7 +41,7 @@ class Search(Record[str]):
     )
 
 
-Assignments: Link[Task, User] = auto_link()
+Assignment = Link["User", "Task"]
 
 
 class Task(RecUUID):
@@ -50,7 +49,7 @@ class Task(RecUUID):
 
     name: Attr[str]
     project: Rel[Project]
-    assignees: Rel[list[User], Assignments]
+    assignees: Rel[list[User], Assignment]
     status: Attr[Literal["todo", "done"]]
 
 
@@ -59,7 +58,7 @@ class User(RecUUID):
 
     name: Attr[str]
     age: Attr[int]
-    tasks: Rel[list[Task], Assignments]
+    tasks: Rel[list[Task], Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -72,7 +71,7 @@ class Membership(RecUUID):
 
     member: Rel[User] = prop(primary_key="fk")
     project: Rel[Project] = prop(primary_key="fk")
-    role: Attr[str] = Attr(default="member")
+    role: Attr[str] = prop(default="member")
 
 
 class Project(Record[int]):

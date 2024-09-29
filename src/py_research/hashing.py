@@ -6,7 +6,7 @@ from dataclasses import fields, is_dataclass
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from numbers import Number
-from types import GenericAlias, ModuleType
+from types import FunctionType, GenericAlias, ModuleType
 from typing import Any, get_args, get_origin
 
 import pandas as pd
@@ -64,6 +64,10 @@ def gen_int_hash(obj: Any, _ctx: set[int] | None = None) -> int:  # noqa: C901
         case set():
             _ctx.add(id(obj))
             return sum(gen_int_hash(item, _ctx) for item in obj)
+        case FunctionType():
+            return gen_int_hash(
+                (getattr(obj, "__name__", None), list(obj.__code__.co_lines()))
+            )
         case _:
             _ctx.add(id(obj))
 
