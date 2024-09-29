@@ -11,6 +11,9 @@ from .base import Schema as Schema
 from .base import prop as prop
 from .conflicts import DataConflictError as DataConflictError
 from .importing import DataSource as DataSource
+from .importing import Hash as Hash
 from .importing import RecMap as RecMap
 from .importing import RelMap as RelMap
+from .importing import SelIndex as SelIndex
 from .importing import SubMap as SubMap
+from .importing import Transform as Transform

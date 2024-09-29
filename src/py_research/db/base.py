@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field, fields
 from datetime import date, datetime, time
+from enum import Enum, auto
 from functools import cached_property, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
@@ -413,8 +414,10 @@ def _remove_external_fk(table: sqla.Table):
     )
 
 
-class Unloaded:
-    """Singleton to mark unfetched values."""
+class LoadStatus(Enum):
+    """Demark load status."""
+
+    unloaded = auto()
 
 
 @dataclass(frozen=True)
@@ -601,10 +604,10 @@ class Prop(Generic[Val_cov, RWT]):
             if self.getter is not None:
                 value = self.getter(instance)
             else:
-                value = instance.__dict__.get(self.name, Unloaded())
+                value = instance.__dict__.get(self.name, LoadStatus.unloaded)
 
             if (
-                isinstance(value, Unloaded)
+                value is LoadStatus.unloaded
                 and instance._loader is not None
                 and not self.local
             ):
@@ -613,13 +616,13 @@ class Prop(Generic[Val_cov, RWT]):
                 except KeyError:
                     pass
 
-            if isinstance(value, Unloaded):
+            if value is LoadStatus.unloaded:
                 if self.default_factory is not None:
                     value = self.default_factory()
                 elif self.default is not None:
                     value = self.default
 
-            if isinstance(value, Unloaded):
+            if value is LoadStatus.unloaded:
                 raise ValueError("Property value could not be fetched.")
 
             instance.__dict__[self.name] = value
@@ -642,9 +645,9 @@ class Prop(Generic[Val_cov, RWT]):
 
         return self
 
-    def __set__(self: Prop[Val, RW], instance: Record, value: Val | Unloaded) -> None:
+    def __set__(self: Prop[Val, RW], instance: Record, value: Val | LoadStatus) -> None:
         """Set the value of the property."""
-        if self.setter is not None and not isinstance(value, Unloaded):
+        if self.setter is not None and value is not LoadStatus.unloaded:
             self.setter(instance, value)
         instance.__dict__[self.name] = value
 
@@ -1612,6 +1615,14 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         """Check if the record is equal to another record."""
         return hash(self) == hash(value)
 
+    @staticmethod
+    def _prop_type_map() -> dict[type[Prop], type[Set]]:
+        return {
+            Attr: ValueSet,
+            Rel: RelSet,
+            Prop: Set,
+        }
+
     @overload
     def _to_dict(
         self,
@@ -1641,14 +1652,16 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         with_links: bool = False,
     ) -> dict[Set[Self, Any], Any] | dict[str, Any]:
         """Convert the record to a dictionary."""
+        pmap = self._prop_type_map()
+        include_types: tuple[type[Set], ...] = tuple(pmap[inc] for inc in include)
 
         def getter(r, n):
-            return r.__dict__[n] if not load else getattr(r, n)
+            return r.__dict__.get(n, LoadStatus.unloaded) if not load else getattr(r, n)
 
         vals = {
-            p if not name_keys else p.name: getter(self, p.name)
+            p if not name_keys else p.prop.name: getter(self, p.prop.name)
             for p in type(self)._props.values()
-            if isinstance(p, include)
+            if isinstance(p, include_types) and isinstance(p.prop, Prop)
         }
 
         if with_links and Rel in include and not name_keys:
@@ -1669,7 +1682,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
             (
                 vals
                 if not only_loaded
-                else {k: v for k, v in vals.items() if not isinstance(v, Unloaded)}
+                else {k: v for k, v in vals.items() if v is not LoadStatus.unloaded}
             ),
         )
 
@@ -1700,6 +1713,9 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
     @classmethod
     def _set(cls) -> RecordSet[Self, Key_def, None, Any, None, Any]:
         return RecordSet(item_type=cls)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return self._to_dict(name_keys=True, only_loaded=False).__repr__()
 
 
 @dataclass
@@ -3011,7 +3027,7 @@ class RecordSet(
                             for p, v in rec_data.items()
                             if p.prop is not None
                         },
-                        **{r: Unloaded() for r in self.record_type._rels},
+                        **{r: LoadStatus.unloaded for r in self.record_type._rels},
                     )
 
                     rec_list.append(rec)
@@ -3513,7 +3529,7 @@ class RecordSet(
 
         for idx, rec in rec_data.items():
             for prop, prop_val in rec.items():
-                if isinstance(prop, RelSet) and not isinstance(prop_val, Unloaded):
+                if isinstance(prop, RelSet) and prop_val is not LoadStatus.unloaded:
                     prop = cast(RelSet, prop)
                     rel_data[prop] = {
                         **rel_data.get(prop, {}),
@@ -4216,7 +4232,7 @@ class DB(RecordSet[Record, BaseIdx, B_def, RWT, None, None]):
             Mapping of table names to table descriptions.
         """
         schema_desc = {}
-        if self.schema is not None:
+        if isinstance(self.schema, type):
             schema_ref = PyObjectRef.reference(self.schema)
 
             schema_desc = {
@@ -4426,6 +4442,15 @@ class RecUUID(Record[UUID]):
 
     _template = True
     _id: Attr[UUID] = prop(primary_key=True, default_factory=uuid4)
+
+    @classmethod
+    def _index_from_dict(cls, data: Mapping[Set, Any]) -> UUID:
+        """Return the index contained in a dict representation of this record."""
+        idx = super()._index_from_dict(data)
+        if idx is None:
+            idx = uuid4()
+
+        return idx
 
 
 class RecHashed(Record[int]):

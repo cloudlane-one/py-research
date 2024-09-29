@@ -50,6 +50,7 @@ def _file_url_to_path(file_url: str):
     return path_object
 
 
+@cache
 def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
     """Get the distribution package of given module, if any."""
     mod_file = get_module_file(module)

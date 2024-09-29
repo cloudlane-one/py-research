@@ -3,7 +3,6 @@
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields
 from functools import cached_property
-from itertools import chain
 from typing import Any, Self, cast
 
 from lxml.etree import _ElementTree as ElementTree
@@ -11,7 +10,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import DB, Record, RelSet, Set, ValueSet
+from .base import DB, LoadStatus, Record, RelSet, Set, ValueSet
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -21,32 +20,41 @@ class All:
     """Select all nodes on a level."""
 
 
-def _select_on_level(data: TreeData, selector: str | int | slice | type[All]) -> Any:
+type DirectPath = tuple[str | int | type[All], ...]
+
+
+def _select_on_level(
+    data: TreeData, selector: str | int | type[All]
+) -> SupportsItems[DirectPath, Any]:
     """Select attribute from hierarchical data."""
+    res = LoadStatus.unloaded
+
     if isinstance(selector, type):
         assert selector is All
-        return data
+        res = data
 
-    match data:
-        case Mapping():
-            assert not isinstance(selector, slice)
-            return data.get(selector)
-        case Sequence():
-            match selector:
-                case int() | slice():
-                    return data[selector]
-                case str():
-                    assert not isinstance(data, str)
-                    return list(
-                        chain(*(_select_on_level(item, selector) for item in data))
-                    )
-        case ElementTree():
-            assert not isinstance(selector, int | slice)
-            res = data.findall(selector, namespaces={})
-            assert isinstance(res, Sequence)
-            if len(res) == 1:
-                return res[0]
-            return res
+    if res is LoadStatus.unloaded:
+        match data:
+            case Mapping():
+                assert not isinstance(selector, type)
+                res = data[selector]
+            case Sequence():
+                assert not isinstance(selector, type | str)
+                res = data[selector]
+            case ElementTree():
+                assert not isinstance(selector, type | int)
+                res = data.findall(selector, namespaces={})
+                assert len(res) == 1
+                res = res[0]
+
+    if has_type(res, Mapping[str, Any]):
+        return {(selector,): res}
+    elif isinstance(res, Mapping):
+        return {(selector, k): v for k, v in res.items()}
+    elif isinstance(res, Sequence) and not isinstance(res, str):
+        return {(selector, i): v for i, v in enumerate(res)}
+
+    return {(selector,): res}
 
 
 type PathLevel = str | int | slice | set[str] | set[int] | type[All] | Callable[
@@ -58,38 +66,61 @@ type PathLevel = str | int | slice | set[str] | set[int] | type[All] | Callable[
 class TreePath:
     """Path to a specific node in a hierarchical data structure."""
 
-    path: Iterable[PathLevel]
+    path: Sequence[PathLevel]
 
-    def select(self, data: TreeData) -> Any:
+    def select(self, data: TreeData) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
-        node = data
-
-        for part in self.path:
-            match part:
-                case str() | int() | slice():
-                    node = _select_on_level(node, part)
-                case set():
-                    node = list(chain(*(_select_on_level(node, p) for p in part)))
-                case type():
-                    assert part is All
-                    node = node
-                case Callable():
-                    node = (
-                        list(filter(part, node))
-                        if isinstance(node, Iterable) and not isinstance(node, str)
-                        else node if part(node) else []
+        res: SupportsItems[DirectPath, Any] = {}
+        if len(self.path) == 0:
+            res = _select_on_level(data, All)
+        else:
+            top = self.path[0]
+            subpath = TreePath(self.path[1:])
+            match top:
+                case str() | int() | type():
+                    res = _select_on_level(data, top)
+                case slice():
+                    assert isinstance(data, Sequence)
+                    index_range = range(
+                        top.start or 0, top.stop or len(data), top.step or 1
                     )
+                    res = {
+                        (i, *sub_i, *sub_sub_i): v
+                        for i in index_range
+                        for sub_i, v in _select_on_level(data, i).items()
+                        for sub_sub_i, v in subpath.select(v).items()
+                    }
+                case set():
+                    res = {
+                        (i, *sub_i, *sub_sub_i): v
+                        for i in top
+                        for sub_i, v in _select_on_level(data, i).items()
+                        for sub_sub_i, v in subpath.select(v).items()
+                    }
+                case Callable():
+                    res = {
+                        (top.__name__, *sub_i): v
+                        for sub_i, v in subpath.select(
+                            list(filter(top, data))
+                            if isinstance(data, Iterable) and not isinstance(data, str)
+                            else data if top(data) else []
+                        ).items()
+                    }
 
-        return node
+        return res
 
-    def __truediv__(self, other: "PathLevel | TreePath") -> "TreePath":
+    def __truediv__(self, other: "PathLevel | DirectPath | TreePath") -> "TreePath":
         """Join two paths."""
         if isinstance(other, TreePath):
             return TreePath(list(self.path) + list(other.path))
+        if isinstance(other, tuple):
+            return TreePath(list(self.path) + list(other))
         return TreePath(list(self.path) + [other])
 
-    def __rtruediv__(self, other: PathLevel) -> "TreePath":
+    def __rtruediv__(self, other: PathLevel | DirectPath) -> "TreePath":
         """Join two paths."""
+        if isinstance(other, tuple):
+            return TreePath(list(other) + list(self.path))
         return TreePath([other] + list(self.path))
 
 
@@ -101,9 +132,7 @@ type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]
 
 type PushMap[Rec: Record] = _PushMapping[Rec] | ValueSet[
     Any, Any, None, Rec
-] | RelMap | Iterable[ValueSet[Any, Any, None, Rec] | RelMap] | Callable[
-    [TreeData | str], PushMap[Rec]
-]
+] | RelMap | Iterable[ValueSet[Any, Any, None, Rec] | RelMap]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -131,13 +160,15 @@ class DataSelect:
             }
         )
 
-    def select(self, data: TreeData) -> Any:
+    def select(
+        self, data: TreeData, parent_path: DirectPath = tuple()
+    ) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
-        match self.sel:
-            case str() | int() | slice() | type():
-                return _select_on_level(data, self.sel)
-            case TreePath():
-                return self.sel.select(data)
+        sel = self.sel
+        if not isinstance(sel, TreePath):
+            sel = TreePath([sel])
+
+        return sel.select(data)
 
 
 type PullMap[Rec: Record] = SupportsItems[
@@ -169,10 +200,10 @@ class RecMap[Rec: Record, Dat]:
     conflicts: DataConflictPolicy = "raise"
     """Which policy to use if import conflicts occur for this record table."""
 
-    def full_map(self, rec: type[Rec], data: TreeData) -> _PullMapping[Rec]:
+    def full_map(self, rec: type[Rec]) -> _PullMapping[Rec]:
         """Get the full mapping."""
         return {
-            **_push_to_pull_map(rec, self.push, data),
+            **_push_to_pull_map(rec, self.push),
             **{k: DataSelect.parse(v) for k, v in (self.pull or {}).items()},
         }
 
@@ -181,11 +212,16 @@ class RecMap[Rec: Record, Dat]:
 class Transform(DataSelect):
     """Select and transform attributes."""
 
-    func: Callable
+    func: Callable[[DirectPath, Any], Any]
 
-    def select(self, data: TreeData) -> list:
+    def select(
+        self, data: TreeData, parent_path: DirectPath = tuple()
+    ) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
-        return [self.func(v) for v in DataSelect.select(self, data)]
+        return {
+            p: self.func((*parent_path, *p), v)
+            for p, v in DataSelect.select(self, data).items()
+        }
 
 
 @dataclass
@@ -196,14 +232,37 @@ class Hash(DataSelect):
     """If True, the id will be generated based on the data and the full tree path.
     """
 
-    def select(self, data: TreeData) -> list[str]:
+    def select(
+        self, data: TreeData, parent_path: DirectPath = tuple()
+    ) -> SupportsItems[DirectPath, str]:
         """Select the node in the data structure."""
-        value_hashes = [gen_str_hash(v) for v in DataSelect.select(self, data)]
-        return (
-            [gen_str_hash((v, self.sel)) for v in value_hashes]
-            if self.with_path
-            else value_hashes
-        )
+        return {
+            p: (
+                gen_str_hash(((*parent_path, *p), v))
+                if self.with_path
+                else gen_str_hash(v)
+            )
+            for p, v in DataSelect.select(self, data).items()
+        }
+
+
+@dataclass
+class SelIndex(DataSelect):
+    """Select and transform attributes."""
+
+    sel: NodeSelector = All
+    levels_up: int = 1
+
+    def select(
+        self, data: TreeData, parent_path: DirectPath = tuple()
+    ) -> SupportsItems[DirectPath, Any]:
+        """Select the node in the data structure."""
+        idx_sel = slice(-self.levels_up) if self.levels_up > 1 else -1
+        res = {
+            p: ((*parent_path, *(pi for pi in p if pi is not All))[idx_sel])
+            for p, _ in DataSelect.select(self, data).items()
+        }
+        return res
 
 
 @dataclass(kw_only=True)
@@ -227,25 +286,20 @@ class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Mapping to optional attributes of the link record."""
 
 
-def _parse_pushmap(push_map: PushMap, data: TreeData) -> _PushMapping:
+def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     """Parse push map into a more usable format."""
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
         case ValueSet() | RelMap() | str():
             return {All: push_map}
-        case Callable():
-            return _parse_pushmap(push_map(data), data)
         case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
             return {
                 k.prop.name if isinstance(k, ValueSet) else k.rel.prop.name: True
                 for k in push_map
             }
         case _:
-            raise TypeError(
-                f"Unsupported mapping type {type(push_map)}"
-                f" for data of type {type(data)}"
-            )
+            raise TypeError(f"Unsupported mapping type {type(push_map)}")
 
 
 def _get_selector_name(selector: NodeSelector) -> str:
@@ -257,11 +311,9 @@ def _get_selector_name(selector: NodeSelector) -> str:
             raise ValueError(f"Cannot get name of selector with type {type(selector)}.")
 
 
-def _push_to_pull_map(
-    rec: type[Record], push_map: PushMap, node: TreeData
-) -> _PullMapping:
+def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
     """Extract hierarchical data into set of scalar attributes + ref'd data objects."""
-    mapping = _parse_pushmap(push_map, node)
+    mapping = _parse_pushmap(push_map)
 
     # First list and handle all scalars, hence data attributes on the current level,
     # which are to be mapped to record attributes.
@@ -303,20 +355,14 @@ def _push_to_pull_map(
     # Handle nested data attributes (which come as dict types).
     for sel, target in mapping.items():
         if has_type(target, Mapping):
-            sub_node = DataSelect.parse(sel).select(node)
-            if has_type(sub_node, TreeData):  # type: ignore
-                sub_pull_map = _push_to_pull_map(
-                    rec,
-                    target,
-                    sub_node,
-                )
-                pull_map = {
-                    **pull_map,
-                    **{
-                        prop: sub_sel.prefix(sel)
-                        for prop, sub_sel in sub_pull_map.items()
-                    },
-                }
+            sub_pull_map = _push_to_pull_map(
+                rec,
+                target,
+            )
+            pull_map = {
+                **pull_map,
+                **{prop: sub_sel.prefix(sel) for prop, sub_sel in sub_pull_map.items()},
+            }
 
     return pull_map
 
@@ -329,6 +375,7 @@ def _map_record[  # noqa: C901
     in_data: Dat,
     py_cache: dict[type[Record], dict[Hashable, Any]],
     db_cache: DB | None = None,
+    path: DirectPath = tuple(),
 ) -> Rec:
     """Map a data source to a record."""
     if rec_type not in py_cache:
@@ -350,16 +397,21 @@ def _map_record[  # noqa: C901
             raise ValueError(f"Supplied data has unsupported type {type(in_data)}")
         data = in_data
 
-    mapping = xmap.full_map(rec_type, data)
+    mapping = xmap.full_map(rec_type)
 
     attrs = {
-        a.prop.name: (a, sel.select(data))
+        a.prop.name: (a, *list(sel.select(data, path).items())[0])
         for a, sel in mapping.items()
         if isinstance(a, ValueSet)
     }
 
-    rec_dict: dict[Set, Any] = {a[0]: a[1] for a in attrs.values()}
+    rec_dict: dict[Set, Any] = {a[0]: a[2] for a in attrs.values()}
     rec_id = rec_type._index_from_dict(rec_dict)
+
+    if rec_id is None:
+        raise ValueError(
+            f"Could not determine index for record of type {rec_type} with data {data}"
+        )
 
     if rec_id in py_cache[rec_type]:
         return py_cache[rec_type][rec_id]
@@ -379,23 +431,27 @@ def _map_record[  # noqa: C901
 
     # Handle nested data, which is to be extracted into separate records and referenced.
     for rel, target_map in rels.items():
-        sub_data_items = target_map.select(data)
-
-        if isinstance(sub_data_items, Mapping | str) or not isinstance(
-            sub_data_items, Iterable
-        ):
-            sub_data_items = [sub_data_items]
-
+        sub_data = target_map.select(data, path)
         target_type = rel.record_type
 
-        for sub_data in sub_data_items:
+        for sub_path, sub_data in sub_data.items():
             target_rec = _map_record(
-                target_type, target_map, sub_data, py_cache, db_cache
+                target_type,
+                target_map,
+                sub_data,
+                py_cache,
+                db_cache,
+                path + sub_path,
             )
 
             if issubclass(rel.link_type, Record) and target_map.link is not None:
                 link_rec = _map_record(
-                    rel.link_type, target_map.link, sub_data, py_cache, db_cache
+                    rel.link_type,
+                    target_map.link,
+                    sub_data,
+                    py_cache,
+                    db_cache,
+                    path + sub_path,
                 )
             else:
                 link_rec = None

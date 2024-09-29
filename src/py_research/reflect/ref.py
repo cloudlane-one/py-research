@@ -78,6 +78,7 @@ class PyObjectRef(Generic[T]):
         """Fully qualified name of the object."""
         return f"{self.module}.{self.object}"
 
+    @cache
     @staticmethod
     def reference(  # noqa: C901
         obj: T2,
