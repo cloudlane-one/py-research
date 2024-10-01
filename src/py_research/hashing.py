@@ -1,7 +1,7 @@
 """Utilities for producing hashes of common objects."""
 
 import hashlib
-from collections.abc import Sequence
+from collections.abc import Hashable, Sequence
 from dataclasses import fields, is_dataclass
 from datetime import date, datetime, time, timedelta
 from functools import reduce
@@ -68,6 +68,8 @@ def gen_int_hash(obj: Any, _ctx: set[int] | None = None) -> int:  # noqa: C901
             return gen_int_hash(
                 (getattr(obj, "__name__", None), list(obj.__code__.co_lines()))
             )
+        case Hashable():
+            return hash(obj)
         case _:
             _ctx.add(id(obj))
 

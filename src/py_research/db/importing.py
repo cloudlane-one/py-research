@@ -1,10 +1,20 @@
 """Utilities for importing different data representations into relational format."""
 
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+import asyncio
+from collections.abc import (
+    AsyncGenerator,
+    Callable,
+    Coroutine,
+    Hashable,
+    Iterable,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, fields
 from functools import cached_property
 from typing import Any, Self, cast
 
+from aioitertools.builtins import zip as azip
 from lxml.etree import _ElementTree as ElementTree
 
 from py_research.hashing import gen_str_hash
@@ -367,7 +377,56 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
     return pull_map
 
 
-def _map_record[  # noqa: C901
+async def sliding_batch_map[
+    H: Hashable, T
+](
+    data: Iterable[H],
+    func: Callable[[H], Coroutine[Any, Any, T]],
+    concurrency_limit: int = 1000,
+    wait_time: float = 0.001,
+) -> AsyncGenerator[T]:
+    """Sliding batch loop for async functions.
+
+    Args:
+        data:
+            Data to load
+        func:
+            Function to load data
+        concurrency_limit:
+            Maximum number of concurrent loads
+        wait_time:
+            Time in seconds to wait between checks for free slots
+    Returns:
+        List with all loaded data
+    """
+    done: set[asyncio.Task] = set()
+    running: set[asyncio.Task] = set()
+
+    # Dispatch tasks and collect results simultaneously
+    for idx in data:
+        # Wait for a free slot
+        while len(running) >= concurrency_limit:
+            await asyncio.sleep(wait_time)
+
+            # Filter done tasks
+            done |= {t for t in running if t.done()}
+            running -= done
+
+            # Yield results
+            for t in done:
+                yield t.result()
+
+        # Start new task once a slot is free
+        running.add(asyncio.create_task(func(idx)))
+
+    # Wait for all tasks to finish
+    for t in asyncio.as_completed(running):
+        yield t.result()
+
+    return
+
+
+async def _load_record[  # noqa: C901
     Rec: Record, Dat
 ](
     rec_type: type[Rec],
@@ -429,8 +488,9 @@ def _map_record[  # noqa: C901
         sub_data = target_map.select(data, path)
         target_type = rel.record_type
 
-        for sub_path, sub_data in sub_data.items():
-            target_rec = _map_record(
+        async def load_record(item: tuple[DirectPath, Any]) -> Record:
+            sub_path, sub_data = item
+            return await _load_record(
                 target_type,
                 target_map,
                 sub_data,
@@ -439,8 +499,11 @@ def _map_record[  # noqa: C901
                 path + sub_path,
             )
 
+        async for (sub_path, sub_data), target_rec in azip(
+            sub_data.items(), sliding_batch_map(sub_data.items(), load_record)
+        ):
             if issubclass(rel.link_type, Record) and target_map.link is not None:
-                link_rec = _map_record(
+                link_rec = await _load_record(
                     rel.link_type,
                     target_map.link,
                     sub_data,
@@ -486,30 +549,35 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
     rec: type[Rec]
     """Root record type to load."""
 
-    cache: DB | bool = True
-    """Use a database for caching loaded data."""
-
     @cached_property
-    def db(self) -> DB:
-        """Automatically created DB instance for caching."""
-        return self.cache if isinstance(self.cache, DB) else DB()
+    def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
+        return {}
 
-    def load(self, input_data: Dat) -> Rec:
+    async def load(
+        self, data: Dat, db: DB | None = None, cache_with_db: bool = True
+    ) -> Rec:
         """Parse recursive data from a data source.
 
         Args:
-            input_data:
+            data:
                 Input for the data source
+            db:
+                Database to insert the data into (and use for caching)
+            cache_with_db:
+                If True, use the database as cache
 
         Returns:
             A Record instance
         """
-        py_cache = {}
-        db_cache = self.db if self.cache is not False else None
+        db_cache = (
+            db if cache_with_db and db is not None else DB() if cache_with_db else None
+        )
 
-        rec = _map_record(self.rec, self, input_data, py_cache, db_cache)
+        rec = await _load_record(self.rec, self, data, self._obj_cache, db_cache)
 
         if db_cache is not None:
             db_cache[type(rec)] |= rec
+        elif db is not None:
+            db[type(rec)] |= rec
 
         return rec

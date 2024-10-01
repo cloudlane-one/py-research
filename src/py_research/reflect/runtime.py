@@ -38,7 +38,13 @@ def get_full_args_dict(
     arg_defaults = argspec.defaults or []
     kwdefaults = dict(zip(argspec.args[-len(arg_defaults) :], arg_defaults))
 
-    posargs = dict(zip(argspec.args[: len(args)], args))
+    posarg_names = argspec.args
+
+    # Handle bound methods
+    if posarg_names[0] == "self" and hasattr(func, "__self__"):
+        posarg_names = posarg_names[1:]
+
+    posargs = dict(zip(posarg_names[: len(args)], args))
 
     return {**kwdefaults, **posargs, **(kwargs or {})}
 

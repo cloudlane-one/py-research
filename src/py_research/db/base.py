@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
-from dataclasses import MISSING, Field, asdict, dataclass, field, fields
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, time
 from enum import Enum, auto
 from functools import cached_property, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
-from itertools import zip_longest
 from pathlib import Path
 from secrets import token_hex
 from types import GenericAlias, ModuleType, NoneType, UnionType, new_class
@@ -21,8 +20,6 @@ from typing import (
     Generic,
     Literal,
     LiteralString,
-    ParamSpec,
-    Protocol,
     Self,
     cast,
     dataclass_transform,
@@ -55,6 +52,7 @@ from sqlalchemy_utils import UUIDType
 from typing_extensions import TypeVar, TypeVarTuple
 from xlsxwriter import Workbook as ExcelWorkbook
 
+from py_research.data import copy_and_override
 from py_research.files import HttpFile
 from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.ref import PyObjectRef
@@ -148,51 +146,6 @@ RWT = TypeVar("RWT", bound="R", default="RW", covariant=True)
 
 Df = TypeVar("Df", bound=DataFrame)
 Dl = TypeVar("Dl", bound="DataFrame | Record")
-
-Params = ParamSpec("Params")
-DC = TypeVar("DC", bound="DataclassInstance")
-
-
-class DataclassInstance(Protocol):
-    """Protocol for dataclass instances."""
-
-    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
-
-
-def copy_and_override(
-    obj: DC,
-    _init: Callable[Params, DC] | None = None,
-    *args: Params.args,
-    **kwargs: Params.kwargs,
-) -> DC:
-    """Re-construct a dataclass instance with all its init params + override.
-
-    Warning:
-        Does not work for kw_only dataclasses and InitVars (yet).
-    """
-    target_fields = set(fields(cast(type, _init)))
-    obj_fields = {
-        f: getattr(obj, f.name) for f in fields(obj) if f.init and f in target_fields
-    }
-
-    obj_args = [
-        v
-        for f, v in obj_fields.items()
-        if not f.kw_only
-        and f.default is MISSING
-        and f.default_factory is MISSING
-        and f.name not in kwargs
-    ]
-    obj_kwargs = {f.name: v for f, v in obj_fields.items() if f not in obj_args}
-
-    new_args = [
-        v1 if v1 is not MISSING else v2
-        for v1, v2 in zip_longest(args, obj_args, fillvalue=MISSING)
-        if v2 is not MISSING
-    ]
-    new_kwargs = {**obj_kwargs, **kwargs}
-    constr_func = _init or type(obj)
-    return constr_func(*new_args, **new_kwargs)  # type: ignore
 
 
 class BaseIdx:
