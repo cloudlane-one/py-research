@@ -2,12 +2,12 @@
 
 import locale
 from collections.abc import Callable
-from dataclasses import MISSING, Field, fields
+from dataclasses import MISSING, fields
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from itertools import zip_longest
-from typing import Any, ClassVar, ParamSpec, Protocol, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast
 
 import numpy.typing as npt
 import pandas as pd
@@ -24,15 +24,10 @@ from pandas.core.dtypes.base import ExtensionDtype
 from pandas.errors import ParserError
 
 from py_research.hashing import gen_str_hash
+from py_research.types import DataclassInstance
 
 Params = ParamSpec("Params")
 DC = TypeVar("DC", bound="DataclassInstance")
-
-
-class DataclassInstance(Protocol):
-    """Protocol for dataclass instances."""
-
-    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
 
 def copy_and_override(

@@ -399,8 +399,8 @@ async def sliding_batch_map[
     Returns:
         List with all loaded data
     """
-    done: set[asyncio.Task] = set()
-    running: set[asyncio.Task] = set()
+    done: set[asyncio.Task[T]] = set()
+    running: set[asyncio.Task[T]] = set()
 
     # Dispatch tasks and collect results simultaneously
     for idx in data:
@@ -420,8 +420,12 @@ async def sliding_batch_map[
         running.add(asyncio.create_task(func(idx)))
 
     # Wait for all tasks to finish
-    for t in asyncio.as_completed(running):
-        yield t.result()
+    while len(running) > 0:
+        new_done, running = await asyncio.wait(
+            running, return_when=asyncio.FIRST_COMPLETED
+        )
+        for t in new_done:
+            yield t.result()
 
     return
 

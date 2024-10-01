@@ -297,9 +297,6 @@ def props_from_data(
     data: DataFrame | sqla.Select, foreign_keys: Mapping[str, ValueSet] | None = None
 ) -> list[Prop]:
     """Extract prop definitions from dataframe or query."""
-    if isinstance(data, pd.DataFrame) and len(data.index.names) > 1:
-        raise NotImplementedError("Multi-index not supported yet.")
-
     foreign_keys = foreign_keys or {}
 
     def _gen_prop(name: str, data: Series | sqla.ColumnElement) -> Prop:
@@ -331,15 +328,21 @@ def props_from_data(
         else list(data.columns)
     )
 
-    return [
-        *(
-            (
-                _gen_prop(level, data.index.get_level_values(level).to_series())
-                for level in data.index.names
+    index_props = []
+    if isinstance(data, pd.DataFrame):
+        levels = {name: name for name in data.index.names}
+        if any(lvl is None for lvl in levels.values()):
+            levels = {i: f"index_{i}" for i in range(len(levels))}
+
+        for level_name, prop_name in levels.items():
+            index_props.append(
+                _gen_prop(
+                    prop_name, data.index.get_level_values(level_name).to_series()
+                )
             )
-            if isinstance(data, pd.DataFrame)
-            else []
-        ),
+
+    return [
+        *index_props,
         *(_gen_prop(str(col.name), col) for col in columns),
     ]
 
@@ -3496,7 +3499,7 @@ class RecordSet(
         return rel_data
 
     def _mutate(  # noqa: C901, D105
-        self: RecordSet[Any, Any, B_def, RW, Any, None],
+        self: RecordSet[Record, Any, B_def, RW, Any, None],
         value: RecordSet | PartialRecInput[Rec_cov, Any] | ValInput,
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
         covered: set[int] | None = None,
@@ -3526,7 +3529,7 @@ class RecordSet(
                 }
                 partial = True
             else:
-                assert has_type(value, Mapping[Any, PartialRec[Record]])
+                assert has_type(value, Mapping[Any, Record | PartialRec])
 
                 record_data = {}
                 for idx, rec in value.items():
@@ -3549,7 +3552,7 @@ class RecordSet(
                     rec_idx = rec._index
                 else:
                     rec_dict = {p: v for p, v in rec.items()}
-                    rec_idx = self.parent_type._index_from_dict(rec)
+                    rec_idx = self.record_type._from_partial_dict(rec)._index
                     partial = True
 
                 record_data[idx if list_idx else rec_idx] = rec_dict
@@ -3567,7 +3570,7 @@ class RecordSet(
             rel_data = self._get_record_rels(record_data, list_idx, covered)
 
             # Transform attribute data into DataFrame.
-            df_data = pd.DataFrame.from_records(attr_data)
+            df_data = pd.DataFrame.from_dict(attr_data, orient="index")
 
         if rel_data is not None:
             # Recurse into relation data.

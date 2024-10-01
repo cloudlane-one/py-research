@@ -2,7 +2,7 @@
 
 import hashlib
 from collections.abc import Hashable, Sequence
-from dataclasses import fields, is_dataclass
+from dataclasses import fields
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from numbers import Number
@@ -13,6 +13,12 @@ import pandas as pd
 from pandas.util import hash_pandas_object
 
 from py_research.reflect.ref import PyObjectRef
+from py_research.types import (
+    ArgsPicklable,
+    ArgsPicklableEx,
+    DataclassInstance,
+    StatePicklable,
+)
 
 
 def _stable_hash(
@@ -68,35 +74,36 @@ def gen_int_hash(obj: Any, _ctx: set[int] | None = None) -> int:  # noqa: C901
             return gen_int_hash(
                 (getattr(obj, "__name__", None), list(obj.__code__.co_lines()))
             )
+        case DataclassInstance():
+            _ctx.add(id(obj))
+            return gen_int_hash(
+                {f.name: getattr(obj, f.name) for f in fields(obj)}, _ctx
+            )
+        case StatePicklable():
+            state = obj.__getstate__()
+            state = state if isinstance(state, tuple) else (state,)
+            state_dicts = [s for s in state if isinstance(s, dict)]
+
+            if len(state_dicts) == 0:
+                raise ValueError()
+
+            return sum(
+                sum(_hash_sequence((k, v), _ctx) for k, v in s.items())
+                for s in state_dicts
+            )
+        case ArgsPicklable():
+            args = obj.__getnewargs__()
+            return sum(gen_int_hash(item, _ctx) for item in args)
+        case ArgsPicklableEx():
+            args, kwargs = obj.__getnewargs_ex__()
+            return sum(gen_int_hash(item, _ctx) for item in args) + sum(
+                gen_int_hash(item, _ctx) for item in kwargs.items()
+            )
         case Hashable():
+            _ctx.add(id(obj))
             return hash(obj)
         case _:
-            _ctx.add(id(obj))
-
-            if is_dataclass(obj):
-                return gen_int_hash(
-                    {f.name: getattr(obj, f.name) for f in fields(obj)}, _ctx
-                )
-            if hasattr(obj, "__getstate__"):
-                state = obj.__getstate__()
-                state = state if isinstance(state, tuple) else (state,)
-                state_dicts = [s for s in state if isinstance(s, dict)]
-
-                if len(state_dicts) > 0:
-                    return sum(
-                        sum(_hash_sequence((k, v), _ctx) for k, v in s.items())
-                        for s in state_dicts
-                    )
-            if hasattr(obj, "__getnewargs_ex__"):
-                args, kwargs = obj.__getnewargs_ex__()
-                return sum(gen_int_hash(item, _ctx) for item in args) + sum(
-                    gen_int_hash(item, _ctx) for item in kwargs.items()
-                )
-            if hasattr(obj, "__getnewargs__"):
-                args = obj.__getnewargs__()
-                return sum(gen_int_hash(item, _ctx) for item in args)
-
-    raise ValueError()
+            raise ValueError()
 
 
 def gen_str_hash(x: Any, length: int = 10) -> str:
