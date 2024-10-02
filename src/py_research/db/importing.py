@@ -20,7 +20,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import DB, LoadStatus, Record, RelSet, Set, ValueSet
+from .base import DB, Record, RelSet, State, ValueSet
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -37,13 +37,13 @@ def _select_on_level(
     data: TreeData, selector: str | int | type[All]
 ) -> SupportsItems[DirectPath, Any]:
     """Select attribute from hierarchical data."""
-    res = LoadStatus.unloaded
+    res = State.undef
 
     if isinstance(selector, type):
         assert selector is All
         res = data
 
-    if res is LoadStatus.unloaded:
+    if res is State.undef:
         match data:
             case Mapping():
                 assert not isinstance(selector, type)
@@ -182,9 +182,12 @@ class DataSelect:
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    Set[Any, Any, None, Rec], "NodeSelector | DataSelect"
+    ValueSet[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Rec],
+    "NodeSelector | DataSelect",
 ]
-type _PullMapping[Rec: Record] = Mapping[Set[Any, Any, None, Rec], DataSelect]
+type _PullMapping[Rec: Record] = Mapping[
+    ValueSet[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Rec], DataSelect
+]
 
 
 @dataclass(kw_only=True)
@@ -305,7 +308,7 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
             return {All: push_map}
         case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
             return {
-                k.prop.name if isinstance(k, ValueSet) else k.rel.prop.name: True
+                k.attr.name if isinstance(k, ValueSet) else k.rel.rel.name: True
                 for k in push_map
             }
         case _:
@@ -463,12 +466,12 @@ async def _load_record[  # noqa: C901
     mapping = xmap.full_map(rec_type)
 
     attrs = {
-        a.prop.name: (a, *list(sel.select(data, path).items())[0])
+        a.attr.name: (a, *list(sel.select(data, path).items())[0])
         for a, sel in mapping.items()
         if isinstance(a, ValueSet)
     }
 
-    rec_dict: dict[Set, Any] = {a[0]: a[2] for a in attrs.values()}
+    rec_dict: dict[ValueSet | RelSet, Any] = {a[0]: a[2] for a in attrs.values()}
     rec = rec_type._from_partial_dict(rec_dict)
 
     if rec._index in py_cache[rec_type]:
@@ -491,6 +494,15 @@ async def _load_record[  # noqa: C901
     for rel, target_map in rels.items():
         sub_data = target_map.select(data, path)
         target_type = rel.record_type
+
+        rec_collection = None
+        if rel.direct_rel is not True:
+            rec_collection = {} if rel.rel.map_by is not None else []
+            setattr(
+                rec,
+                rel.rel.name,
+                rec_collection,
+            )
 
         async def load_record(item: tuple[DirectPath, Any]) -> Record:
             sub_path, sub_data = item
@@ -518,28 +530,17 @@ async def _load_record[  # noqa: C901
             else:
                 link_rec = None
 
-            if rel.direct_rel is True:
-                setattr(rec, rel.prop.name, target_rec)
-            elif rel.prop.map_by is not None:
+            if rec_collection is None:
+                setattr(rec, rel.rel.name, target_rec)
+            elif rel.rel.map_by is not None:
                 idx = (
-                    getattr(target_rec, rel.prop.map_by.name)
-                    if issubclass(target_type, rel.prop.map_by.parent_type)
-                    else getattr(link_rec, rel.prop.map_by.name)
+                    getattr(target_rec, rel.rel.map_by.name)
+                    if issubclass(target_type, rel.rel.map_by.parent_type)
+                    else getattr(link_rec, rel.rel.map_by.name)
                 )
-                setattr(
-                    rec,
-                    rel.prop.name,
-                    {
-                        **rec._to_dict(name_keys=True).get(rel.prop.name, {}),
-                        idx: target_rec,
-                    },
-                )
+                cast(dict, rec_collection)[idx] = target_rec
             else:
-                setattr(
-                    rec,
-                    rel.prop.name,
-                    [*rec._to_dict(name_keys=True).get(rel.prop.name, []), target_rec],
-                )
+                cast(list, rec_collection).append(target_rec)
 
     py_cache[rec_type][rec._index] = rec
 

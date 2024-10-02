@@ -27,7 +27,7 @@ class Search(Record[str]):
     )
 
 
-Assignment = Link["User", "Task"]
+type Assignment = Link["User", "Task"]
 
 
 class Task(RecUUID):
@@ -69,8 +69,8 @@ class Project(Record[int]):
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
     org: Rel[Organization]
-    tasks: Rel[list[Task]] = prop(link_from=Task.project)
-    members: Rel[list[User]] = prop(link_via=Membership)
+    tasks: Rel[set[Task]] = prop(link_from=Task.project)
+    members: Rel[set[User]] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -79,4 +79,4 @@ class Organization(RecUUID):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: Rel[list[Project]] = prop(link_from=Project.org)
+    projects: Rel[set[Project]] = prop(link_from=Project.org)

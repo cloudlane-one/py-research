@@ -83,8 +83,8 @@ class Project(Record[int]):
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
     org: Rel[Organization]
-    tasks: Rel[list[Task]] = prop(link_from=Task.project)
-    members: Rel[list[User]] = prop(link_via=Membership)
+    tasks: Rel[set[Task]] = prop(link_from=Task.project)
+    members: Rel[set[User]] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -93,7 +93,7 @@ class Organization(RecUUID):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: Rel[list[Project]] = prop(link_from=Project.org)
+    projects: Rel[set[Project]] = prop(link_from=Project.org)
 
 
 @pytest.fixture
@@ -156,8 +156,8 @@ def data_source() -> DataSource:
 
 def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     """Test importing nested data dict to database."""
-    rec = data_source.load(nested_db_dict)
-    db = data_source.cache
+    db = DB()
+    rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
     assert isinstance(db, DB)
