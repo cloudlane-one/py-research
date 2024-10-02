@@ -317,7 +317,7 @@ def props_from_data(
             if not is_rel
             else Rel(
                 on={attr: foreign_keys[name]},
-                _type=PropType(Rel[Record]),
+                _type=PropType(Rel[foreign_keys[name].record_set.record_type]),
                 _name=f"rel_{name}",
             )
         )
@@ -1404,7 +1404,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
         return sub.name if sub is not None else cls._default_table_name()
 
     @classmethod
-    def _columns(cls, registry: orm.registry) -> list[sqla.Column]:
+    def _columns(cls, registry: orm.registry) -> set[sqla.Column]:
         """Columns of this record type's table."""
         table_attrs = (
             set(cls._defined_attrs.values())
@@ -1412,7 +1412,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
             | set(cls._primary_keys.values())
         )
 
-        return [
+        return {
             sqla.Column(
                 attr.prop.name,
                 registry._resolve_type(attr.value_type),
@@ -1421,7 +1421,7 @@ class Record(Generic[Key_def], metaclass=RecordMeta):
                 index=attr.prop.index,
             )
             for attr in table_attrs
-        ]
+        }
 
     @classmethod
     def _foreign_keys(
@@ -1751,6 +1751,7 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
     create_cross_fk: bool = True
     overlay_with_schemas: bool = True
 
+    metadata: sqla.MetaData = field(default_factory=sqla.MetaData)
     backend: B_nul = None
 
     @cached_property
@@ -1790,14 +1791,16 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
         return set()
 
     @cached_property
-    def metadata(self) -> sqla.MetaData:
-        """Metadata object for this DB instance."""
-        return sqla.MetaData()
+    def single_key(self) -> Hashable:
+        """Return whether the set is a single record."""
+        single_keys = [k for k in self.keys if not isinstance(k, list | slice)]
+        if len(single_keys) > 0:
+            return single_keys[0]
 
     @cached_property
     def db(self: Set[Any, Any, B_def]) -> DB[B_def]:
         """Return the database object."""
-        return DB(backend=self.backend)
+        return DB(backend=self.backend, validate_on_init=False)
 
     def execute[
         *T
@@ -1810,7 +1813,7 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
         with self.backend.engine.begin() as conn:
             return conn.execute(self._parse_expr(stmt))
 
-    def dataset(
+    def to_dataset(
         self: Set[Any, Any, B_def],
         data: DataFrame | sqla.Select,
         foreign_keys: Mapping[str, ValueSet] | None = None,
@@ -1823,10 +1826,10 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
         )
 
         rec = dynamic_record_type(name, props=props_from_data(data, foreign_keys))
-        self._get_table(rec, writable=True)
         ds = RecordSet[DynRecord, BaseIdx, B_def, RW](
             item_type=rec, backend=self.backend
         )
+
         ds &= data
 
         return ds  # type: ignore
@@ -1850,20 +1853,37 @@ class Set(Generic[Val_def, KeyIdx_def, B_nul, Rec2_nul, P_nul]):
                 schema=self.overlay if self.overlay_with_schemas else None,
             )
 
-        table = rec._table(self.metadata, self.subs)
+        table_name = rec._sql_table_name(self.subs)
+
+        if table_name in self.metadata.tables:
+            return self.metadata.tables[table_name]
+
+        new_metadata = sqla.MetaData()
+        for t in self.metadata.tables.values():
+            t.to_metadata(new_metadata)
+
+        table = rec._table(new_metadata, self.subs)
 
         # Create any missing tables in the database.
         if self.backend is not None:
-            self.metadata.create_all(self.backend.engine)
+            new_tables = set(new_metadata.tables) - set(self.metadata.tables)
+            if len(new_tables) > 0:
+                new_metadata.create_all(self.backend.engine, checkfirst=True)
 
         return table
 
     def _get_joined_table(self, rec: type[Record]) -> sqla.Table | sqla.Join:
-        table = rec._joined_table(self.metadata, self.subs)
+        new_metadata = sqla.MetaData()
+        for t in self.metadata.tables.values():
+            t.to_metadata(new_metadata)
+
+        table = rec._joined_table(new_metadata, self.subs)
 
         # Create any missing tables in the database.
         if self.backend is not None:
-            self.metadata.create_all(self.backend.engine)
+            new_tables = set(new_metadata.tables) - set(self.metadata.tables)
+            if len(new_tables) > 0:
+                new_metadata.create_all(self.backend.engine, checkfirst=True)
 
         return table
 
@@ -2109,7 +2129,7 @@ class ValueSet(
         self: ValueSet,
         key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
     ) -> ValueSet:
-        return copy_and_override(self, ValueSet, keys=[key])
+        return copy_and_override(self, ValueSet, record_set=self.record_set[key])
 
     def select(self) -> sqla.Select:
         """Return select statement for this dataset."""
@@ -2159,78 +2179,23 @@ class ValueSet(
             )
 
     def __imatmul__(
-        self: ValueSet[Val_cov, KeyIdx_def, B_def, Rec_def, R_def],
+        self: ValueSet[Val_cov, KeyIdx_def, B_def, Rec_def, RW],
         value: ValInput | ValueSet[Val_cov, Key_def, B_def],
-    ) -> ValueSet[Val_cov, KeyIdx_def, B_def, Rec_def, R_def]:
-        """Do item-wise, broadcasting assignment on this dataset."""
-        # Load data into a temporary table.
-        value_df = None
-        if isinstance(value, ValueSet):
-            value_set = value
-        elif isinstance(value, sqla.Select):
-            value_set = self._db.dataset(value)
-        else:
-            value_df = (
-                value.to_frame()
-                if isinstance(value, Series)
-                else (
-                    pd.DataFrame.from_records(value)
-                    if isinstance(value, Mapping)
-                    else pd.DataFrame({self.prop.name: [value]})
-                )
-            )
-            value_set = self._db.dataset(value_df)
+    ) -> ValueSet[Val_cov, KeyIdx_def, B_def, Rec_def, RW]:
+        """Do item-wise, broadcasting assignment on this value set."""
+        match value:
+            case pd.Series() | pl.Series():
+                series = value
+            case Mapping():
+                series = pd.Series(dict(value))
+            case Iterable():
+                series = pd.Series(dict(enumerate(value)))
+            case _:
+                series = pd.Series({self.single_key or 0: value})
 
-        # Derive current select statement and join with value table, if exists.
-        select = self.select()
-        if value_set is not None:
-            select = select.join(
-                value_set.root_table,
-                reduce(
-                    sqla.and_,
-                    (
-                        self.root_table.c[idx_col.name] == idx_col
-                        for idx_col in value_set.root_table.primary_key
-                    ),
-                ),
-            )
+        df = series.rename(self.prop.name).to_frame()
 
-        assert isinstance(self.root_table, sqla.Table), "Base must be a table."
-
-        if self.engine.dialect.name in (
-            "postgres",
-            "postgresql",
-            "duckdb",
-            "mysql",
-            "mariadb",
-        ):
-            # Update-from.
-            statement = (
-                self.root_table.update()
-                .values(
-                    {c_name: c for c_name, c in value_set.root_table.columns.items()}
-                )
-                .where(
-                    reduce(
-                        sqla.and_,
-                        (
-                            self.root_table.c[col.name] == select.c[col.name]
-                            for col in self.root_table.primary_key.columns
-                        ),
-                    )
-                )
-            )
-
-            with self.engine.begin() as con:
-                con.execute(statement)
-        else:
-            # Correlated update.
-            raise NotImplementedError("Correlated update not supported yet.")
-
-        # Drop the temporary table, if any.
-        if value_set is not None and value_set is not value:
-            cast(sqla.Table, value_set.root_table).drop(self.engine)
-
+        self.record_set._mutate(df)
         return self
 
 
@@ -2357,6 +2322,8 @@ class RecordSet(
                 keys=[*r2.keys, *r1.keys],
                 filters=[*r2.filters, *r1.filters],
                 merges=r2.merges * r1.merges,
+                metadata=r1.metadata,
+                backend=r1.backend,
             ),
             rel_path,
             new_root,
@@ -2381,6 +2348,8 @@ class RecordSet(
                 keys=[*r2.keys, *r1.keys],
                 filters=[*r2.filters, *r1.filters],
                 merges=r2.merges * r1.merges,
+                metadata=r1.metadata,
+                backend=r1.backend,
             ),
             rel_path,
             cast(RelSet, self),
@@ -2841,6 +2810,12 @@ class RecordSet(
             case sqla.ColumnElement():
                 return copy_and_override(self, type(self), filters=[*self.filters, key])
             case list() | slice() | tuple() | Hashable():
+                if not isinstance(key, list | slice) and not has_type(
+                    key, tuple[slice, ...]
+                ):
+                    assert (
+                        self.single_key is None or key == self.single_key
+                    ), "Cannot select multiple single record keys"
                 return copy_and_override(self, type(self), keys=[*self.keys, key])
 
     def select(
@@ -3015,28 +2990,32 @@ class RecordSet(
         other: RecordSet[Rec_cov, InsIdx, B_def] | RecInput[Rec_cov, InsIdx],
     ) -> RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None]:
         """Aligned assignment."""
-        return self._mutate(other, mode="update")
+        self._mutate(other, mode="update")
+        return self
 
     def __iand__(
         self: RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None],
         other: RecordSet[Rec_cov, InsIdx, B_def] | RecInput[Rec_cov, InsIdx],
     ) -> RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None]:
         """Replacing assignment."""
-        return self._mutate(other, mode="replace")
+        self._mutate(other, mode="replace")
+        return self
 
     def __ior__(
         self: RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None],
         other: RecordSet[Rec_cov, InsIdx, B_def] | RecInput[Rec_cov, InsIdx],
     ) -> RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None]:
         """Upserting assignment."""
-        return self._mutate(other, mode="upsert")
+        self._mutate(other, mode="upsert")
+        return self
 
     def __iadd__(
         self: RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None],
         other: RecordSet[Rec_cov, InsIdx, B_def] | RecInput[Rec_cov, InsIdx],
     ) -> RecordSet[Any, InsIdx, B_def, RW, Rec2_nul, None]:
         """Inserting assignment."""
-        return self._mutate(other, mode="insert")
+        self._mutate(other, mode="insert")
+        return self
 
     def __isub__(
         self: RecordSet[Any, InsIdx, B_def, RWT],
@@ -3498,12 +3477,21 @@ class RecordSet(
 
         return rel_data
 
+    @cached_property
+    def _has_list_index(self) -> bool:
+        return (
+            isinstance(self, RelSet)
+            and self.path_idx is not None
+            and len(self.path_idx) == 1
+            and is_subtype(self.path_idx[0].value_type, int)
+        )
+
     def _mutate(  # noqa: C901, D105
         self: RecordSet[Record, Any, B_def, RW, Any, None],
-        value: RecordSet | PartialRecInput[Rec_cov, Any] | ValInput,
+        value: RecordSet | PartialRecInput[Rec_cov, Any],
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
         covered: set[int] | None = None,
-    ) -> RecordSet[Rec_cov, Idx_def, B_def, RW, Rec2_nul, None]:
+    ) -> None:
         covered = covered or set()
 
         record_data: dict[Any, dict[Set, Any]] | None = None
@@ -3511,51 +3499,45 @@ class RecordSet(
         df_data: DataFrame | None = None
         partial: bool = False
 
-        list_idx = (
-            isinstance(self, RelSet)
-            and self.path_idx is not None
-            and len(self.path_idx) == 1
-            and is_subtype(self.path_idx[0].value_type, int)
-        )
-
-        if isinstance(value, Record):
-            record_data = {value._index: value._to_dict(with_links=True)}
-        elif isinstance(value, Mapping):
-            if has_type(value, Mapping[Set, Any]):
-                record_data = {
-                    self.parent_type._index_from_dict(value): {
-                        p: v for p, v in value.items()
+        match value:
+            case Record():
+                record_data = {value._index: value._to_dict(with_links=True)}
+            case Mapping():
+                if has_type(value, Mapping[Set, Any]):
+                    record_data = {
+                        self.record_type._from_partial_dict(value)._index: {
+                            p: v for p, v in value.items()
+                        }
                     }
-                }
-                partial = True
-            else:
-                assert has_type(value, Mapping[Any, Record | PartialRec])
+                    partial = True
+                else:
+                    assert has_type(value, Mapping[Any, Record | PartialRec])
 
+                    record_data = {}
+                    for idx, rec in value.items():
+                        if isinstance(rec, Record):
+                            rec_dict = rec._to_dict(with_links=True)
+                        else:
+                            rec_dict = {p: v for p, v in rec.items()}
+                            partial = True
+                        record_data[idx] = rec_dict
+            case pd.DataFrame() | pl.DataFrame():
+                df_data = value
+            case Iterable():
                 record_data = {}
-                for idx, rec in value.items():
+                for idx, rec in enumerate(value):
                     if isinstance(rec, Record):
                         rec_dict = rec._to_dict(with_links=True)
+                        rec_idx = rec._index
                     else:
+                        assert has_type(rec, PartialRec)
                         rec_dict = {p: v for p, v in rec.items()}
+                        rec_idx = self.record_type._from_partial_dict(rec)._index
                         partial = True
-                    record_data[idx] = rec_dict
 
-        elif isinstance(value, DataFrame):
-            df_data = value
-        elif isinstance(value, Series):
-            df_data = value.rename("_value").to_frame()
-        elif isinstance(value, Iterable):
-            record_data = {}
-            for idx, rec in enumerate(value):
-                if isinstance(rec, Record):
-                    rec_dict = rec._to_dict(with_links=True)
-                    rec_idx = rec._index
-                else:
-                    rec_dict = {p: v for p, v in rec.items()}
-                    rec_idx = self.record_type._from_partial_dict(rec)._index
-                    partial = True
-
-                record_data[idx if list_idx else rec_idx] = rec_dict
+                    record_data[idx if self._has_list_index else rec_idx] = rec_dict
+            case _:
+                pass
 
         assert not (
             mode in ("upsert", "replace") and partial
@@ -3567,7 +3549,7 @@ class RecordSet(
                 idx: {p.prop.name: v for p, v in rec.items() if isinstance(p, ValueSet)}
                 for idx, rec in record_data.items()
             }
-            rel_data = self._get_record_rels(record_data, list_idx, covered)
+            rel_data = self._get_record_rels(record_data, self._has_list_index, covered)
 
             # Transform attribute data into DataFrame.
             df_data = pd.DataFrame.from_dict(attr_data, orient="index")
@@ -3579,18 +3561,32 @@ class RecordSet(
 
         # Load data into a temporary table.
         if df_data is not None:
-            value_set = self.dataset(df_data)
+            value_rec_type = dynamic_record_type(
+                f"{self.record_type.__name__}_{token_hex(5)}"
+            )
+            value_table = self.db._get_table(value_rec_type, writable=True)
+
+            if isinstance(df_data, pd.DataFrame):
+                df_data.to_sql(
+                    value_table.name, self.backend.engine, if_exists="replace"
+                )
+            else:
+                df_data.write_database(str(value_table), self.backend.engine)
+
         elif isinstance(value, sqla.Select):
-            value_set = self.dataset(value)
+            value_table = value.subquery()
+        elif isinstance(value, RecordSet):
+            value_table = value.select().subquery()
         else:
-            assert isinstance(value, RecordSet)
-            value_set = value
+            raise ValueError("Could not parse input data.")
 
         attrs_by_table = {
             self._get_table(rec): {
-                a for a in self.parent_type._attrs.values() if a.parent_type is rec
+                a
+                for a in self.record_type._attrs.values()
+                if a.record_set.record_type is rec
             }
-            for rec in self.parent_type._record_bases
+            for rec in self.record_type._record_bases
         }
 
         statements = []
@@ -3633,7 +3629,7 @@ class RecordSet(
                 # Do an insert-from-select operation, which updates on conflict:
                 statement = table.insert().from_select(
                     [a.name for a in attrs],
-                    value_set.select().subquery(),
+                    value_table,
                 )
 
                 if mode in ("replace", "upsert"):
@@ -3664,22 +3660,27 @@ class RecordSet(
             assert isinstance(self.root_table, sqla.Table), "Base must be a table."
 
             # Derive current select statement and join with value table, if exists.
-            select = self.select().join(
-                value_set.root_table,
-                reduce(
+            value_join_on = (
+                sqla.text("TRUE")
+                if self.single_key is not None
+                else reduce(
                     sqla.and_,
                     (
                         self.root_table.c[idx_col.name] == idx_col
-                        for idx_col in value_set.root_table.primary_key
+                        for idx_col in value_table.primary_key
                     ),
-                ),
+                )
+            )
+            select = self.select().join(
+                value_table,
+                value_join_on,
             )
 
             for table, attrs in attrs_by_table.items():
                 attr_names = {a.name for a in attrs}
                 values = {
                     c_name: c
-                    for c_name, c in value_set.root_table.columns.items()
+                    for c_name, c in value_table.columns.items()
                     if c_name in attr_names
                 }
 
@@ -3714,28 +3715,30 @@ class RecordSet(
             for statement in statements:
                 con.execute(statement)
 
-        # Drop the temporary table, if any.
-        if value_set is not None:
-            cast(sqla.Table, value_set.root_table).drop(self.backend.engine)
-
         if mode in ("replace", "upsert") and isinstance(self, RelSet):
             # Update incoming relations from parent records.
             if self.direct_rel is not True:
                 if issubclass(self.fk_record_type, self.parent_type):
                     # Case: parent links directly to child (n -> 1)
                     for fk, pk in self.direct_rel.fk_map.items():
-                        self.parent_set[fk] @= value_set[pk]
+                        self.parent_set[fk] @= value_table.select().with_only_columns(
+                            value_table.c[pk.prop.name]
+                        )
                 else:
                     # Case: parent and child are linked via assoc table (n <--> m)
                     # Update link table with new child indexes.
                     assert issubclass(self.link_type, Record)
                     ls = self.link_set
-                    ls &= value_set.select()
+                    ls &= value_table.select()
 
             # Note that the (1 <- n) case is already covered by updating
             # the child record directly, which includes all its foreign keys.
 
-        return self  # type: ignore
+        # Drop the temporary table, if any.
+        if isinstance(value_table, sqla.Table):
+            cast(sqla.Table, value_table).drop(self.backend.engine)
+
+        return
 
 
 @dataclass(kw_only=True, eq=False)
@@ -4449,11 +4452,15 @@ class DynRecordMeta(RecordMeta):
 class DynRecord(Record, metaclass=DynRecordMeta):
     """Dynamically defined record type."""
 
+    _template = True
+
 
 a = DynRecord
 
 
-def dynamic_record_type(name: str, props: Iterable[Prop] = []) -> type[DynRecord]:
+def dynamic_record_type(
+    name: str, props: Iterable[Prop[Any, Any]] = []
+) -> type[DynRecord]:
     """Create a dynamically defined record type."""
     return type(name, (DynRecord,), {p.name: p for p in props})
 
