@@ -9,7 +9,7 @@ from typing import Literal, reveal_type
 import pytest
 from py_research.db import (
     DB,
-    Attr,
+    Col,
     DataSource,
     Link,
     RecMap,
@@ -27,14 +27,14 @@ class SearchResult(Record):
 
     search: Rel[Search] = prop(primary_key="fk")
     result: Rel[Project] = prop(primary_key="fk")
-    score: Attr[float]
+    score: Col[float]
 
 
 class Search(Record[str]):
     """Defined search against the API."""
 
-    term: Attr[str] = prop(primary_key=True)
-    result_count: Attr[int]
+    term: Col[str] = prop(primary_key=True)
+    result_count: Col[int]
     results: Rel[dict[int, Project], SearchResult] = prop(
         order_by={SearchResult.score: -1},
         collection=lambda s: dict(enumerate(s)),
@@ -47,17 +47,17 @@ Assignment = Link["User", "Task"]
 class Task(RecUUID):
     """Link search to a result."""
 
-    name: Attr[str]
+    name: Col[str]
     project: Rel[Project]
     assignees: Rel[list[User], Assignment]
-    status: Attr[Literal["todo", "done"]]
+    status: Col[Literal["todo", "done"]]
 
 
 class User(RecUUID):
     """A generic user."""
 
-    name: Attr[str]
-    age: Attr[int]
+    name: Col[str]
+    age: Col[int]
     tasks: Rel[list[Task], Assignment]
 
     @property
@@ -71,17 +71,17 @@ class Membership(RecUUID):
 
     member: Rel[User] = prop(primary_key="fk")
     project: Rel[Project] = prop(primary_key="fk")
-    role: Attr[str] = prop(default="member")
+    role: Col[str] = prop(default="member")
 
 
 class Project(Record[int]):
     """A generic project record."""
 
-    number: Attr[int] = prop(primary_key=True)
-    name: Attr[str]
-    start: Attr[date]
-    end: Attr[date]
-    status: Attr[Literal["planned", "started", "done"]]
+    number: Col[int] = prop(primary_key=True)
+    name: Col[str]
+    start: Col[date]
+    end: Col[date]
+    status: Col[Literal["planned", "started", "done"]]
     org: Rel[Organization]
     tasks: Rel[set[Task]] = prop(link_from=Task.project)
     members: Rel[set[User]] = prop(link_via=Membership)
@@ -90,9 +90,9 @@ class Project(Record[int]):
 class Organization(RecUUID):
     """A generic organization record."""
 
-    name: Attr[str]
-    address: Attr[str]
-    city: Attr[str]
+    name: Col[str]
+    address: Col[str]
+    city: Col[str]
     projects: Rel[set[Project]] = prop(link_from=Project.org)
 
 

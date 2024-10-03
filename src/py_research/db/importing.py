@@ -20,7 +20,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import DB, Col, Record, RelDB, State
+from .base import DB, Col, Record, RelSet, State
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -182,11 +182,11 @@ class DataSelect:
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    Col[Any, Any, Any, Rec] | RelDB[Any, Any, Any, Any, Rec],
+    Col[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
-    Col[Any, Any, Any, Rec] | RelDB[Any, Any, Any, Any, Rec], DataSelect
+    Col[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Any, Rec], DataSelect
 ]
 
 
@@ -290,7 +290,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelDB[Rec2, Any, None, Any, Rec]
+    rel: RelSet[Rec2, Any, Any, Record, Any, Rec]
     """Relation to use for mapping."""
 
     link: "RecMap | None" = None
@@ -306,7 +306,7 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
             return {All: push_map}
         case Iterable() if has_type(push_map, Iterable[Col | RelMap]):
             return {
-                k.attr.name if isinstance(k, Col) else k.rel.rel.name: True
+                k.attr.name if isinstance(k, Col) else k.rel.name: True
                 for k in push_map
             }
         case _:
@@ -449,9 +449,9 @@ async def _load_record[  # noqa: C901
     if xmap.loader is not None:
         if db_cache is not None and isinstance(in_data, Hashable):
             # Try to load from cache directly.
-            recs = db_cache[rec_type][[in_data]].load()
+            recs = db_cache[rec_type][[in_data]]
             if len(recs) == 1:
-                rec = next(iter(recs.values()))
+                rec = next(iter(recs))
                 py_cache[rec_type][in_data] = rec
                 return rec
         # Load data from source and continue mapping.
@@ -469,23 +469,23 @@ async def _load_record[  # noqa: C901
         if isinstance(a, Col)
     }
 
-    rec_dict: dict[Col | RelDB, Any] = {a[0]: a[2] for a in attrs.values()}
+    rec_dict: dict[Col | RelSet, Any] = {a[0]: a[2] for a in attrs.values()}
     rec = rec_type._from_partial_dict(rec_dict)
 
     if rec._index in py_cache[rec_type]:
         return py_cache[rec_type][rec._index]
 
     if db_cache is not None:
-        recs = db_cache[rec_type][[rec._index]].load()
+        recs = db_cache[rec_type][[rec._index]]
         if len(recs) == 1:
-            rec = next(iter(recs.values()))
+            rec = next(iter(recs))
             py_cache[rec_type][rec._index] = rec
             return rec
 
     rels = {
-        cast(RelDB[Any, Any, Any, Any, Rec], rel): sel
+        cast(RelSet[Any, Any, Any, Any, Any, Rec], rel): sel
         for rel, sel in mapping.items()
-        if isinstance(rel, RelDB) and isinstance(sel, SubMap)
+        if isinstance(rel, RelSet) and isinstance(sel, SubMap)
     }
 
     # Handle nested data, which is to be extracted into separate records and referenced.
@@ -495,10 +495,10 @@ async def _load_record[  # noqa: C901
 
         rec_collection = None
         if rel.direct_rel is not True:
-            rec_collection = {} if rel.rel.map_by is not None else []
+            rec_collection = {} if rel.map_by is not None else []
             setattr(
                 rec,
-                rel.rel.name,
+                rel.name,
                 rec_collection,
             )
 
@@ -529,12 +529,12 @@ async def _load_record[  # noqa: C901
                 link_rec = None
 
             if rec_collection is None:
-                setattr(rec, rel.rel.name, target_rec)
-            elif rel.rel.map_by is not None:
+                setattr(rec, rel.name, target_rec)
+            elif rel.map_by is not None:
                 idx = (
-                    getattr(target_rec, rel.rel.map_by.name)
-                    if issubclass(target_type, rel.rel.map_by.parent_type)
-                    else getattr(link_rec, rel.rel.map_by.name)
+                    getattr(target_rec, rel.map_by.name)
+                    if issubclass(target_type, rel.map_by.parent_type)
+                    else getattr(link_rec, rel.map_by.name)
                 )
                 cast(dict, rec_collection)[idx] = target_rec
             else:
