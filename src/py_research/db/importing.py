@@ -20,7 +20,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import DB, Record, RelSet, State, ValueSet
+from .base import DB, Col, Record, RelDB, State
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -140,9 +140,9 @@ type NodeSelector = str | int | TreePath | type[All]
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
-type PushMap[Rec: Record] = _PushMapping[Rec] | ValueSet[
+type PushMap[Rec: Record] = _PushMapping[Rec] | Col[
     Any, Any, None, Rec
-] | RelMap | Iterable[ValueSet[Any, Any, None, Rec] | RelMap]
+] | RelMap | Iterable[Col[Any, Any, None, Rec] | RelMap]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -182,11 +182,11 @@ class DataSelect:
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    ValueSet[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Rec],
+    Col[Any, Any, Any, Rec] | RelDB[Any, Any, Any, Any, Rec],
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
-    ValueSet[Any, Any, Any, Rec] | RelSet[Any, Any, Any, Any, Rec], DataSelect
+    Col[Any, Any, Any, Rec] | RelDB[Any, Any, Any, Any, Rec], DataSelect
 ]
 
 
@@ -203,9 +203,7 @@ class RecMap[Rec: Record, Dat]:
     loader: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match: (
-        bool | ValueSet[Any, Any, None, Rec] | list[ValueSet[Any, Any, None, Rec]]
-    ) = False
+    match: bool | Col[Any, Any, None, Rec] | list[Col[Any, Any, None, Rec]] = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
@@ -292,7 +290,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec2, Any, None, Any, Rec]
+    rel: RelDB[Rec2, Any, None, Any, Rec]
     """Relation to use for mapping."""
 
     link: "RecMap | None" = None
@@ -304,11 +302,11 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
-        case ValueSet() | RelMap() | str():
+        case Col() | RelMap() | str():
             return {All: push_map}
-        case Iterable() if has_type(push_map, Iterable[ValueSet | RelMap]):
+        case Iterable() if has_type(push_map, Iterable[Col | RelMap]):
             return {
-                k.attr.name if isinstance(k, ValueSet) else k.rel.rel.name: True
+                k.attr.name if isinstance(k, Col) else k.rel.rel.name: True
                 for k in push_map
             }
         case _:
@@ -334,11 +332,11 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
         **{
             (
                 target
-                if isinstance(target, ValueSet)
+                if isinstance(target, Col)
                 else getattr(rec, _get_selector_name(sel))
             ): DataSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, ValueSet | bool)
+            if isinstance(target, Col | bool)
         },
         **{
             (
@@ -468,10 +466,10 @@ async def _load_record[  # noqa: C901
     attrs = {
         a.attr.name: (a, *list(sel.select(data, path).items())[0])
         for a, sel in mapping.items()
-        if isinstance(a, ValueSet)
+        if isinstance(a, Col)
     }
 
-    rec_dict: dict[ValueSet | RelSet, Any] = {a[0]: a[2] for a in attrs.values()}
+    rec_dict: dict[Col | RelDB, Any] = {a[0]: a[2] for a in attrs.values()}
     rec = rec_type._from_partial_dict(rec_dict)
 
     if rec._index in py_cache[rec_type]:
@@ -485,9 +483,9 @@ async def _load_record[  # noqa: C901
             return rec
 
     rels = {
-        cast(RelSet[Any, Any, Any, Any, Rec], rel): sel
+        cast(RelDB[Any, Any, Any, Any, Rec], rel): sel
         for rel, sel in mapping.items()
-        if isinstance(rel, RelSet) and isinstance(sel, SubMap)
+        if isinstance(rel, RelDB) and isinstance(sel, SubMap)
     }
 
     # Handle nested data, which is to be extracted into separate records and referenced.

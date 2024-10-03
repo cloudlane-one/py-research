@@ -37,7 +37,7 @@ def is_subtype(type_: SingleTypeDef | UnionType, supertype: T) -> TypeGuard[T]:
     return is_subhint(type_, supertype)
 
 
-def has_type(obj: Any, type_: type[T] | TypeAliasType) -> TypeGuard[T]:
+def has_type(obj: Any, type_: SingleTypeDef[T]) -> TypeGuard[T]:
     """Check if object is of given type hint."""
     return is_bearable(obj, type_)
 
