@@ -493,11 +493,14 @@ type DirectLink[Rec: Record] = (
     | dict[Col, Col[Rec, Any, Any, Any, Any]]
 )
 
-type BackLink[Rec: Record] = (RelSet[Any, Rec, Any, None, Any] | type[Rec])
+type BackLink[Rec: Record] = (RelSet[Any, Any, Any, Record, Any, Rec] | type[Rec])
 
 type BiLink[Rec: Record, Rec2: Record] = (
-    RelSet[Rec, Rec2, Any, None, Any]
-    | tuple[RelSet[Any, Rec2, Any, None, Any], RelSet[Rec, Rec2, Any, None, Any]]
+    RelSet[Rec, Any, Any, Record, Any, Rec2]
+    | tuple[
+        RelSet[Any, Any, Any, Record, Any, Rec2],
+        RelSet[Rec, Any, Any, Record, Any, Rec2],
+    ]
     | type[Rec2]
 )
 

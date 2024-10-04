@@ -17,6 +17,7 @@ from py_research.db import (
     RecUUID,
     Rel,
     RelMap,
+    RelSet,
     SubMap,
     prop,
 )
@@ -35,9 +36,8 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: Rel[dict[int, Project], SearchResult] = prop(
+    results: RelSet[Project, SearchResult] = prop(
         order_by={SearchResult.score: -1},
-        collection=lambda s: dict(enumerate(s)),
     )
 
 
@@ -49,7 +49,7 @@ class Task(RecUUID):
 
     name: Col[str]
     project: Rel[Project]
-    assignees: Rel[list[User], Assignment]
+    assignees: RelSet[User, Assignment]
     status: Col[Literal["todo", "done"]]
 
 
@@ -58,7 +58,7 @@ class User(RecUUID):
 
     name: Col[str]
     age: Col[int]
-    tasks: Rel[list[Task], Assignment]
+    tasks: RelSet[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -83,8 +83,8 @@ class Project(Record[int]):
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
     org: Rel[Organization]
-    tasks: Rel[set[Task]] = prop(link_from=Task.project)
-    members: Rel[set[User]] = prop(link_via=Membership)
+    tasks: RelSet[Task] = prop(link_from=Task.project)
+    members: RelSet[User] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -93,7 +93,7 @@ class Organization(RecUUID):
     name: Col[str]
     address: Col[str]
     city: Col[str]
-    projects: Rel[set[Project]] = prop(link_from=Project.org)
+    projects: RelSet[Project] = prop(link_from=Project.org)
 
 
 @pytest.fixture

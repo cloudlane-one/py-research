@@ -7,6 +7,7 @@ from .base import Prop as Prop
 from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Rel as Rel
+from .base import RelSet as RelSet
 from .base import Schema as Schema
 from .base import prop as prop
 from .conflicts import DataConflictError as DataConflictError
