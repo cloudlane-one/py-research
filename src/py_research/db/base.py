@@ -95,7 +95,7 @@ IT = TypeVar(
     "IT",
     covariant=True,
     bound="Index",
-    default="Index",
+    default="BaseIdx",
 )
 ITT = TypeVarTuple("ITT")
 
@@ -118,7 +118,7 @@ DT = TypeVar("DT", bound=pd.DataFrame | pl.DataFrame)
 LT = TypeVar("LT", covariant=True, bound="Record | None", default="Record | None")
 LT2 = TypeVar("LT2", bound="Record | None")
 
-CT = TypeVar("CT", bound="ColIdx", covariant=True)
+CT = TypeVar("CT", bound="ColIdx", covariant=True, default=Hashable)
 
 Params = ParamSpec("Params")
 
@@ -789,7 +789,7 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[RT2] | None = ...,
     link_via: BiLink[RT2, RT3] | None = ...,  # type: ignore[reportInvalidTypeVarUse]
-    order_by: Mapping[Col[Any, Any, Record, RT2 | RT3], int],
+    order_by: Mapping[Col[Any, Any, Record, RT2 | RT3, Any], int],
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -1365,15 +1365,19 @@ class Record(Generic[KT], metaclass=RecordMeta):
         cls, target: type[RT2]
     ) -> set[RelSet[Self, Any, SingleIdx, Self, Any, RT2]]:
         """Get all direct relations from a target record type to this type."""
-        return {
-            RelSet[Self, Any, SingleIdx, Self, Any, RT2](
-                on=rel.on,
-                _type=PropType(RelSet[cls, Any, Any, Any, Any, target]),
-                parent_type=cast(type[RT2], rel.fk_record_type),
-            )
-            for rel in cls._rels.values()
-            if issubclass(target, rel.fk_record_type)
-        }
+        rels: set[RelSet[Self, Any, SingleIdx, Self, Any, RT2]] = set()
+        for rel in cls._rels.values():
+            if issubclass(target, rel.fk_record_type):
+                rel = cast(RelSet[Self, Any, Any, Self, Any, RT2], rel)
+                rels.add(
+                    RelSet[Self, Any, SingleIdx, Self, Any, RT2](
+                        on=rel.on,
+                        _type=PropType(RelSet[cls, Any, Any, Any, Any, target]),
+                        parent_type=cast(type[RT2], rel.fk_record_type),
+                    )
+                )
+
+        return rels
 
     @classmethod
     def _rel(cls, other: type[RT2]) -> RelSet[RT2, Any, BaseIdx, None, R, Self]:
@@ -2006,7 +2010,7 @@ class DB(
         )
 
         rec = dynamic_record_type(name, props=props_from_data(data, fks))
-        ds = DB[DynRecord, BaseIdx, BT, RW](
+        ds = DB[DynRecord, BaseIdx, BT, RW, DynRecord](
             types={rec}, backend=self.backend, url=self.url
         )
 
@@ -2333,28 +2337,28 @@ class DB(
     @overload
     def __getitem__(  # type: ignore[reportOverlappingOverload]
         self: DB[Record[KT2], BaseIdx | Filt[BaseIdx], Any, Any, RT2],
-        key: RelSet[RT3, LT2, SingleIdx | None, None, Any, RT2],
+        key: RelSet[RT3, LT2, SingleIdx | None, Record, Any, RT2],
     ) -> RelSet[RT3, LT2, KT2, BT, WT, RT2, RT3, None]: ...
 
     # 7. Top-level relation selection, singular, single index
     @overload
     def __getitem__(
         self: DB[RT2, SingleIdx, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx, None, Any, RT2],
+        key: RelSet[RT3, LT2, SingleIdx, Record, Any, RT2],
     ) -> RelSet[RT3, LT2, SingleIdx, BT, WT, RT2, RT3, None]: ...
 
     # 8. Top-level relation selection, singular nullable, single index
     @overload
     def __getitem__(
         self: DB[RT2, SingleIdx, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx | None, None, Any, RT2],
+        key: RelSet[RT3, LT2, SingleIdx | None, Record, Any, RT2],
     ) -> RelSet[RT3 | Scalar[None], LT2, SingleIdx, BT, WT, RT2, RT3, None]: ...
 
     # 9. Top-level relation selection, singular, custom index
     @overload
     def __getitem__(
         self: DB[RT2, KT2 | Filt[KT2], Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx | None, None, Any, RT2],
+        key: RelSet[RT3, LT2, SingleIdx | None, Record, Any, RT2],
     ) -> RelSet[RT3, LT2, KT2, BT, WT, RT2, RT3, None]: ...
 
     # 10. Top-level relation selection, base plural, base index
@@ -2365,7 +2369,7 @@ class DB(
             RT3,
             LT2,
             BaseIdx | Filt[BaseIdx],
-            None,
+            Record,
             Any,
             RT2,
             Record[KT3],
@@ -2380,7 +2384,7 @@ class DB(
             RT3,
             LT2,
             BaseIdx | Filt[BaseIdx],
-            None,
+            Record,
             Any,
             RT2,
             Record[KT3],
@@ -2395,7 +2399,7 @@ class DB(
             RT3,
             LT2,
             BaseIdx | Filt[BaseIdx],
-            None,
+            Record,
             Any,
             RT2,
             Record[KT3],
@@ -2419,7 +2423,7 @@ class DB(
             RT3,
             LT2,
             BaseIdx | Filt[BaseIdx],
-            None,
+            Record,
             Any,
             RT2,
             Record[KT3],
@@ -2430,21 +2434,21 @@ class DB(
     @overload
     def __getitem__(
         self: DB[Record[KT2], BaseIdx | Filt[BaseIdx], Any, Any, RT2],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, RT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, RT2],
     ) -> RelSet[RT3, LT2, tuple[KT2, KT3], BT, WT, RT2, RT3, None]: ...
 
     # 15. Top-level relation selection, plural, single index
     @overload
     def __getitem__(  # type: ignore[reportOverlappingOverload]
         self: DB[RT2, SingleIdx],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, RT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, RT2],
     ) -> RelSet[RT3, LT2, KT3, BT, WT, RT2, RT3, None]: ...
 
     # 16. Top-level relation selection, plural, tuple index
     @overload
     def __getitem__(
         self: DB[Record[KT2], tuple[*ITT] | Filt[tuple[*ITT]], Any, Any, RT2],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, RT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, RT2],
     ) -> RelSet[
         RT3,
         LT2,
@@ -2460,98 +2464,98 @@ class DB(
     @overload
     def __getitem__(
         self: DB[RT2, KT2 | Filt[KT2], Any, Any],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, RT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, RT2],
     ) -> RelSet[RT3, LT2, tuple[KT2, KT3], BT, WT, RT2, RT3, None]: ...
 
     # 18. Nested relation selection, singular, base index
     @overload
     def __getitem__(
         self: DB[Record[KT2], BaseIdx | Filt[BaseIdx], Any, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx, None, Any, PT2],
+        key: RelSet[RT3, LT2, SingleIdx, Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxStart[KT2], BT, WT, PT2, RT3, None]: ...
 
     # 19. Nested relation selection, singular, single index
     @overload
     def __getitem__(
         self: DB[Any, SingleIdx, Any, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx, None, Any, PT2],
+        key: RelSet[RT3, LT2, SingleIdx, Record, Any, PT2],
     ) -> RelSet[RT3, LT2, Hashable | SingleIdx, BT, WT, PT2, RT3, None]: ...
 
     # 20. Nested relation selection, singular, tuple index
     @overload
     def __getitem__(
         self: DB[Any, tuple[*ITT] | Filt[tuple[*ITT]], Any, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx, None, Any, PT2],
+        key: RelSet[RT3, LT2, SingleIdx, Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxTupStart[*ITT], BT, WT, PT2, RT3, None]: ...
 
     # 21. Nested relation selection, singular, custom index
     @overload
     def __getitem__(
         self: DB[Any, KT2 | Filt[KT2], Any, Any, Any],
-        key: RelSet[RT3, LT2, SingleIdx, None, Any, PT2],
+        key: RelSet[RT3, LT2, SingleIdx, Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxStart[KT2], BT, WT, PT2, RT3, None]: ...
 
     # 22. Nested relation selection, base plural, base index
     @overload
     def __getitem__(
         self: DB[Record[KT2], BaseIdx | Filt[BaseIdx], Any, Any, Any],
-        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], None, Any, PT2, Record[KT3]],
+        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], Record, Any, PT2, Record[KT3]],
     ) -> RelSet[RT3, LT2, IdxStartEnd[KT2, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 23. Nested relation selection, base plural, single index
     @overload
     def __getitem__(
         self: DB[Any, SingleIdx, Any, Any, Any],
-        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], None, Any, PT2, Record[KT3]],
+        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], Record, Any, PT2, Record[KT3]],
     ) -> RelSet[RT3, LT2, IdxEnd[KT3], BT, WT, PT2, RT3, None]: ...
 
     # 24. Nested relation selection, base plural, tuple index
     @overload
     def __getitem__(
         self: DB[Any, tuple[*ITT] | Filt[tuple[*ITT]], Any, Any, Any],
-        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], None, Any, PT2, Record[KT3]],
+        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], Record, Any, PT2, Record[KT3]],
     ) -> RelSet[RT3, LT2, IdxTupStartEnd[*ITT, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 25. Nested relation selection, base plural, custom index
     @overload
     def __getitem__(
         self: DB[Any, KT2 | Filt[KT2], Any, Any, Any],
-        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], None, Any, PT2, Record[KT3]],
+        key: RelSet[RT3, LT2, BaseIdx | Filt[BaseIdx], Record, Any, PT2, Record[KT3]],
     ) -> RelSet[RT3, LT2, IdxStartEnd[KT2, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 26. Nested relation selection, plural, base index
     @overload
     def __getitem__(
         self: DB[Record[KT2], BaseIdx | Filt[BaseIdx], Any, Any, Any],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, PT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxStartEnd[KT2, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 27. Nested relation selection, plural, single index
     @overload
     def __getitem__(
         self: DB[Any, SingleIdx],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, PT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxEnd[KT3], BT, WT, PT2, RT3, None]: ...
 
     # 28. Nested relation selection, plural, tuple index
     @overload
     def __getitem__(
         self: DB[Any, tuple[*ITT] | Filt[tuple[*ITT]]],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, PT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxTupStartEnd[*ITT, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 29. Nested relation selection, plural, custom index
     @overload
     def __getitem__(
         self: DB[Any, KT2 | Filt[KT2]],
-        key: RelSet[RT3, LT2, KT3 | Filt[KT3], None, Any, PT2],
+        key: RelSet[RT3, LT2, KT3 | Filt[KT3], Record, Any, PT2],
     ) -> RelSet[RT3, LT2, IdxStartEnd[KT2, KT3], BT, WT, PT2, RT3, None]: ...
 
     # 30. Default relation selection
     @overload
     def __getitem__(
         self: DB[Any, Any, Any, Any, Any],
-        key: RelSet[RT3, LT2, Any, None, Any, PT2],
+        key: RelSet[RT3, LT2, Any, Record, Any, PT2],
     ) -> RelSet[RT3, LT2, Any, BT, WT, PT2, RT3, None]: ...
 
     # 31. RelSet: Merge selection, single index
@@ -2595,7 +2599,7 @@ class DB(
 
     # 34. RelSet: List selection
     @overload
-    def __getitem__(  # type: ignore
+    def __getitem__(
         self: RelSet[Record[KT2], LT2, MT2 | Filt[MT2], Any, Any, PT2],
         key: Iterable[KT2 | MT2],
     ) -> RelSet[RT, LT2, Filt[MT2], BT, WT, PT2, RT]: ...
@@ -3628,7 +3632,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         self.table = None
         self.is_literal = False
 
-    record_set: DB[RT, CT | BaseIdx | Filt[BaseIdx], BT, WT] = field(default=Record._db)
+    record_set: DB[RT, Any, BT, WT] = field(default=Record._db)
 
     index: bool = False
     primary_key: bool = False
@@ -3762,10 +3766,12 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
     # Implementation:
 
     def __getitem__(  # noqa: D105
-        self,
+        self: Col[Any, KT],
         key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
     ) -> Col[Any, Any, Any, Any, Any]:
-        return copy_and_override(self, Col, record_set=self.record_set[key])
+        return copy_and_override(
+            self, Col, record_set=self.record_set[cast(slice, key)]
+        )
 
     def __setitem__(
         self,
@@ -3861,14 +3867,11 @@ class RelSet(
                 return None
 
     @overload
-    def __get__(self, instance: Record, owner: type[Record]) -> RT: ...
-
-    @overload
     def __get__(
-        self,
+        self: RelSet[Any, Any, Any, Any, Any, Any, Any],
         instance: None,
         owner: type[RT2],
-    ) -> RelSet[RT, LT, KT, RT2, WT, RT2, RTS, TT]: ...
+    ) -> RelSet[RT, LT, IT, RT2, WT, RT2, RTS, TT]: ...
 
     @overload
     def __get__(
@@ -3882,7 +3885,7 @@ class RelSet(
         self: RelSet[Any, Any, SingleIdx, Any, Any, RT2, Any],
         instance: RT2,
         owner: type[RT2],
-    ) -> RelSet[RT, LT, KT, BT, WT, RT2, RTS, TT]: ...
+    ) -> RelSet[RT, LT, IT, BT, WT, RT2, RTS, TT]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...

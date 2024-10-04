@@ -36,7 +36,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: RelSet[Project, SearchResult] = prop(
+    results: RelSet[Project, SearchResult, int] = prop(
         order_by={SearchResult.score: -1},
     )
 
@@ -172,15 +172,14 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
 
     reveal_type(s := db[Search])
     reveal_type(s[Search.result_count])
-    reveal_type(sr := s[Search.results])
+    reveal_type(sr := s.__getitem__(Search.results))
     reveal_type(s[Search.results.rec.org])
-    reveal_type(sr0 := sr[("first", 0)])
+    reveal_type(sr[("first", 0)])
     reveal_type(sr[[("first", 0), ("second", 1)]])
     reveal_type(db[Project][0:3])
     reveal_type(db[Project][0])
     reveal_type(s[Search.term == "first"])
     reveal_type(sr[Project.name == "Project 1"])
-    reveal_type(sr0.load())
 
     s[Search.result_count] @= 10
     s[Search.term == "first"][Search.result_count] @= 5

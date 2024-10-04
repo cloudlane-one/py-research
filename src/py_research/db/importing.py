@@ -141,8 +141,8 @@ type NodeSelector = str | int | TreePath | type[All]
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
 type PushMap[Rec: Record] = _PushMapping[Rec] | Col[
-    Any, Any, None, Rec
-] | RelMap | Iterable[Col[Any, Any, None, Rec] | RelMap]
+    Any, Any, Record, Rec, Any
+] | RelMap | Iterable[Col[Any, Any, Record, Rec, Any] | RelMap]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -203,7 +203,7 @@ class RecMap[Rec: Record, Dat]:
     loader: Callable[[Dat], TreeData] | None = None
     """Loader function to load data for this record from a source."""
 
-    match: bool | Col[Any, Any, None, Rec] | list[Col[Any, Any, None, Rec]] = False
+    match: bool | Col[Any, Any, Record, Rec] | list[Col[Any, Any, Record, Rec]] = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
     """
@@ -290,7 +290,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec2, Any, Any, Record, Any, Rec]
+    rel: RelSet[Rec2, Any, Any, Record, Any, Rec, Rec2]
     """Relation to use for mapping."""
 
     link: "RecMap | None" = None
