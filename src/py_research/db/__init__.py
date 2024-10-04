@@ -1,5 +1,6 @@
 """Universal relational database interface for python."""
 
+from .base import DB as DB
 from .base import Col as Col
 from .base import Link as Link
 from .base import Prop as Prop

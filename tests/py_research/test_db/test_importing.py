@@ -8,6 +8,7 @@ from typing import Literal, reveal_type
 
 import pytest
 from py_research.db import (
+    DB,
     Col,
     DataSource,
     Link,
@@ -156,7 +157,7 @@ def data_source() -> DataSource:
 
 def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     """Test importing nested data dict to database."""
-    db = RecSet()
+    db = DB()
     rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
@@ -183,4 +184,4 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
 
     s[Search.result_count] @= 10
     s[Search.term == "first"][Search.result_count] @= 5
-    # s[Search.results] |= {("first", 0): db[Project][0].load()}
+    s[Search.results] |= {("first", 0): db[Project][0]}

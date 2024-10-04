@@ -20,7 +20,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import Col, Record, RecSet, RelSet, State
+from .base import DB, Col, Record, RelSet, State
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -292,7 +292,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec2, Any, Any, Any, Record, Rec, Any]
+    rel: RelSet[Rec2, Any, Any, Any, Record, Rec, Rec2]
     """Relation to use for mapping."""
 
     link: "RecMap | None" = None
@@ -440,7 +440,7 @@ async def _load_record[  # noqa: C901
     xmap: RecMap[Rec, Dat],
     in_data: Dat,
     py_cache: dict[type[Record], dict[Hashable, Any]],
-    db_cache: RecSet | None = None,
+    db_cache: DB | None = None,
     path: DirectPath = tuple(),
 ) -> Rec:
     """Map a data source to a record."""
@@ -529,9 +529,13 @@ async def _load_record[  # noqa: C901
                 setattr(rec, rel.name, target_rec)
             else:
                 idx = (
-                    getattr(target_rec, rel.map_by.name)
-                    if issubclass(target_type, rel.map_by.parent_type)
-                    else getattr(link_rec, rel.map_by.name)
+                    (
+                        getattr(target_rec, rel.map_by.name)
+                        if issubclass(target_type, rel.map_by.parent_type)
+                        else getattr(link_rec, rel.map_by.name)
+                    )
+                    if rel.map_by is not None
+                    else rec._index
                 )
                 rec_collection[idx] = target_rec
 
@@ -555,7 +559,7 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
         return {}
 
     async def load(
-        self, data: Dat, db: RecSet | None = None, cache_with_db: bool = True
+        self, data: Dat, db: DB | None = None, cache_with_db: bool = True
     ) -> Rec:
         """Parse recursive data from a data source.
 
@@ -571,9 +575,7 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
             A Record instance
         """
         db_cache = (
-            db
-            if cache_with_db and db is not None
-            else RecSet() if cache_with_db else None
+            db if cache_with_db and db is not None else DB() if cache_with_db else None
         )
 
         rec = await _load_record(self.rec, self, data, self._obj_cache, db_cache)
