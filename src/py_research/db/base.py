@@ -107,7 +107,7 @@ CdxT = TypeVarX("CdxT", bound="ColIdx", covariant=True, default=Hashable)
 Params = ParamSpec("Params")
 
 
-type Backend = LiteralString | None
+type BackendName = LiteralString | None
 
 type Index = Hashable | BaseIdx | SingleIdx | Filt
 type ColIdx = Hashable | SingleIdx
@@ -311,19 +311,28 @@ class PropType(Generic[VarT]):
     ctx: ModuleType | None = None
     typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
 
-    def prop_type(self) -> type[Prop]:
+    def prop_type(self) -> type[Prop] | type[None]:
         """Resolve the property type reference."""
-        hint = self.hint or Prop
+        hint = self.hint
+
+        if hint is None:
+            return NoneType
 
         if isinstance(hint, type | GenericAlias):
             base = get_origin(hint)
-            assert base is not None and issubclass(base, Prop)
+            if base is None or not issubclass(base, Prop):
+                return NoneType
+
             return base
         else:
             return (
                 Col
                 if "Col" in hint
-                else RelSet if "RelSet" in hint else Rel if "Rel" in hint else Prop
+                else (
+                    RelSet
+                    if "RelSet" in hint
+                    else Rel if "Rel" in hint else Prop if "Prop" in hint else NoneType
+                )
             )
 
     def _to_typedef(
@@ -850,7 +859,7 @@ def prop(
             ),
             order_by=order_by,
             map_by=map_by,
-            _type=PropType(),
+            _type=PropType(RelSet[Record]),
         )
 
     if getter is not None and not (primary_key or index or sql_getter is not None):
@@ -874,7 +883,7 @@ def prop(
         getter=getter,
         setter=setter,
         sql_getter=sql_getter,
-        _type=PropType(),
+        _type=PropType(Col[object]),
     )
 
 
@@ -891,27 +900,32 @@ class RecordMeta(type):
     _defined_cols: dict[str, Col]
     _defined_rels: dict[str, RelSet]
 
-    _is_record: bool
-    _template: bool
-    _src_mod: ModuleType | None
+    _is_record: bool = False
+    _template: bool = False
+    _src_mod: ModuleType | None = None
 
     def __init__(cls, name, bases, dct):
         """Initialize a new record type."""
         super().__init__(name, bases, dct)
 
+        if cls._src_mod is None:
+            cls._src_mod = getmodule(cls)
+
         prop_defs = {
-            name: PropType(hint, ctx=cls._src_mod)
+            name: pt
             for name, hint in get_annotations(cls).items()
-            if issubclass(get_origin(hint) or type, Prop)
+            if issubclass((pt := PropType(hint, ctx=cls._src_mod)).prop_type(), Prop)
             or (isinstance(hint, str) and ("Attr" in hint or "Rel" in hint))
         }
 
         for prop_name, prop_type in prop_defs.items():
             if prop_name not in cls.__dict__:
+                pt = prop_type.prop_type()
+                assert issubclass(pt, Prop)
                 setattr(
                     cls,
                     prop_name,
-                    prop_type.prop_type()(_name=prop_name, _type=prop_type),
+                    pt(_name=prop_name, _type=prop_type),
                 )
             else:
                 prop = cls.__dict__[prop_name]
@@ -1050,7 +1064,7 @@ class RecordMeta(type):
         return {rel.record_type for rel in cls._rels.values()}
 
 
-class RecDB[R: Record]:
+class DefaultRecSet[R: Record]:
     """Descriptor to access the database of a record."""
 
     def __get__(  # noqa: D105
@@ -1088,16 +1102,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
     _is_record: ClassVar[bool] = True
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
-    _set: RecDB[Self] = RecDB[Self]()
+    _set: DefaultRecSet[Self] = DefaultRecSet[Self]()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Initialize a new record subclass."""
         super().__init_subclass__(**kwargs)
         cls._is_record = False
-        if "_template" not in cls.__dict__:
-            cls._template = False
-        if "_src_mod" not in cls.__dict__:
-            cls._src_mod = getmodule(cls)
 
         cls.__dataclass_fields__ = {
             **{
@@ -1421,7 +1431,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return self._to_dict(name_keys=True, only_loaded=False).__repr__()
 
 
-RecT = TypeVar("RecT", covariant=True, bound="Record")
+RecT = TypeVarX("RecT", covariant=True, bound="Record", default="Record")
 RecTd = TypeVarX("RecTd", covariant=True, bound="Record", default="Record")
 RecTt = TypeVarTuple("RecTt")
 RecT2 = TypeVar("RecT2", bound="Record")
@@ -1429,20 +1439,20 @@ RecT3 = TypeVar("RecT3", bound="Record")
 
 BsT = TypeVarX(
     "BsT",
-    bound="Backend | Record",
+    bound="BackendName | Record",
     default="Record",
     covariant=True,
 )
 
 BkT = TypeVarX(
     "BkT",
-    bound="Backend | Record",
+    bound="BackendName | Record",
     default=None,
     covariant=True,
 )
 BtT = TypeVar(
     "BtT",
-    bound="Backend",
+    bound="BackendName",
 )
 
 ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
@@ -1534,8 +1544,8 @@ class RecSet(
 ):
     """Record dataset."""
 
-    record_type: type[RecT] = Record
     db: DB[RwT, BsT] = field(default_factory=lambda: DB[RwT, BsT]())
+    record_type: type[RecT] = Record
 
     keys: Sequence[slice | list[Hashable] | Hashable] = field(default_factory=list)
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
@@ -1988,7 +1998,7 @@ class RecSet(
     # 37. RelSet: Index value selection
     @overload
     def __getitem__(
-        self: RelSet[Record[KeyT2], LnT2, KeyT3 | Index, Any, Backend, ParT2],
+        self: RelSet[Record[KeyT2], LnT2, KeyT3 | Index, Any, BackendName, ParT2],
         key: KeyT2 | KeyT3,
     ) -> RecT: ...
 
@@ -2034,7 +2044,7 @@ class RecSet(
     # 44. Index value selection
     @overload
     def __getitem__(
-        self: RecSet[Record[KeyT2], KeyT3 | Index, Any, Backend], key: KeyT2 | KeyT3
+        self: RecSet[Record[KeyT2], KeyT3 | Index, Any, BackendName], key: KeyT2 | KeyT3
     ) -> RecT: ...
 
     # Implementation:
@@ -2087,7 +2097,7 @@ class RecSet(
                         self.single_key is None or key == self.single_key
                     ), "Cannot select multiple single record keys"
 
-                if isinstance(self.db.backend, type):
+                if isinstance(self.db.b_name, type):
                     return copy_and_override(self, type(self), keys=[*self.keys, key])
 
                 return list(iter(self))[0]
@@ -2404,10 +2414,30 @@ class RecSet(
             for statement in statements:
                 con.execute(statement)
 
+    @overload
+    def extract(
+        *,
+        self: RecSet[Record, Any, Any, Any, Any],
+        aggs: Mapping[RelSet, Agg] | None = ...,
+        to_backend: None = ...,
+        overlay_with_schema: bool = ...,
+    ) -> DB[RW, BsT]: ...
+
+    @overload
+    def extract(
+        *,
+        self: RecSet[Record, Any, Any, Any, Any],
+        aggs: Mapping[RelSet, Agg] | None = ...,
+        to_backend: Backend[BtT],
+        overlay_with_schema: bool = ...,
+    ) -> DB[RW, BtT]: ...
+
     def extract(
         self: RecSet[Record, Any, Any, Any, Any],
         aggs: Mapping[RelSet, Agg] | None = None,
-    ) -> DB[RW, BsT]:
+        to_backend: Backend[BtT] | None = None,
+        overlay_with_schema: bool = False,
+    ) -> DB[RW, BsT | BtT]:
         """Extract a new database instance from the current selection."""
         # Get all rec types in the schema.
         rec_types = self.record_types
@@ -2470,17 +2500,37 @@ class RecSet(
             aggregations[rec] = sqla.union(*selects).select()
 
         # Create a new database overlay for the results.
-        new_db = copy_and_override(self.db, DB, overlay=f"temp_{token_hex(10)}")
+        overlay_db = copy_and_override(
+            self.db,
+            DB,
+            overlay=f"temp_{token_hex(10)}",
+            overlay_with_schema=overlay_with_schema,
+        )
 
         # Overlay the new tables onto the new database.
-        for rec in rec_types:
-            if rec in replacements:
-                new_db[rec] &= replacements[rec]
+        for rec in replacements:
+            overlay_db[rec] &= replacements[rec]
 
         for rec, agg_select in aggregations.items():
-            new_db[rec] &= agg_select
+            overlay_db[rec] &= agg_select
 
-        return new_db
+        # Transfer table to the new database.
+        if to_backend is not None:
+            other_db = copy_and_override(
+                self.db,
+                DB,
+                overlay=overlay_db.overlay,
+                overlay_with_schema=overlay_with_schema,
+                b_name=to_backend.b_name,
+                url=to_backend.url,
+            )
+
+            for rec in set(replacements) | set(aggregations):
+                other_db[rec] &= overlay_db[rec].to_df()
+
+            overlay_db = other_db
+
+        return overlay_db
 
     def __or__(self, other: RecSet[RecT, IdxT, Any, BsT]) -> RecSet[RecT, IdxT | IdxT]:
         """Union two datasets."""
@@ -2495,7 +2545,7 @@ class RecSet(
             assert isinstance(res, int)
             return res
 
-    def __contains__(self: RecSet[Any, Any, Any, Backend], key: Hashable) -> bool:
+    def __contains__(self: RecSet[Any, Any, Any, BackendName], key: Hashable) -> bool:
         """Check if a record is in the dataset."""
         return len(self[key]) > 0
 
@@ -2987,7 +3037,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         self.table = None
         self.is_literal = False
 
-    record_set: RecSet[RecT, Any, RwT, BsT] = field(default=Record._set)
+    record_set: RecSet[RecT, Any, RwT, BsT] = field(default_factory=lambda: Record._set)
 
     index: bool = False
     primary_key: bool = False
@@ -3171,11 +3221,12 @@ class RelSet(
     order_by: Mapping[Col[Any, Any, Any, Record], int] | None = None
     map_by: Col[Any, Any, Any, Record] | None = None
 
-    def __post_init__(self) -> None:
+    @cached_property
+    def record_type(self) -> type[RecT]:  # type: ignore[reportIncompatibleVariableOverride]
         """Record type of the set."""
-        self.record_type = cast(type[RecT], self._type.record_type())
+        return cast(type[RecT], self._type.record_type())
 
-    @property
+    @cached_property
     def dyn_target_type(self) -> type[RecT] | None:
         """Dynamic target type of the relation."""
         match self.on:
@@ -3670,16 +3721,21 @@ class RelSet(
 
 
 @dataclass(kw_only=True, eq=False)
-class DB(
-    RecSet[Record, BaseIdx, RwT, BkT, Record, None],
-):
-    """Database."""
+class Backend(Generic[BkT]):
+    """Data backend."""
 
-    backend: BkT = None
+    b_name: BkT = None
     """Unique name to identify this database's backend by."""
 
     url: sqla.URL | CloudPath | HttpFile | Path | None = None
     """Connection URL or path."""
+
+
+@dataclass(kw_only=True, eq=False)
+class DB(RecSet[Record, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
+    """Database."""
+
+    db: DB[RwT, BkT] = field(init=False, repr=False)
 
     types: (
         Mapping[
@@ -3703,7 +3759,7 @@ class DB(
 
     validate_on_init: bool = True
     create_cross_fk: bool = True
-    overlay_with_schemas: bool = True
+    overlay_with_schema: bool = True
 
     _schema_types: Mapping[
         type[Record], Literal[True] | Require | str | sqla.TableClause
@@ -3768,13 +3824,13 @@ class DB(
         if self.validate_on_init:
             self.validate()
 
-        if self.overlay is not None and self.overlay_with_schemas:
+        if self.overlay is not None and self.overlay_with_schema:
             self._ensure_schema_exists(self.overlay)
 
     @cached_property
     def backend_id(self) -> str:
         """Unique name of backend."""
-        return self.backend if isinstance(self.backend, str) else token_hex(5)
+        return self.b_name if isinstance(self.b_name, str) else token_hex(5)
 
     @cached_property
     def backend_type(
@@ -4088,28 +4144,6 @@ class DB(
 
         return ds
 
-    def transfer(
-        self,
-        to: DB[RW, BtT],
-    ) -> DB[RW, BtT]:
-        """Extract a new database instance from the current selection."""
-        # Get all rec types in the schema.
-        rec_types = self._schema_types.keys()
-
-        # Create a new database with given backend.
-        new_db = copy_and_override(
-            to,
-            DB[RW, BtT],
-            overlay=self.overlay,
-            overlay_with_schemas=self.overlay_with_schemas,
-        )
-
-        # Overlay the new tables onto the new database.
-        for rec in rec_types:
-            new_db[rec] &= self[rec].to_df()
-
-        return new_db
-
     def _get_table(
         self, rec: type[Record] | None = None, writable: bool = False
     ) -> sqla.Table:
@@ -4120,10 +4154,10 @@ class DB(
             self.subs[rec] = sqla.table(
                 (
                     (self.overlay + "_" + rec._default_table_name())
-                    if not self.overlay_with_schemas
+                    if not self.overlay_with_schema
                     else rec._default_table_name()
                 ),
-                schema=self.overlay if self.overlay_with_schemas else None,
+                schema=self.overlay if self.overlay_with_schema else None,
             )
 
         table_name = rec._sql_table_name(self.subs)
@@ -4138,7 +4172,7 @@ class DB(
         table = rec._table(new_metadata, self.subs)
 
         # Create any missing tables in the database.
-        if self.backend is not None:
+        if self.b_name is not None:
             new_tables = set(new_metadata.tables) - set(self._metadata.tables)
             if len(new_tables) > 0:
                 new_metadata.create_all(self.engine, checkfirst=True)
@@ -4157,7 +4191,7 @@ class DB(
         table = rec._joined_table(new_metadata, self.subs)
 
         # Create any missing tables in the database.
-        if self.backend is not None:
+        if self.b_name is not None:
             new_tables = set(new_metadata.tables) - set(self._metadata.tables)
             if len(new_tables) > 0:
                 new_metadata.create_all(self.engine, checkfirst=True)
@@ -4248,7 +4282,7 @@ class DB(
 
     def _load_from_excel(self, record_types: list[type[Record]] | None = None) -> None:
         """Load all tables from Excel."""
-        assert self.backend is not None
+        assert self.b_name is not None
         assert self.backend_type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.url, Path | CloudPath | HttpFile)
 
@@ -4264,7 +4298,7 @@ class DB(
         self, record_types: Iterable[type[Record]] | None = None
     ) -> None:
         """Save all (or selected) tables to Excel."""
-        assert self.backend is not None
+        assert self.b_name is not None
         assert self.backend_type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.url, Path | CloudPath | HttpFile)
 
@@ -4283,7 +4317,7 @@ class DB(
 
     def _delete_from_excel(self, record_types: Iterable[type[Record]]) -> None:
         """Delete selected table from Excel."""
-        assert self.backend is not None
+        assert self.b_name is not None
         assert self.backend_type == "excel-file", "Backend must be an Excel file."
         assert isinstance(self.url, Path | CloudPath | HttpFile)
 

@@ -7,7 +7,7 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from itertools import zip_longest
-from typing import Any, ParamSpec, TypeVar, cast
+from typing import Any, ParamSpec, TypeVar, cast, get_origin
 
 import numpy.typing as npt
 import pandas as pd
@@ -41,6 +41,10 @@ def copy_and_override(
     Warning:
         Does not work for kw_only dataclasses and InitVars (yet).
     """
+    if not isinstance(_init, type):
+        _init = get_origin(_init)
+        assert _init is not None
+
     target_fields = set(fields(cast(type, _init)))
     obj_fields = {
         f: getattr(obj, f.name) for f in fields(obj) if f.init and f in target_fields

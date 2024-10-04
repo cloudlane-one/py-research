@@ -44,5 +44,8 @@ def has_type(obj: Any, type_: SingleTypeDef[T] | UnionType) -> TypeGuard[T]:
 
 def get_lowest_common_base(types: Iterable[type]) -> type:
     """Return the lowest common base of given types."""
+    if len(list(types)) == 0:
+        return object
+
     bases_of_all = reduce(set.intersection, (set(getmro(t)) for t in types))
     return max(bases_of_all, key=lambda b: sum(issubclass(b, t) for t in bases_of_all))

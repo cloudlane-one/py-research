@@ -308,8 +308,7 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
             return {All: push_map}
         case Iterable() if has_type(push_map, Iterable[Col | RelMap]):
             return {
-                k.attr.name if isinstance(k, Col) else k.rel.name: True
-                for k in push_map
+                k.name if isinstance(k, Col) else k.rel.name: True for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -466,7 +465,7 @@ async def _load_record[  # noqa: C901
     mapping = xmap.full_map(rec_type)
 
     attrs = {
-        a.attr.name: (a, *list(sel.select(data, path).items())[0])
+        a.name: (a, *list(sel.select(data, path).items())[0])
         for a, sel in mapping.items()
         if isinstance(a, Col)
     }
