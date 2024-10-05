@@ -441,22 +441,22 @@ async def _load_record[  # noqa: C901
     rec_type: type[Rec],
     xmap: RecMap[Rec, Dat],
     in_data: Dat,
-    py_cache: dict[type[Record], dict[Hashable, Any]],
-    db_cache: DB | None = None,
+    obj_cache: dict[type[Record], dict[Hashable, Any]],
+    db: DB | None = None,
     path: DirectPath = tuple(),
 ) -> Rec:
     """Map a data source to a record."""
-    if rec_type not in py_cache:
-        py_cache[rec_type] = {}
+    if rec_type not in obj_cache:
+        obj_cache[rec_type] = {}
 
     data: TreeData
     if xmap.loader is not None:
-        if db_cache is not None and isinstance(in_data, Hashable):
+        if db is not None and isinstance(in_data, Hashable):
             # Try to load from cache directly.
-            recs = db_cache[rec_type][[in_data]]
+            recs = db[rec_type][[in_data]]
             if len(recs) == 1:
                 rec = next(iter(recs))
-                py_cache[rec_type][in_data] = rec
+                obj_cache[rec_type][in_data] = rec
                 return rec
         # Load data from source and continue mapping.
         data = xmap.loader(in_data)
@@ -476,14 +476,14 @@ async def _load_record[  # noqa: C901
     rec_dict: dict[Col | RelSet, Any] = {a[0]: a[2] for a in attrs.values()}
     rec = rec_type._from_partial_dict(rec_dict)
 
-    if rec._index in py_cache[rec_type]:
-        return py_cache[rec_type][rec._index]
+    if rec._index in obj_cache[rec_type]:
+        return obj_cache[rec_type][rec._index]
 
-    if db_cache is not None:
-        recs = db_cache[rec_type][[rec._index]]
+    if db is not None:
+        recs = db[rec_type][[rec._index]]
         if len(recs) == 1:
             rec = next(iter(recs))
-            py_cache[rec_type][rec._index] = rec
+            obj_cache[rec_type][rec._index] = rec
             return rec
 
     rels = {
@@ -507,8 +507,8 @@ async def _load_record[  # noqa: C901
                 target_type,
                 target_map,
                 sub_data,
-                py_cache,
-                db_cache,
+                obj_cache,
+                db,
                 path + sub_path,
             )
 
@@ -520,8 +520,8 @@ async def _load_record[  # noqa: C901
                     rel.link_type,
                     target_map.link,
                     sub_data,
-                    py_cache,
-                    db_cache,
+                    obj_cache,
+                    db,
                     path + sub_path,
                 )
             else:
@@ -544,7 +544,10 @@ async def _load_record[  # noqa: C901
         if rec_collection is not None:
             setattr(rec, rel.name, rec_collection)
 
-    py_cache[rec_type][rec._index] = rec
+    obj_cache[rec_type][rec._index] = rec
+
+    if db is not None and rec._db is not db:
+        db[rec_type] |= rec
 
     return rec
 
@@ -560,9 +563,7 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
         return {}
 
-    async def load(
-        self, data: Dat, db: DB | None = None, cache_with_db: bool = True
-    ) -> Rec:
+    async def load(self, data: Dat, db: DB | None = None) -> Rec:
         """Parse recursive data from a data source.
 
         Args:
@@ -576,15 +577,4 @@ class DataSource[Rec: Record, Dat](RecMap[Rec, Dat]):
         Returns:
             A Record instance
         """
-        db_cache = (
-            db if cache_with_db and db is not None else DB() if cache_with_db else None
-        )
-
-        rec = await _load_record(self.rec, self, data, self._obj_cache, db_cache)
-
-        if db_cache is not None:
-            db_cache[type(rec)] |= rec
-        elif db is not None:
-            db[type(rec)] |= rec
-
-        return rec
+        return await _load_record(self.rec, self, data, self._obj_cache, db)

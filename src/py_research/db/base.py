@@ -859,7 +859,7 @@ def prop(
                 link_on
                 if link_on is not None
                 else link_from if link_from is not None else link_via
-            ),
+            ),  # type: ignore[reportArgumentType]
             order_by=order_by,
             map_by=map_by,
             _type=PropType(RelSet[Record]),
@@ -2888,8 +2888,7 @@ class RecSet(
             case sqla.Select():
                 mutations.append((self_sel, value.subquery(), mode))
             case RecSet():
-                mutations.append((self_sel, value.select().subquery(), mode))
-                if value.db is self.db:
+                if value.db is not self.db:
                     remote_db = value if isinstance(value, DB) else value.extract()
                     for s in remote_db._schema_types:
                         if remote_db.b_id == self.db.b_id:
@@ -2898,6 +2897,8 @@ class RecSet(
                             mutations.append(
                                 (s, self._df_to_table(remote_db[s].to_df()), "upsert")
                             )
+
+                mutations.append((self_sel, value.select().subquery(), mode))
             case pd.DataFrame() | pl.DataFrame():
                 mutations.append((self_sel, self._df_to_table(value), mode))
             case Record():
@@ -2931,9 +2932,7 @@ class RecSet(
 
             for db, recs in remote_records.items():
                 rec_ids = [rec._index for rec in recs.values()]
-
                 remote_set = db[self.record_type][rec_ids]
-                mutations.append((self_sel, remote_set.select().subquery(), mode))
 
                 remote_db = (
                     db
@@ -2947,6 +2946,8 @@ class RecSet(
                         mutations.append(
                             (s, self._df_to_table(remote_db[s].to_df()), "upsert")
                         )
+
+                mutations.append((self_sel, remote_set.select().subquery(), mode))
 
         for rec, value_table, sub_mode in mutations:
             # Get the statements to perform the mutation.
