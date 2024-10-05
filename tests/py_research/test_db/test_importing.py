@@ -83,7 +83,7 @@ class Project(Record[int]):
     start: Col[date]
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
-    org: Rel[Organization]
+    org: Rel[Organization | None]
     tasks: RelSet[Task] = prop(link_from=Task.project)
     members: RelSet[User] = prop(link_via=Membership)
 
@@ -181,7 +181,8 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     reveal_type(db[Project][0])
     reveal_type(s[Search.term == "first"])
     reveal_type(sr[Project.name == "Project 1"])
+    reveal_type(list(iter(db[Project])))
 
     s[Search.result_count] @= 10
     s[Search.term == "first"][Search.result_count] @= 5
-    s[Search.results] |= {("first", 0): db[Project][0]}
+    s[Search.results] |= {("first", 0): list(iter(db[Project]))[0]}

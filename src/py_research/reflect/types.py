@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from functools import reduce
 from inspect import getmro
-from types import UnionType
+from types import NoneType, UnionType
 from typing import (
     Any,
     NewType,
@@ -11,6 +11,8 @@ from typing import (
     TypeAliasType,
     TypeGuard,
     TypeVar,
+    get_args,
+    get_origin,
     runtime_checkable,
 )
 
@@ -49,3 +51,9 @@ def get_lowest_common_base(types: Iterable[type]) -> type:
 
     bases_of_all = reduce(set.intersection, (set(getmro(t)) for t in types))
     return max(bases_of_all, key=lambda b: sum(issubclass(b, t) for t in bases_of_all))
+
+
+def extract_nullable_type(type_: SingleTypeDef[T | None] | UnionType) -> type[T] | None:
+    """Return the lowest common base of given types."""
+    notna_args = {arg for arg in get_args(type_) if get_origin(arg) is not NoneType}
+    return get_lowest_common_base(notna_args) if notna_args else None

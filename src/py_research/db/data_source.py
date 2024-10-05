@@ -20,7 +20,7 @@ from lxml.etree import _ElementTree as ElementTree
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 
-from .base import DB, Col, Record, RelSet, State
+from .base import DB, Col, LocalStat, Record, RelSet, State
 from .conflicts import DataConflictPolicy
 
 type TreeData = Mapping[str | int, Any] | ElementTree | Sequence
@@ -141,8 +141,8 @@ type NodeSelector = str | int | TreePath | type[All]
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
 type PushMap[Rec: Record] = _PushMapping[Rec] | Col[
-    Any, Any, Any, Record, Rec
-] | RelMap | Iterable[Col[Any, Any, Any, Record, Rec] | RelMap]
+    Any, Any, Any, LocalStat, Rec
+] | RelMap | Iterable[Col[Any, Any, Any, LocalStat, Rec] | RelMap]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -182,11 +182,12 @@ class DataSelect:
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    Col[Any, Any, Any, Record, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
+    Col[Any, Any, Any, LocalStat, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
-    Col[Any, Any, Any, Record, Rec] | RelSet[Any, Any, Any, Any, Any, Rec], DataSelect
+    Col[Any, Any, Any, LocalStat, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
+    DataSelect,
 ]
 
 
@@ -204,7 +205,9 @@ class RecMap[Rec: Record, Dat]:
     """Loader function to load data for this record from a source."""
 
     match: (
-        bool | Col[Any, Any, Any, Record, Rec] | list[Col[Any, Any, Any, Record, Rec]]
+        bool
+        | Col[Any, Any, Any, LocalStat, Rec]
+        | list[Col[Any, Any, Any, LocalStat, Rec]]
     ) = False
     """Try to match this mapped data to target record table (by given attr)
     before creating a new row.
@@ -292,7 +295,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Rec2: Record, Dat](RecMap[Rec2, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec2, Any, Any, Any, Record, Rec, Rec2]
+    rel: RelSet[Rec2, Any, Any, Any, LocalStat, Rec, Rec2]
     """Relation to use for mapping."""
 
     link: "RecMap | None" = None
