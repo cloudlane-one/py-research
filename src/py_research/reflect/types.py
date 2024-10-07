@@ -6,22 +6,39 @@ from inspect import getmro
 from types import NoneType, UnionType
 from typing import (
     Any,
+    ForwardRef,
     NewType,
     Protocol,
     TypeAliasType,
     TypeGuard,
     TypeVar,
+    Union,
     get_args,
     get_origin,
     runtime_checkable,
 )
 
 from beartype.door import is_bearable, is_subhint
-from sqlalchemy.util.typing import GenericProtocol
 
 T = TypeVar("T")
 T_cov = TypeVar("T_cov", covariant=True)
 U_cov = TypeVar("U_cov", covariant=True)
+
+_AnnotationScanType = Union[
+    type[Any], str, ForwardRef, NewType, TypeAliasType, "GenericProtocol[Any]"
+]
+
+
+@runtime_checkable
+class GenericProtocol(Protocol[T]):
+    """protocol for generic types.
+
+    this since Python.typing _GenericAlias is private
+
+    """
+
+    __args__: tuple[_AnnotationScanType, ...]
+    __origin__: type[T]
 
 
 type SingleTypeDef[T] = GenericProtocol[T] | TypeAliasType | NewType | type[T]
@@ -54,6 +71,11 @@ def get_lowest_common_base(types: Iterable[type]) -> type:
 
 
 def extract_nullable_type(type_: SingleTypeDef[T | None] | UnionType) -> type[T] | None:
-    """Return the lowest common base of given types."""
-    notna_args = {arg for arg in get_args(type_) if get_origin(arg) is not NoneType}
+    """Extract the non-none base type of a union."""
+    args = get_args(type_)
+
+    if len(args) == 0 and has_type(type_, SingleTypeDef):
+        return type_
+
+    notna_args = {arg for arg in args if get_origin(arg) is not NoneType}
     return get_lowest_common_base(notna_args) if notna_args else None

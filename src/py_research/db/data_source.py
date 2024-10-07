@@ -474,7 +474,7 @@ async def _load_record[  # noqa: C901
     }
 
     rec_dict: dict[Col | RelSet, Any] = {a[0]: a[2] for a in attrs.values()}
-    rec = rec_type._from_partial_dict(rec_dict)
+    rec = rec_type._from_partial_dict(rec_dict, name_keys=False)
 
     if rec._index in obj_cache[rec_type]:
         return obj_cache[rec_type][rec._index]

@@ -73,9 +73,6 @@ def gen_int_hash(_ctx: set[int], obj: Any) -> int:
         return 0
 
     match obj:
-        case Hashable():
-            _ctx.add(id(obj))
-            return hash(obj)
         case None:
             return 0
         case type() | ModuleType() | TypeAliasType():
@@ -111,6 +108,9 @@ def gen_int_hash(_ctx: set[int], obj: Any) -> int:
         case set():
             _ctx.add(id(obj))
             return sum(gen_int_hash(item) for item in obj)
+        case Hashable():
+            _ctx.add(id(obj))
+            return hash(obj)
         case DataclassInstance():
             _ctx.add(id(obj))
             return gen_int_hash({f.name: getattr(obj, f.name) for f in fields(obj)})
