@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC
 from collections.abc import (
     Callable,
     Generator,
@@ -242,7 +243,7 @@ def props_from_data(
             primary_key=True,
             _name=name if not is_rel else f"fk_{name}",
             _type=PropType(Col[value_type]),
-            record_set=DynRecord._db,
+            parent_type=DynRecord,
         )
         return (
             col
@@ -448,9 +449,15 @@ class PropType(Generic[VarT]):
         return rec_type
 
 
+ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
+ParT2 = TypeVar("ParT2", bound="Record")
+
+
 @dataclass(eq=False)
-class Prop(Generic[VarT, RwT]):
+class Prop(ABC, Generic[VarT, RwT, ParT]):
     """Reference a property of a record."""
+
+    parent_type: type[ParT] = field(default_factory=lambda: Record)
 
     _type: PropType[VarT] = field(default_factory=PropType[VarT])
     _name: str | None = None
@@ -480,9 +487,13 @@ class Prop(Generic[VarT, RwT]):
         else:
             assert name == self._name
 
-    def __hash__(self) -> int:
+    def __hash__(self: Prop[Any, Any, Any]) -> int:
         """Hash the Prop."""
-        return gen_int_hash(self)
+        return gen_int_hash((self.parent_type, self.name))
+
+    def __eq__(self, other: object) -> bool:
+        """Hash the Prop."""
+        return hash(self) == hash(other)
 
 
 type DirectLink[Rec: Record] = (
@@ -834,17 +845,7 @@ def prop(
     local: bool = False,
     init: bool = True,
 ) -> Any:
-    """Define a backlinking relation to another record."""
-    if local:
-        return Prop(
-            default=default,
-            default_factory=default_factory,
-            alias=alias,
-            init=init,
-            _type=PropType(),
-            local=True,
-        )
-
+    """Define a property."""
     if any(
         a is not None for a in (link_on, link_from, link_via, order_by, map_by)
     ) or any(a == "fk" for a in (index, primary_key)):
@@ -865,17 +866,6 @@ def prop(
             _type=PropType(RelSet[Record]),
         )
 
-    if getter is not None and not (primary_key or index or sql_getter is not None):
-        return Prop(
-            default=default,
-            default_factory=default_factory,
-            alias=alias,
-            init=init,
-            getter=getter,
-            setter=setter,
-            _type=PropType(),
-        )
-
     return Col(
         default=default,
         default_factory=default_factory,
@@ -887,6 +877,7 @@ def prop(
         setter=setter,
         sql_getter=sql_getter,
         _type=PropType(Col[object]),
+        local=local,
     )
 
 
@@ -990,7 +981,7 @@ class RecordMeta(type):
                         _name=pk.name,
                         primary_key=True,
                         _type=PropType(Col[pk.value_type, Any, Record]),
-                        record_set=cast(type[Record], cls)._db,
+                        parent_type=cast(type[Record], cls),
                     ): pk
                     for pk in base._primary_keys.values()
                 }
@@ -1373,8 +1364,8 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return cls(*args, **new_kwargs)
 
     def __hash__(self) -> int:
-        """Hash the record."""
-        return gen_int_hash(self)
+        """Identify the record by database and id."""
+        return gen_int_hash((self._db if self._connected else None, self._index))
 
     def __eq__(self, value: Hashable) -> bool:
         """Check if the record is equal to another record."""
@@ -1466,9 +1457,6 @@ BtT = TypeVar(
     "BtT",
     bound="DynBackendID",
 )
-
-ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
-ParT2 = TypeVar("ParT2", bound="Record")
 
 LnT = TypeVarX("LnT", covariant=True, bound="Record | None", default="Record | None")
 LnT2 = TypeVar("LnT2", bound="Record | None")
@@ -1564,6 +1552,16 @@ class RecSet(
     merges: RelTree = field(default_factory=RelTree)
     sel_type: type[SelT] = NoneType
 
+    def __hash__(self: RecSet[Any, Any, Any, Any, Any, Any]) -> int:
+        """Hash the RecSet."""
+        return gen_int_hash(
+            (self.db, self.record_type, self.keys, self.filters, self.merges)
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Hash the Prop."""
+        return hash(self) == hash(other)
+
     @property
     def record_type(self: RecSet[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
         """Set of all record types in this DB."""
@@ -1632,7 +1630,7 @@ class RecSet(
                     not isinstance(self, RelSet)
                     or element.record_set.to_static() != self.to_static()
                 ):
-                    element.record_set = element.record_set.prefix(self)
+                    element._record_set = element.record_set.prefix(self)
 
                 reflist.add(element.record_set)
 
@@ -2166,7 +2164,7 @@ class RecSet(
                     return self.suffix(key.record_set)[key]
 
                 return Col(
-                    record_set=self,
+                    _record_set=self,
                     _type=key._type,
                 )
             case RelSet():
@@ -2888,7 +2886,7 @@ class RecSet(
             case sqla.Select():
                 mutations.append((self_sel, value.subquery(), mode))
             case RecSet():
-                if value.db is not self.db:
+                if value.db != self.db:
                     remote_db = value if isinstance(value, DB) else value.extract()
                     for s in remote_db._schema_types:
                         if remote_db.b_id == self.db.b_id:
@@ -2922,7 +2920,7 @@ class RecSet(
             remote_records = {
                 db: recs
                 for db, recs in db_grouped.items()
-                if db is not None and db is not self.db
+                if db is not None and db != self.db
             }
 
             if local_records:
@@ -2967,7 +2965,7 @@ class RecSet(
     ) -> None:
         cols_by_table = {
             self.db._get_table(rec, writable=True): {
-                a for a in self.record_type._cols.values() if a.record_type is rec
+                a for a in self.record_type._cols.values() if a.parent_type is rec
             }
             for rec in self.record_type._record_bases
         }
@@ -3141,13 +3139,24 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         self.table = None
         self.is_literal = False
 
-    record_set: RecSet[ParT | None, Any, RwT, BsT] = field(
-        default_factory=lambda: Record._db
-    )
+    _record_set: RecSet[ParT | None, Any, RwT, BsT] | None = None
 
     index: bool = False
     primary_key: bool = False
     sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None
+
+    @property
+    def record_set(self) -> RecSet[ParT | None, Any, RwT, BsT]:
+        """Return the record set of the column."""
+        return cast(
+            RecSet[ParT | None, Any, RwT, BsT],
+            self._record_set if self._record_set is not None else self.parent_type._db,
+        )
+
+    @cached_property
+    def value_type(self) -> SingleTypeDef[VarTi]:
+        """Value type of the property."""
+        return self._type.value_type()
 
     @cached_property
     def sql_type(self) -> sqla_types.TypeEngine:
@@ -3162,15 +3171,9 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         """Return a SQL ANY expression for this attribute."""
         return sqla.any_(self)
 
-    @cached_property
-    def value_type(self) -> SingleTypeDef[VarTi]:
-        """Value type of the property."""
-        return self._type.value_type()
-
-    @cached_property
-    def record_type(self) -> type[ParT]:
-        """Record type of the set."""
-        return self.record_set.record_type
+    def __hash__(self) -> int:
+        """Hash the Col."""
+        return gen_int_hash((Prop.__hash__(self), self.record_set))
 
     @overload
     def __get__(
@@ -3209,9 +3212,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
             return copy_and_override(
                 self,
                 Col[VarTi, RwT, CdxT, LocalStat, ParT],
-                record_set=cast(
-                    RecSet[ParT | None, BaseIdx, RwT, LocalStat, ParT], rec_type._db
-                ),
+                parent_type=rec_type,
             )
 
         return self
@@ -3253,7 +3254,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
     ) -> Col[Any, Any, Any, Any, Any]:
         return copy_and_override(
-            self, Col, record_set=self.record_set[cast(slice, key)]
+            self, Col, _record_set=self.record_set[cast(slice, key)]
         )
 
     def __setitem__(
@@ -3318,13 +3319,11 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
 
 @dataclass(kw_only=True, eq=False)
 class RelSet(
-    Prop[ResT | Iterable[ResT], RwT],
     RecSet[ResT, IdxT, RwT, BsT, ResTd, SelT],
+    Prop[ResT | Iterable[ResT], RwT],
     Generic[ResT, LnT, IdxT, RwT, BsT, ParT, ResTd, SelT],
 ):
     """Relation set class."""
-
-    parent_type: type[ParT] = Record
 
     index: bool = False
     primary_key: bool = False
@@ -3332,6 +3331,10 @@ class RelSet(
     on: DirectLink[Record] | BackLink[Record] | BiLink[Record, Any] | None = None
     order_by: Mapping[Col[Any, Any, Any, LocalStat], int] | None = None
     map_by: Col[Any, Any, Any, LocalStat] | None = None
+
+    def __hash__(self) -> int:
+        """Hash the RelSet."""
+        return gen_int_hash((RecSet.__hash__(self), Prop.__hash__(self)))
 
     @property
     def record_type(  # type: ignore[reportIncompatibleMethodOverride]
@@ -3661,7 +3664,7 @@ class RelSet(
                         Col[Hashable](
                             _name=fk.name,
                             _type=PropType(Col[cast(type[Hashable], fk.value_type)]),
-                            record_set=cast(RelSet, self.to_static()),
+                            parent_type=self.record_type,
                         ): cast(Col[Hashable], pk)
                         for fk, pk in on.items()
                     }
@@ -3672,7 +3675,7 @@ class RelSet(
                     Col[Hashable](
                         _name=col.name,
                         _type=PropType(Col[cast(type[Hashable], col.value_type)]),
-                        record_set=cast(RelSet, self.to_static()),
+                        parent_type=self.record_type,
                     )
                     for col in cols
                 ]
@@ -3695,7 +3698,7 @@ class RelSet(
                         Col[Hashable](
                             _name=f"{self.name}_{target_col.name}",
                             _type=PropType(Col[target_col.value_type, Any, Record]),
-                            record_set=cast(RelSet, self.to_static()),
+                            parent_type=self.record_type,
                         ): cast(Col[Hashable], target_col)
                         for target_col in target._primary_keys.values()
                     }
@@ -4464,14 +4467,14 @@ class DynRecordMeta(RecordMeta):
 
     def __getitem__(cls: type[Record], name: str) -> Col[Any, Any, Record]:
         """Get dynamic attribute by dynamic name."""
-        return Col(_name=name, _type=PropType(Col[cls]), record_set=cls._db)
+        return Col(_name=name, _type=PropType(Col[cls]), parent_type=cls)
 
     def __getattr__(cls: type[Record], name: str) -> Col[Any, Any, Record]:
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
 
-        return Col(_name=name, _type=PropType(Col[cls]), record_set=cls._db)
+        return Col(_name=name, _type=PropType(Col[cls]), parent_type=cls)
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):
