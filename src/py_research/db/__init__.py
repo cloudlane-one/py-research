@@ -1,7 +1,21 @@
-"""Easy to use relational database."""
+"""Universal relational database interface for python."""
 
 from .base import DB as DB
-from .base import DBSchema as DBSchema
-from .base import Table as Table
+from .base import Col as Col
+from .base import Link as Link
+from .base import Prop as Prop
+from .base import Record as Record
+from .base import RecSet as RecSet
+from .base import RecUUID as RecUUID
+from .base import Rel as Rel
+from .base import RelSet as RelSet
+from .base import Schema as Schema
+from .base import prop as prop
 from .conflicts import DataConflictError as DataConflictError
-from .importing import tree_to_db as tree_to_db
+from .data_source import DataSource as DataSource
+from .data_source import Hash as Hash
+from .data_source import RecMap as RecMap
+from .data_source import RelMap as RelMap
+from .data_source import SelIndex as SelIndex
+from .data_source import SubMap as SubMap
+from .data_source import Transform as Transform

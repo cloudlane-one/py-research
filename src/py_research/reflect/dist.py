@@ -13,10 +13,6 @@ import requests
 import sphinx.util.inventory as inv
 from git import GitError, Repo
 
-from py_research.caching import get_cache
-
-file_cache = get_cache()
-
 
 @cache
 def get_distributions() -> dict[str, meta.Distribution]:
@@ -54,6 +50,7 @@ def _file_url_to_path(file_url: str):
     return path_object
 
 
+@cache
 def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
     """Get the distribution package of given module, if any."""
     mod_file = get_module_file(module)
@@ -61,7 +58,7 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
         return None
 
     dists = {
-        Path(dist.locate_file(f"{name}")): dist
+        Path(str(dist.locate_file(f"{name}"))): dist
         for name, dist in get_distributions().items()
     }
 
@@ -113,14 +110,15 @@ def get_project_urls(dist: meta.Distribution, key: str) -> list[str]:
     return urls
 
 
-@file_cache.function
-def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]]:
+@cache
+def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]] | None:
     """Return object inventory for given documentation URL."""
     inv_url = f"{docs_url.rstrip('/')}/objects.inv"
 
     res = requests.get(inv_url, allow_redirects=True)
 
-    res.raise_for_status()
+    if res.status_code != 200:
+        return None
 
     inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)
     py_inv_dict = reduce(

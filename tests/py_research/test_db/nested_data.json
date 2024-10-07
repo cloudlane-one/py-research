@@ -1,0 +1,122 @@
+{
+  "resultCount": 3,
+  "search": "test",
+  "results": [
+    {
+      "project_name": "baking cake",
+      "project_start": "2020-01-01",
+      "project_end": "2020-01-04",
+      "project_status": "done",
+      "organization_name": "Bakery",
+      "organization_address": "Main Street 1",
+      "organization_city": "Bakerville",
+      "tasks": [
+        {
+          "task_name": "task1",
+          "task_assignees": [
+            "John"
+          ],
+          "task_status": "todo"
+        },
+        {
+          "task_name": "task2",
+          "task_assignees": [
+            "John"
+          ],
+          "task_status": "todo"
+        },
+        {
+          "task_name": "task3",
+          "task_assignees": [
+            "Jane"
+          ],
+          "task_status": "done"
+        }
+      ],
+      "members": [
+        {
+          "name": "John",
+          "age": 20,
+          "role": "baker"
+        },
+        {
+          "name": "John",
+          "age": 20,
+          "role": "manager"
+        }
+      ]
+    },
+    {
+      "project_name": "cleaning shoes",
+      "project_start": "2020-01-02",
+      "project_end": "2020-01-05",
+      "project_status": "done",
+      "organization_name": "Shoe Shop",
+      "organization_address": "Main Street 2",
+      "organization_city": "Shoetown",
+      "tasks": [
+        {
+          "task_name": "task4",
+          "task_assignees": [
+            "John"
+          ],
+          "task_status": "todo"
+        },
+        {
+          "task_name": "task5",
+          "task_assignees": [
+            "Jane"
+          ],
+          "task_status": "todo"
+        }
+      ],
+      "members": [
+        {
+          "name": "John",
+          "age": 20,
+          "role": "cleaner"
+        },
+        {
+          "name": "Jane",
+          "age": 30,
+          "role": "manager"
+        }
+      ]
+    },
+    {
+      "project_name": "fixing cars",
+      "project_start": "2020-01-03",
+      "project_end": "2020-01-06",
+      "project_status": "started",
+      "organization_name": "Car Shop",
+      "organization_address": "Main Street 3",
+      "organization_city": "Cartown",
+      "tasks": [
+        {
+          "task_name": "task6",
+          "task_assignees": [
+            "John"
+          ],
+          "task_status": "todo"
+        }
+      ],
+      "members": [
+        {
+          "name": "John",
+          "age": 20,
+          "role": "mechanic"
+        },
+        {
+          "name": "Jane",
+          "age": 30,
+          "role": "manager"
+        },
+        {
+          "name": "Jack",
+          "age": 40,
+          "role": "manager"
+        }
+      ]
+    }
+  ]
+}

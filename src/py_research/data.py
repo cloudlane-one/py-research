@@ -1,10 +1,13 @@
 """Utilities for data handling."""
 
 import locale
+from collections.abc import Callable
+from dataclasses import MISSING, fields
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any
+from itertools import zip_longest
+from typing import Any, ParamSpec, TypeVar, cast, get_origin
 
 import numpy.typing as npt
 import pandas as pd
@@ -20,7 +23,52 @@ from pandas.api.types import (
 from pandas.core.dtypes.base import ExtensionDtype
 from pandas.errors import ParserError
 
-from py_research.hashing import gen_int_hash
+from py_research.hashing import gen_str_hash
+from py_research.types import DataclassInstance
+
+Params = ParamSpec("Params")
+DC = TypeVar("DC", bound="DataclassInstance")
+
+
+def copy_and_override(
+    obj: DC,
+    _init: Callable[Params, DC] | None = None,
+    *args: Params.args,
+    **kwargs: Params.kwargs,
+) -> DC:
+    """Re-construct a dataclass instance with all its init params + override.
+
+    Warning:
+        Does not work for kw_only dataclasses and InitVars (yet).
+    """
+    if not isinstance(_init, type):
+        _init = get_origin(_init)
+        assert _init is not None
+
+    target_fields = set(fields(cast(type, _init)))
+    obj_fields = {
+        f: getattr(obj, f.name) for f in fields(obj) if f.init and f in target_fields
+    }
+
+    obj_args = [
+        v
+        for f, v in obj_fields.items()
+        if not f.kw_only
+        and f.default is MISSING
+        and f.default_factory is MISSING
+        and f.name not in kwargs
+    ]
+    obj_kwargs = {f.name: v for f, v in obj_fields.items() if f not in obj_args}
+
+    new_args = [
+        v1 if v1 is not MISSING else v2
+        for v1, v2 in zip_longest(args, obj_args, fillvalue=MISSING)
+        if v2 is not MISSING
+    ]
+    new_kwargs = {**obj_kwargs, **kwargs}
+    constr_func = _init or type(obj)
+    return constr_func(*new_args, **new_kwargs)  # type: ignore
+
 
 YES = ["y", "t", "1", "yes", "true"]
 NO = ["n", "f", "0", "no", "false"]
@@ -185,6 +233,6 @@ def gen_id(x: Any, length: int = 10, raw_str: bool = False) -> str:
         case timedelta():
             s = str(x.total_seconds())
         case _:
-            s = str(abs(gen_int_hash(x)))
+            s = gen_str_hash(x, length=length)
 
     return s[:length]

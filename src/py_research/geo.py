@@ -4,14 +4,13 @@ from collections import UserString
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import auto
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Self, cast
 
 import country_converter as coco
 import pandas as pd
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import Self
 
 from py_research.enums import StrEnum
 
@@ -94,7 +93,7 @@ class GeoScheme(StrEnum):
 class GeoRegion:
     """Define a geo-region according to some scheme (country, continent, etc.)."""
 
-    label: str
+    label: str | tuple[str, ...] | None = None
     """The geo-location's label according to `scheme`."""
 
     scheme: GeoScheme = GeoScheme.cc_iso3
@@ -107,9 +106,19 @@ class GeoRegion:
     """When listing multiple geo-regions, exclude locations
     which have already been covered by previously listed regions."""
 
+    rest_label: str = "Rest of {0}"
+    """Label to use if excluding already covered locations."""
+
     def get_label(self) -> str:
         """Return string label of this region."""
-        return self.display_label or self.label
+        if self.scheme == GeoScheme.world:
+            return self.display_label or "World"
+
+        if isinstance(self.label, str):
+            return self.display_label or self.label
+
+        assert self.display_label is not None
+        return self.display_label
 
     def to_country_list(
         self,
@@ -132,19 +141,22 @@ class GeoRegion:
                 | GeoScheme.cc_iso3
                 | GeoScheme.cc_iso2
             ):
+                assert self.label is not None
+                labels = (
+                    [self.label] if isinstance(self.label, str) else list(self.label)
+                )
                 res = coco.convert(
-                    self.label,
+                    labels,
                     src=self.scheme.to_coco_scheme(),
                     to=scheme.to_coco_scheme(),
                 )
             case GeoScheme.alliance:
+                assert isinstance(self.label, str)
                 res = coco.convert(
                     self.label, src=self.label, to=scheme.to_coco_scheme()
                 )
             case GeoScheme.world:
                 res = coco.CountryConverter().data[scheme.to_coco_scheme()].to_list()
-            case _:
-                raise ValueError(f"Unsupported geo-location scheme: {self.scheme}")
 
         return res if isinstance(res, list) else [res]
 
@@ -222,7 +234,7 @@ def _region_to_country_map(
     return pd.DataFrame({cc_col: iso3_list}).assign(geo_region=region.get_label())
 
 
-CountryScheme: TypeAlias = Literal[
+type CountryScheme = Literal[
     GeoScheme.country_name, GeoScheme.cc_iso2, GeoScheme.cc_iso3
 ]
 """A :py:class:`GeoScheme` which can be used to define a single country.`"""
@@ -345,7 +357,6 @@ def merge_geo_regions(
         geo_col: The column containing geo-regions.
         geo_regions: The geo-regions to merge.
         input_scheme: The scheme used to define the geo-regions.
-        rest_of_world: Whether to add a "Rest of World" region.
         pretty_labels: Whether to use pretty labels for regions.
 
     Returns:
@@ -356,11 +367,6 @@ def merge_geo_regions(
     cc_coverage = set()
     res_df = pd.DataFrame()
 
-    geo_regions = [
-        *geo_regions,
-        GeoRegion("world", GeoScheme.world, exclude_already_covered=True),
-    ]
-
     for gr in geo_regions:
         gr = gr if isinstance(gr, GeoRegion) else GeoRegion(gr)
         geo_region_res = gr.get_label()
@@ -370,14 +376,15 @@ def merge_geo_regions(
         cc_already_covered = list(cc_coverage & cc_set)
 
         if pretty_labels and (
-            gr.scheme == GeoScheme.cc_iso2 or gr.scheme == GeoScheme.cc_iso3
+            (gr.scheme == GeoScheme.cc_iso2 or gr.scheme == GeoScheme.cc_iso3)
+            and isinstance(gr.label, str)
         ):
             geo_region_res = coco.convert(
                 geo_region_res, src=gr.scheme.to_coco_scheme(), to="name"
             )
 
         if len(cc_already_covered) > 0 and gr.exclude_already_covered:
-            geo_region_res = f"Rest of {gr.get_label()}"
+            geo_region_res = gr.rest_label.format(geo_region_res)
             cc_map = cc_map.loc[~cc_map["cc"].isin(cc_already_covered)]
 
         res_df = pd.concat(

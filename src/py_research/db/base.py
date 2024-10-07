@@ -1,901 +1,4042 @@
-"""Base classes and types for relational database package."""
+"""Static schemas for universal relational databases."""
 
-from collections.abc import Hashable, Iterable, Sequence
-from dataclasses import asdict, dataclass, field
-from functools import reduce
+from __future__ import annotations
+
+from collections.abc import (
+    Callable,
+    Generator,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
+from dataclasses import Field, dataclass, field
+from datetime import date, datetime, time
+from enum import Enum, auto
+from functools import cached_property, partial, reduce
+from inspect import get_annotations, getmodule
+from io import BytesIO
+from itertools import groupby
 from pathlib import Path
-from typing import Any, Literal, cast, overload
+from secrets import token_hex
+from types import GenericAlias, ModuleType, NoneType, UnionType, new_class
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    ForwardRef,
+    Generic,
+    Literal,
+    LiteralString,
+    ParamSpec,
+    Self,
+    TypeVar,
+    TypeVarTuple,
+    cast,
+    dataclass_transform,
+    get_args,
+    get_origin,
+    overload,
+)
+from uuid import UUID, uuid4
 
+import openpyxl
 import pandas as pd
+import polars as pl
+import sqlalchemy as sqla
+import sqlalchemy.dialects.mysql as mysql
+import sqlalchemy.dialects.postgresql as postgresql
+import sqlalchemy.orm as orm
+import sqlalchemy.sql.type_api as sqla_types
+import sqlalchemy.sql.visitors as sqla_visitors
+import yarl
+from bidict import bidict
+from cloudpathlib import CloudPath
+from pandas.api.types import (
+    is_bool_dtype,
+    is_datetime64_dtype,
+    is_integer_dtype,
+    is_numeric_dtype,
+    is_string_dtype,
+)
+from sqlalchemy_utils import UUIDType
+from typing_extensions import TypeVar as TypeVarX
+from xlsxwriter import Workbook as ExcelWorkbook
 
-from py_research.data import parse_dtype
+from py_research.data import copy_and_override
+from py_research.enums import StrEnum
+from py_research.files import HttpFile
+from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.ref import PyObjectRef
+from py_research.reflect.runtime import get_subclasses
+from py_research.reflect.types import (
+    SingleTypeDef,
+    extract_nullable_type,
+    get_lowest_common_base,
+    has_type,
+    is_subtype,
+)
 
-from .conflicts import DataConflictError, DataConflictPolicy
+VarT = TypeVar("VarT", covariant=True)
+VarTi = TypeVarX("VarTi", default=Any)
+VarT2 = TypeVar("VarT2")
+VarT3 = TypeVar("VarT3")
+VarT4 = TypeVar("VarT4")
+
+RwT = TypeVarX("RwT", bound="R", default="RW", covariant=True)
+
+KeyT = TypeVarX("KeyT", bound=Hashable, default=Any)
+KeyT2 = TypeVar("KeyT2", bound=Hashable)
+KeyT3 = TypeVar("KeyT3", bound=Hashable)
+
+IdxT = TypeVarX(
+    "IdxT",
+    covariant=True,
+    bound="Index",
+    default="BaseIdx",
+)
+IdxTt = TypeVarTuple("IdxTt")
+
+SelT = TypeVarX("SelT", covariant=True, bound="Record | tuple | None", default=None)
+
+MdxT = TypeVar("MdxT", bound="MutateIdx", covariant=True)
+MdxT2 = TypeVar("MdxT2", bound="MutateIdx")
+
+DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
+
+CdxT = TypeVarX("CdxT", bound="ColIdx", covariant=True, default=Hashable)
+
+Params = ParamSpec("Params")
+
+type LocalDyn = Literal[LocalBackend.dynamic]
+type LocalStat = Literal[LocalBackend.static]
+type DynBackendID = LiteralString | LocalDyn
+type StatBackendID = DynBackendID | LocalStat
+
+type Index = Hashable | BaseIdx | SingleIdx | Filt
+type ColIdx = Hashable | SingleIdx
+type MutateIdx = Hashable | BaseIdx
+
+type IdxStart[Key: Hashable] = Key | tuple[Key, *tuple[Any, ...]]
+type IdxEnd[Key: Hashable] = tuple[*tuple[Any, ...], Key]
+type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
+type IdxTupStart[*IdxTup] = tuple[*IdxTup, *tuple[Any]]
+type IdxTupStartEnd[*IdxTup, Key2: Hashable] = tuple[*IdxTup, *tuple[Any], Key2]
+
+type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec] | None
 
 
-def _unmerge(df: pd.DataFrame) -> dict[str, pd.DataFrame]:
-    """Extract this table into its own database.
+class State(Enum):
+    """Demark load status."""
 
-    Returns:
-        Database containing only this table.
-    """
-    if df.columns.nlevels != 2:
-        raise ValueError("Cannot only unmerge dataframe with two column levels.")
-
-    return {
-        str(s): cast(pd.DataFrame, df[s]).drop_duplicates()
-        for s in df.columns.get_level_values(0).unique()
-    }
+    undef = auto()
 
 
-@dataclass
-class Table:
-    """Table in a relational database."""
+class BaseIdx:
+    """Singleton to mark dataset index as default index."""
 
-    # Attributes:
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
-    db: "DB"
-    """Database this table belongs to."""
 
-    df: pd.DataFrame
-    """Dataframe containing the data of this table."""
+class SingleIdx:
+    """Singleton to mark dataset index as a single value."""
 
-    source_map: str | dict[str, str]
-    """Mapping to source tables of this table.
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
-    For single source tables, this is a string containing the name of the source table.
 
-    For multiple source tables, the dataframe hast multi-level columns. ``source_map``
-    is then a mapping from the first level of these columns to the source tables.
-    """
+class Filt(Generic[MdxT]):
+    """Singleton to mark dataset index as filtered."""
 
-    indexes: dict[str, str] = field(default_factory=dict)
-    """Mapping from source table names to index column names."""
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
-    # Creation:
 
-    @staticmethod
-    def from_excel(path: Path) -> "Table":
-        """Load relational table from Excel file."""
-        source_map = pd.read_excel(path, sheet_name="_source_tables", index_col=0)[
-            "table"
-        ].to_dict()
+class R:
+    """Read-only flag."""
 
-        indexes = pd.read_excel(path, sheet_name="_indexes", index_col=0)[
-            "column"
-        ].to_dict()
 
-        data = pd.read_excel(
-            path,
-            sheet_name="data",
-            index_col=0,
-            header=(0 if len(source_map) == 1 else (0, 1)),
+class RO(R):
+    """Read-only flag."""
+
+
+class RW(RO):
+    """Read-write flag."""
+
+
+type RecInput[Rec: Record, Key: MutateIdx] = pd.DataFrame | pl.DataFrame | Iterable[
+    Rec
+] | Mapping[Key, Rec] | sqla.Select | Rec
+
+
+type ValInput[Val, Key: Hashable] = pd.Series | pl.Series | Mapping[
+    Key, Val
+] | sqla.Select[tuple[Val] | tuple[Key, Val]] | Val
+
+
+def map_df_dtype(c: pd.Series | pl.Series) -> type | None:
+    """Map pandas dtype to Python type."""
+    if isinstance(c, pd.Series):
+        if is_datetime64_dtype(c):
+            return datetime
+        elif is_bool_dtype(c):
+            return bool
+        elif is_integer_dtype(c):
+            return int
+        elif is_numeric_dtype(c):
+            return float
+        elif is_string_dtype(c):
+            return str
+    else:
+        if c.dtype.is_temporal():
+            return datetime
+        elif c.dtype.is_integer():
+            return int
+        elif c.dtype.is_float():
+            return float
+        elif c.dtype.is_(pl.String):
+            return str
+
+    return None
+
+
+def map_col_dtype(c: sqla.ColumnElement) -> type | None:
+    """Map sqla column type to Python type."""
+    match c.type:
+        case sqla.DateTime():
+            return datetime
+        case sqla.Date():
+            return date
+        case sqla.Time():
+            return time
+        case sqla.Boolean():
+            return bool
+        case sqla.Integer():
+            return int
+        case sqla.Float():
+            return float
+        case sqla.String() | sqla.Text() | sqla.Enum():
+            return str
+        case sqla.LargeBinary():
+            return bytes
+        case _:
+            return None
+
+
+def props_from_data(
+    data: pd.DataFrame | pl.DataFrame | sqla.Select,
+    foreign_keys: Mapping[str, Col] | None = None,
+) -> list[Prop]:
+    """Extract prop definitions from dataframe or query."""
+    foreign_keys = foreign_keys or {}
+
+    def _gen_prop(
+        name: str, data: pd.Series | pl.Series | sqla.ColumnElement
+    ) -> Prop[Any, Any]:
+        is_rel = name in foreign_keys
+        value_type = (
+            map_df_dtype(data)
+            if isinstance(data, pd.Series | pl.Series)
+            else map_col_dtype(data)
+        ) or Any
+        col = Col[value_type](
+            primary_key=True,
+            _name=name if not is_rel else f"fk_{name}",
+            _type=PropType(Col[value_type]),
+            record_set=DynRecord._db,
         )
-
-        df_dict = (
-            {source_map[s]: df for s, df in _unmerge(data).items()}
-            if len(source_map) > 1
-            else {list(source_map.keys())[0]: data}
-        )
-
-        return Table(
-            DB(df_dict),
-            data,
-            source_map if len(source_map) > 1 else list(source_map.keys())[0],
-            indexes,
-        )
-
-    # Public methods:
-
-    def to_excel(self, path: Path) -> None:
-        """Save this table to an Excel file."""
-        sheets = {
-            "_source": pd.Series({"database": self.db.backend})
-            .rename("value")
-            .to_frame(),
-            "_source_tables": pd.DataFrame.from_dict(
-                (
-                    {k: [v] for k, v in self.source_map.items()}
-                    if isinstance(self.source_map, dict)
-                    else {self.source_map: [None]}
-                ),
-                orient="index",
-                columns=["table"],
-            ).rename_axis(index="col_prefix"),
-            "_indexes": pd.DataFrame.from_dict(
-                {k: [v] for k, v in self.indexes.items()},
-                orient="index",
-                columns=["column"],
-            ).rename_axis(index="table"),
-            "data": self.df,
-        }
-
-        with pd.ExcelWriter(
-            path,
-            engine="openpyxl",
-        ) as writer:
-            for name, df in sheets.items():
-                df.to_excel(writer, sheet_name=name, index=True)
-
-    def filter(self, filter_series: pd.Series) -> "Table":
-        """Filter this table.
-
-        Args:
-            filter_series: Boolean series to filter the table with.
-
-        Returns:
-            New table containing the filtered data.
-        """
-        return Table(
-            self.db,
-            self.df.loc[filter_series],
-            self.source_map,
-        )
-
-    @overload
-    def merge(
-        self,
-        right: "SingleTable | None" = None,
-        link_to_right: str | tuple[str, str] = ...,
-        link_to_left: str | None = None,
-        link_table: "SingleTable | None" = None,
-        naming: Literal["source", "path"] = ...,
-    ) -> "Table": ...
-
-    @overload
-    def merge(
-        self,
-        right: "SingleTable" = ...,
-        link_to_right: str | tuple[str, str] | None = None,
-        link_to_left: str | None = None,
-        link_table: "SingleTable | None" = None,
-        naming: Literal["source", "path"] = ...,
-    ) -> "Table": ...
-
-    @overload
-    def merge(
-        self,
-        right: "SingleTable | None" = ...,
-        link_to_right: str | tuple[str, str] | None = None,
-        link_to_left: str | None = None,
-        link_table: "SingleTable" = ...,
-        naming: Literal["source", "path"] = ...,
-    ) -> "Table": ...
-
-    def merge(  # noqa: C901
-        self,
-        right: "SingleTable | None" = None,
-        link_to_right: str | tuple[str, str] | None = None,
-        link_to_left: str | None = None,
-        link_table: "SingleTable | None" = None,
-        naming: Literal["source", "path"] = "source",
-    ) -> "Table":
-        """Merge this table with another, returning a new table.
-
-        Args:
-            link_to_right: Name of column to use for linking from left to right table.
-            link_to_left: Name of column to use for linking from right to left table.
-            right: Other (left) table to merge with.
-            link_table: Link table (join table) to use for double merging.
-            naming:
-                Naming strategy to use for naming the first level of merged columns.
-                Use "path" if you merge multiple times from the same source table.
-
-        Note:
-            At least one of ``link_to_right``, ``right`` or ``link_table`` must be
-            supplied.
-
-        Returns:
-            New table containing the merged data.
-            The returned table will have a multi-level column index,
-            where the first level references the source table of each column
-            via the ``source_map`` attribute.
-        """
-        # Standardize format of dataframe, making sure its columns are multi-level.
-        merged = self.df
-        if isinstance(self.source_map, str):
-            merged = merged.rename_axis(merged.index.name or "id", axis="index")
-            merged = merged.reset_index()
-            merged.columns = pd.MultiIndex.from_product(
-                [[self.source_map], merged.columns]
-            )
-
-        # Standardize format of source map, making sure it is a dict.
-        merge_source_map = (
-            self.source_map
-            if isinstance(self.source_map, dict)
-            else {self.source_map: self.source_map}
-        )
-        inv_src_map = {
-            v: [k for k, v2 in merge_source_map.items() if v2 == v]
-            for v in set(merge_source_map.values())
-        }
-        sources = set(merge_source_map.values())
-
-        merge_indexes = self.indexes.copy()
-
-        # Set up a list of all merges to be applied with their parameters.
-        merges: list[tuple[tuple[str, str], str, tuple[SingleTable, str]]] = []
-
-        # Get a list of all applicable forward merges with their parameters.
-        if link_to_right is not None:
-            rels = (
-                [
-                    ((sp, link_to_right), self.db.relations.get((s, link_to_right)))
-                    for s in sources
-                    for sp in inv_src_map[s]
-                ]
-                if isinstance(link_to_right, str)
-                else [(link_to_right, self.db.relations.get(link_to_right))]
-            )
-            rels = [(s, r) for s, r in rels if r is not None]
-            if len(rels) == 0:
-                raise ValueError(
-                    "Cannot find relation with source table "
-                    f"in {sources} and source col = '{link_to_right}'."
-                )
-
-            if right is not None:
-                rels = [(s, r) for s, r in rels if r[0] == right.name]
-                if len(rels) == 0:
-                    raise ValueError(
-                        f"Cannot find relation with source table in {sources}, "
-                        f"source col = '{link_to_right}' and "
-                        f"target table = {right.name}."
-                    )
-
-            merges += [
-                (
-                    (sp, sc),
-                    (
-                        tt
-                        if naming == "source"
-                        else (
-                            f"{sp}->{sc}=>{tc}<-{tt}"
-                            if tc != (self.db[tt].df.index.name or "id")
-                            else f"{sp}->{sc}"
-                        )
-                    ),
-                    (right or self.db[tt], tc),
-                )
-                for (sp, sc), (tt, tc) in rels
-            ]
-        elif right is None and link_table is None:
-            outgoing = self.db._get_rels(
-                sources=(
-                    list(self.source_map.values())
-                    if isinstance(self.source_map, dict)
-                    else [self.source_map]
-                )
-            )
-            merges += [
-                (
-                    (sp, sc),
-                    (
-                        tt
-                        if naming == "source"
-                        else (
-                            f"{sp}->{sc}=>{tc}<-{tt}"
-                            if tc != (self.db[tt].df.index.name or "id")
-                            else f"{sp}->{sc}"
-                        )
-                    ),
-                    (self.db[tt], tc),
-                )
-                for st, sc, tt, tc in outgoing.itertuples(index=False)
-                for sp in inv_src_map[st]
-                if right is None or right.name == tt
-            ]
-
-        # Get all incoming relations.
-        incoming = self.db._get_rels(
-            targets=(
-                list(self.source_map.values())
-                if isinstance(self.source_map, dict)
-                else [self.source_map]
-            )
-        )
-
-        # Get a list of all applicable backward merges with their parameters.
-        if len(merges) == 0 and right is not None:
-            # Get all matchin incoming links.
-            from_right = [
-                (st, sc, tt, tp, tc)
-                for st, sc, tt, tc in incoming.itertuples(index=False)
-                for tp in inv_src_map[tt]
-                if right.name == st
-            ]
-
-            # If there is only one, use it as explicit link_to_left.
-            if len(from_right) == 1:
-                link_to_left = from_right[0][1]
-
-            if link_to_left is not None:
-                rel = self.db.relations.get((right.name, link_to_left))
-                if rel is None:
-                    raise ValueError(
-                        f"Cannot find relation with target table in {self.source_map} "
-                        f", src table = {right.name} and src col = '{link_to_left}'."
-                    )
-                tt, tc = rel
-                merges += [
-                    (
-                        (tp, tc),
-                        (
-                            tt
-                            if naming == "source"
-                            else (
-                                f"{tp}->{tc}<={right.name}"
-                                if tc != (self.db[tt].df.index.name or "id")
-                                else f"{tp}<={right.name}"
-                            )
-                        ),
-                        (right, link_to_left),
-                    )
-                    for tp in inv_src_map[tt]
-                ]
-            else:
-                merges += [
-                    (
-                        (tp, tc),
-                        (
-                            tt
-                            if naming == "source"
-                            else (
-                                f"{tp}->{tc}<={sc}<-{st}"
-                                if tc != (self.db[tt].df.index.name or "id")
-                                else f"{tp}<={sc}<-{st}"
-                            )
-                        ),
-                        (self.db[st], sc),
-                    )
-                    for st, sc, tt, tp, tc in from_right
-                ]
-
-        # Get a list of all related join / link tables.
-        link_tables = []
-        if link_table is not None:
-            link_tables = [link_table]
-        else:
-            link_tables = [
-                self.db[t]
-                for t in incoming["source_table"].unique()
-                if t in self.db.join_tables
-            ]
-
-        # Get a list of all applicable double merges with their parameters.
-        if len(merges) == 0:
-            for jt in link_tables:
-                jt_links = self.db._get_rels(
-                    sources=(
-                        list(jt.source_map.values())
-                        if isinstance(jt.source_map, dict)
-                        else [jt.source_map]
-                    )
-                )
-                backlinks = jt_links.loc[jt_links["target_table"].isin(sources)]
-                other_links = jt_links.loc[~jt_links["target_table"].isin(sources)]
-
-                if right is not None:
-                    other_links = other_links.loc[
-                        other_links["target_table"] == right.name
-                    ]
-                    if len(other_links) == 0:
-                        continue
-
-                for _, bsc, btt, btc in backlinks.itertuples(index=False):
-                    backlink_count = sum(backlinks["target_table"] == btt)
-                    for btp in inv_src_map[btt]:
-                        jt_prefix = (
-                            jt.name
-                            if naming == "source"
-                            else (
-                                (
-                                    f"{btp}->{btc}"
-                                    if btc != (self.db[btt].df.index.name or "id")
-                                    else btp
-                                )
-                                + "<="
-                                + (
-                                    f"{bsc}<-{jt.name}"
-                                    if backlink_count > 1
-                                    else jt.name
-                                )
-                            )
-                        )
-                        # First perform a merge with the joint table.
-                        merges.append(
-                            (
-                                (btp, btc),
-                                jt_prefix,
-                                (jt, bsc),
-                            )
-                        )
-                        # Then perform a merge with all other tables linked from there.
-                        merges += [
-                            (
-                                (jt_prefix, osc),
-                                (
-                                    ott
-                                    if naming == "source"
-                                    else (
-                                        (jt_prefix if len(link_tables) > 1 else btp)
-                                        + "->"
-                                        + (
-                                            f"{osc}<={otc}<-{ott}"
-                                            if otc
-                                            != (self.db[ott].df.index.name or "id")
-                                            else osc
-                                        )
-                                    )
-                                ),
-                                (right or self.db[ott], otc),
-                            )
-                            for _, osc, ott, otc in other_links.itertuples(index=False)
-                        ]
-
-        if len(merges) == 0:
-            raise ValueError(
-                "Could not find any relations between the given tables to merge on."
-            )
-
-        for (sp, sc), tp, (tt, tc) in merges:
-            # Flatten multi-level columns of left table.
-            left_df = merged.copy()
-            left_df.columns = merged.columns.map(lambda c: "->".join(c))
-            left_on = f"{sp}->{sc}"
-
-            # Properly name columns of right table.
-            right_df = tt.df.reset_index().rename(columns=lambda c: f"{tp}->{c}")
-            right_on = f"{tp}->{tc}"
-
-            new_merged = left_df.merge(
-                right_df,
-                left_on=left_on,
-                right_on=right_on,
-                how="left",
-            )
-
-            # Restore two-level column index.
-            new_merged.columns = pd.MultiIndex.from_tuples(
-                [
-                    ("->".join(c[:-1]), c[-1])
-                    for c in new_merged.columns.map(
-                        lambda c: str(c).split("->")
-                    ).to_list()
-                ]
-            )
-            merged = new_merged.copy()
-
-            # Add to source_map
-            merge_source_map[tp] = tt.name
-
-            # Add to indexes
-            merge_indexes[tt.name] = tt.df.index.name or "id"
-
-        return Table(self.db, merged, merge_source_map, merge_indexes)
-
-    def flatten(
-        self,
-        sep: str = ".",
-        prefix_strategy: Literal["always", "on_conflict"] = "always",
-    ) -> pd.DataFrame:
-        """Collapse multi-dim. column labels of multi-source table, returning new df.
-
-        Args:
-            sep: Separator to use between column levels.
-            prefix_strategy: Strategy to use for prefixing column names.
-
-        Returns:
-            Dataframe representation of this table with flattened multi-dim columns.
-        """
-        level_counts = (
-            self.df.columns.to_frame()
-            .groupby(level=(1 if self.df.columns.nlevels > 1 else 0))
-            .size()
-        )
-
-        res_df = self.df.copy()
-        res_df.columns = [
-            (
-                c[0]
-                if len(c) == 1
-                else (
-                    c[1]
-                    if (
-                        len(c) > 1
-                        and prefix_strategy == "on_conflict"
-                        and level_counts[c[1]] == 1
-                    )
-                    else sep.join(c)
-                )
-            )
-            for c in self.df.columns.to_frame().itertuples(index=False)
-        ]
-
-        return res_df
-
-    def extract(self, with_relations: bool = True) -> "DB":
-        """Extract this table into its own database.
-
-        Returns:
-            Database containing only this table.
-        """
-        source_map = (
-            self.source_map
-            if isinstance(self.source_map, dict)
-            else {self.source_map: self.source_map}
-        )
-        inv_src_map = {
-            v: [k for k, v2 in source_map.items() if v2 == v]
-            for v in set(source_map.values())
-        }
-
-        source_tables = {
-            t: pd.concat(
-                [cast(pd.DataFrame, self.df[s]).drop_duplicates() for s in all_s]
-            )
-            .dropna(subset=[self.indexes[t]])
-            .set_index(self.indexes[t])
-            for t, all_s in inv_src_map.items()
-        }
-
         return (
-            self.db.filter(
-                {
-                    s: self.db[s].df.index.to_series().isin(df.index)
-                    for s, df in source_tables.items()
-                }
+            col
+            if not is_rel
+            else RelSet(
+                on={col: foreign_keys[name]},
+                _type=PropType(RelSet[cast(type, foreign_keys[name].value_type)]),
+                _name=f"rel_{name}",
+                parent_type=DynRecord,
             )
-            if with_relations
-            else DB(table_dfs=source_tables)
         )
 
-    # Dictionary interface:
+    columns = (
+        [data[col] for col in data.columns]
+        if isinstance(data, pd.DataFrame | pl.DataFrame)
+        else list(data.columns)
+    )
 
-    def __getitem__(self, name: str) -> pd.Series:  # noqa: D105
-        return self.df[name]
+    index_props = []
+    if isinstance(data, pd.DataFrame):
+        levels = {name: name for name in data.index.names}
+        if any(lvl is None for lvl in levels.values()):
+            levels = {i: f"index_{i}" for i in range(len(levels))}
 
-    def __contains__(self, name: str) -> bool:  # noqa: D105
-        return name in self.df.columns
-
-    def __iter__(self) -> Iterable[Hashable]:  # noqa: D105
-        return iter(self.df)
-
-    def __len__(self) -> int:  # noqa: D105
-        return len(self.df)
-
-    def keys(self) -> Iterable[str]:  # noqa: D102
-        return self.df.keys()
-
-    def get(self, name: str, default: Any = None) -> Any:  # noqa: D102
-        return self.df.get(name, default)
-
-    # DataFrame interface:
-
-    @property
-    def columns(self) -> Sequence[str | tuple[str, str]]:
-        """Return the columns of this table."""
-        return self.df.columns.tolist()
-
-
-class SingleTable(Table):
-    """Relational database table with a single source table."""
-
-    # Custom constructor:
-
-    def __init__(
-        self,
-        name: str,
-        db: "DB",
-        df: pd.DataFrame,
-    ) -> None:
-        """Initialize this table.
-
-        Args:
-            name: Name of the source table.
-            db: Database this table belongs to.
-            df: Dataframe containing the data of this table.
-        """
-        self.name = name
-        self.db = db
-        self.df = df
-
-    # Computed properties:
-
-    @property
-    def source_map(self) -> str:  # type: ignore[override]
-        """Name of the source table of this table."""
-        return self.name
-
-    @property
-    def indexes(self) -> dict[str, str]:  # type: ignore[override]
-        """Name of the source table of this table."""
-        return {self.name: self.df.index.name or "id"}
-
-    # Method overrides:
-
-    def filter(self, filter_series: pd.Series) -> "SingleTable":
-        """Return a filtered version of this table."""
-        table = super().filter(filter_series)
-        assert isinstance(table.source_map, str)
-        return SingleTable(name=table.source_map, db=table.db, df=table.df)
-
-    def trim(self, cols: list[str]) -> "SingleTable":
-        """Return a trimmed version of this table.
-
-        Args:
-            cols: Columns to keep.
-        """
-        return SingleTable(name=self.name, db=self.db, df=self.df[cols])
-
-    # Public methods:
-
-    def extend(
-        self,
-        other: "pd.DataFrame",
-        conflict_policy: DataConflictPolicy | dict[str, DataConflictPolicy] = "raise",
-    ) -> "SingleTable":
-        """Extend this table with data from another, returning a new table.
-
-        Args:
-            other: Other table to extend with.
-            conflict_policy:
-                Policy to use for resolving conflicts. Can be a global setting,
-                per-column via supplying a dict with column names as keys.
-
-        Returns:
-            New table containing the extended data.
-        """
-        # Align index and columns of both tables.
-        left, right = self.df.align(other)
-
-        # First merge data, ignoring conflicts per default.
-        extended_df = left.combine_first(right)
-
-        # Find conflicts, i.e. same-index & same-column values
-        # that are different in both tables and neither of them is NaN.
-        conflicts = ~((left == right) | left.isna() | right.isna())
-
-        if any(conflicts):
-            # Deal with conflicts according to `conflict_policy`.
-
-            # Determine default policy.
-            default_policy: DataConflictPolicy = (
-                conflict_policy if isinstance(conflict_policy, str) else "raise"
+        for level_name, prop_name in levels.items():
+            index_props.append(
+                _gen_prop(
+                    prop_name, data.index.get_level_values(level_name).to_series()
+                )
             )
-            # Expand default policy to all columns.
-            policies: dict[str, DataConflictPolicy] = {
-                c: default_policy for c in conflicts.columns
+
+    return [
+        *index_props,
+        *(_gen_prop(str(col.name), col) for col in columns),
+    ]
+
+
+def _remove_external_fk(table: sqla.Table):
+    """Dirty vodoo to remove external FKs from existing table."""
+    for c in table.columns.values():
+        c.foreign_keys = set(
+            fk
+            for fk in c.foreign_keys
+            if fk.constraint and fk.constraint.referred_table.schema == table.schema
+        )
+
+    table.foreign_keys = set(  # type: ignore[reportAttributeAccessIssue]
+        fk
+        for fk in table.foreign_keys
+        if fk.constraint and fk.constraint.referred_table.schema == table.schema
+    )
+
+    table.constraints = set(
+        c
+        for c in table.constraints
+        if not isinstance(c, sqla.ForeignKeyConstraint)
+        or c.referred_table.schema == table.schema
+    )
+
+
+@dataclass(frozen=True)
+class PropType(Generic[VarT]):
+    """Reference to a type."""
+
+    hint: str | type[Prop[VarT]] | None = None
+    ctx: ModuleType | None = None
+    typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
+
+    def prop_type(self) -> type[Prop] | type[None]:
+        """Resolve the property type reference."""
+        hint = self.hint
+
+        if hint is None:
+            return NoneType
+
+        if isinstance(hint, type | GenericAlias):
+            base = get_origin(hint)
+            if base is None or not issubclass(base, Prop):
+                return NoneType
+
+            return base
+        else:
+            return (
+                Col
+                if "Col" in hint
+                else (
+                    RelSet
+                    if "RelSet" in hint
+                    else Rel if "Rel" in hint else Prop if "Prop" in hint else NoneType
+                )
+            )
+
+    def _to_typedef(
+        self, hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef
+    ) -> SingleTypeDef:
+        typedef = hint
+
+        if isinstance(typedef, str):
+            typedef = eval(
+                typedef, {**globals(), **(vars(self.ctx) if self.ctx else {})}
+            )
+
+        if isinstance(typedef, TypeVar):
+            typedef = self.typevar_map.get(typedef) or typedef.__bound__ or object
+
+        if isinstance(typedef, ForwardRef):
+            typedef = typedef._evaluate(
+                {**globals(), **(vars(self.ctx) if self.ctx else {})},
+                {},
+                recursive_guard=frozenset(),
+            )
+
+        if isinstance(typedef, UnionType):
+            union_types: set[type] = {
+                get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
             }
-            # Assign column-level custom policies.
-            if isinstance(conflict_policy, dict):
-                policies = {**policies, **conflict_policy}
+            typedef = get_lowest_common_base(union_types)
 
-            # Iterate over columns and associated policies:
-            for c, p in policies.items():
-                # Only do conflict resolution if there are any for this col.
-                if any(conflicts[c]):
-                    match p:
-                        case "override":
-                            # Override conflicts with data from left.
-                            extended_df[c][conflicts[c]] = right[conflicts[c]]
-                            extended_df[c] = extended_df[c]
+        return cast(SingleTypeDef, typedef)
 
-                        case "ignore":
-                            # Nothing to do here.
-                            pass
-                        case "raise":
-                            # Raise an error.
-                            raise DataConflictError(
-                                {
-                                    (c, c, str(i)): (lv, rv)
-                                    for (i, lv), (i, rv) in zip(
-                                        left.loc[conflicts[c]][c].items(),
-                                        right.loc[conflicts[c]][c].items(),
-                                    )
-                                }
-                            )
-                        case _:
-                            pass
+    def _to_type(self, hint: SingleTypeDef | UnionType | TypeVar) -> type:
+        if isinstance(hint, type):
+            return hint
 
-        return SingleTable(
-            self.name,
-            self.db,
-            extended_df,
+        typedef = (
+            self._to_typedef(hint) if isinstance(hint, UnionType | TypeVar) else hint
+        )
+        orig = get_origin(typedef)
+
+        if orig is None or orig is Literal:
+            return object
+
+        assert isinstance(orig, type)
+        return new_class(
+            orig.__name__ + "_" + token_hex(5),
+            (hint,),
+            None,
+            lambda ns: ns.update({"_src_mod": self.ctx}),
         )
 
+    @cached_property
+    def _generic_type(self) -> SingleTypeDef | UnionType:
+        """Resolve the generic property type reference."""
+        hint = self.hint or Prop
+        generic = self._to_typedef(hint)
+        assert is_subtype(generic, Prop)
 
-class SourceTable(SingleTable):
-    """Original table in a relational database."""
+        return generic
 
-    # Custom constuctor:
+    @cached_property
+    def _generic_args(self) -> tuple[SingleTypeDef | UnionType | TypeVar, ...]:
+        """Resolve the generic property type reference."""
+        args = get_args(self._generic_type)
+        return tuple(self._to_typedef(hint) for hint in args)
 
-    def __init__(self, name: str, db: "DB") -> None:
-        """Initialize this table.
+    def value_type(self: PropType[VarT2]) -> SingleTypeDef[VarT2]:
+        """Resolve the value type reference."""
+        args = self._generic_args
+        if len(args) == 0:
+            return cast(type[VarT2], object)
 
-        Args:
-            name: Name of the source table.
-            db: Database this table belongs to.
-        """
-        self.name = name
-        self.db = db
+        arg = args[0]
+        return cast(SingleTypeDef[VarT2], self._to_typedef(arg))
 
-    # Computed properties:
+    def record_type(
+        self: PropType[Record | Iterable[Record | None] | None],
+    ) -> type[Record]:
+        """Resolve the record type reference."""
+        assert is_subtype(self._generic_type, RelSet)
+
+        args = self._generic_args
+        assert len(args) > 0
+
+        recs = args[0]
+        if isinstance(recs, TypeVar):
+            recs = self._to_type(recs)
+
+        rec_args = get_args(recs)
+        rec_arg = extract_nullable_type(recs)
+        assert rec_arg is not None
+
+        if is_subtype(recs, Iterable):
+            assert len(rec_args) >= 1
+            rec_arg = rec_args[0]
+
+        rec_type = self._to_type(rec_arg)
+        assert issubclass(rec_type, Record)
+
+        return rec_type
+
+    def link_type(
+        self: PropType[Record | Iterable[Record | None] | None],
+    ) -> type[Record | None]:
+        """Resolve the record type reference."""
+        assert is_subtype(self._generic_type, RelSet)
+        args = self._generic_args
+        rec = args[1]
+        rec_type = self._to_type(rec)
+
+        if not issubclass(rec_type, Record):
+            return NoneType
+
+        return rec_type
+
+
+@dataclass(eq=False)
+class Prop(Generic[VarT, RwT]):
+    """Reference a property of a record."""
+
+    _type: PropType[VarT] = field(default_factory=PropType[VarT])
+    _name: str | None = None
+
+    alias: str | None = None
+    default: VarT | State = State.undef
+    default_factory: Callable[[], VarT] | None = None
+    init: bool = True
+
+    getter: Callable[[Record], VarT] | None = None
+    setter: Callable[[Record, VarT], None] | None = None
+
+    local: bool = False
 
     @property
-    def df(self) -> pd.DataFrame:
-        """Return the dataframe of this table."""
-        return self.db.table_dfs[self.name]
+    def name(self) -> str:
+        """Property name."""
+        if self.alias is not None:
+            return self.alias
+
+        assert self._name is not None
+        return self._name
+
+    def __set_name__(self, _, name: str) -> None:  # noqa: D105
+        if self._name is None:
+            self._name = name
+        else:
+            assert name == self._name
+
+    def __hash__(self) -> int:
+        """Hash the Prop."""
+        return gen_int_hash(self)
 
 
-class DBSchema:
-    """Base class for static database schemas."""
+type DirectLink[Rec: Record] = (
+    Col[Any, Any, Any, Any, Any] | dict[Col, Col[Any, Any, Any, Any, Rec]]
+)
+
+type BackLink[Rec: Record] = (RelSet[Any, Any, Any, Any, LocalStat, Rec] | type[Rec])
+
+type BiLink[Rec: Record, Rec2: Record] = (
+    RelSet[Rec | None, Any, Any, Any, LocalStat, Rec2]
+    | tuple[
+        RelSet[Any, Any, Any, Any, LocalStat, Rec2],
+        RelSet[Rec | None, Any, Any, Any, LocalStat, Rec2],
+    ]
+    | type[Rec2]
+)
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | RecT2 | None = ...,
+    default_factory: Callable[[], VarT2 | RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: bool = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: Literal[True],
+    init: bool = ...,
+) -> Any: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: bool = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Col[VarT2]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool | Literal["fk"] = ...,
+    primary_key: bool | Literal["fk"] = ...,
+    link_on: DirectLink[RecT2],
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Rel[RecT2]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal["fk"],
+    primary_key: bool | Literal["fk"] = ...,
+    link_on: DirectLink[RecT2] | None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Rel[RecT2]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool | Literal["fk"] = ...,
+    primary_key: Literal["fk"],
+    link_on: DirectLink[RecT2] | None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Rel[RecT2]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Prop[VarT2, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: Callable[[Record, VarT2], None],
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Prop[VarT2, RW]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: None = ...,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+    local: bool = ...,
+    init: bool = ...,
+) -> Col[VarT2, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: bool = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: Callable[[Record, VarT2], None],
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement],
+    local: bool = ...,
+    init: bool = ...,
+) -> Col[VarT2, RW]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[True] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: None = ...,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Col[VarT2, RO]: ...
+
+
+@overload
+def prop(
+    *,
+    default: VarT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], VarT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[True] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: None = ...,
+    link_via: None = ...,
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: Callable[[Record], VarT2],
+    setter: Callable[[Record, VarT2], None],
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> Col[VarT2, RW]: ...
+
+
+@overload
+def prop(  # type: ignore[reportOverlappingOverload]
+    *,
+    default: RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: BackLink[RecT2] | None = ...,
+    link_via: BiLink[RecT2, Link],
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> RelSet[RecT2, None]: ...
+
+
+@overload
+def prop(
+    *,
+    default: RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: BackLink[RecT2] | None = ...,
+    link_via: BiLink[RecT2, RecT3] | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    order_by: None = ...,
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> RelSet[RecT2, RecT3]: ...
+
+
+@overload
+def prop(
+    *,
+    default: RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    default_factory: Callable[[], RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: BackLink[RecT2] | None = ...,
+    link_via: BiLink[RecT2, RecT3] | None = ...,  # type: ignore[reportInvalidTypeVarUse]
+    order_by: Mapping[Col[Any, Any, Any, LocalStat, RecT2 | RecT3], int],
+    map_by: None = ...,
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> RelSet[RecT2, RecT3, int]: ...
+
+
+@overload
+def prop(
+    *,
+    default: RecT2 | None = ...,
+    default_factory: Callable[[], RecT2 | VarT3] | None = ...,
+    alias: str | None = ...,
+    index: Literal[False] = ...,
+    primary_key: Literal[False] = ...,
+    link_on: None = ...,
+    link_from: BackLink[RecT2] | None = ...,
+    link_via: BiLink[RecT2, RecT3] | None = ...,
+    order_by: None = ...,
+    map_by: Col[VarT4, Any, Any, LocalStat, RecT2 | RecT3],
+    getter: None = ...,
+    setter: None = ...,
+    sql_getter: None = ...,
+    local: bool = ...,
+    init: bool = ...,
+) -> RelSet[RecT2, RecT3, VarT4]: ...
+
+
+def prop(
+    *,
+    default: Any | None = None,
+    default_factory: Callable[[], Any] | None = None,
+    alias: str | None = None,
+    index: bool | Literal["fk"] = False,
+    primary_key: bool | Literal["fk"] = False,
+    link_on: DirectLink[Record] | None = None,
+    link_from: BackLink[Record] | None = None,
+    link_via: BiLink[Record, Any] | None = None,
+    order_by: Mapping[Col, int] | None = None,
+    map_by: Col | None = None,
+    getter: Callable[[Record], Any] | None = None,
+    setter: Callable[[Record, Any], None] | None = None,
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None,
+    local: bool = False,
+    init: bool = True,
+) -> Any:
+    """Define a backlinking relation to another record."""
+    if local:
+        return Prop(
+            default=default,
+            default_factory=default_factory,
+            alias=alias,
+            init=init,
+            _type=PropType(),
+            local=True,
+        )
+
+    if any(
+        a is not None for a in (link_on, link_from, link_via, order_by, map_by)
+    ) or any(a == "fk" for a in (index, primary_key)):
+        return RelSet(
+            default=default,
+            default_factory=default_factory,
+            alias=alias,
+            init=init,
+            index=index == "fk",
+            primary_key=primary_key == "fk",
+            on=(
+                link_on
+                if link_on is not None
+                else link_from if link_from is not None else link_via
+            ),  # type: ignore[reportArgumentType]
+            order_by=order_by,
+            map_by=map_by,
+            _type=PropType(RelSet[Record]),
+        )
+
+    if getter is not None and not (primary_key or index or sql_getter is not None):
+        return Prop(
+            default=default,
+            default_factory=default_factory,
+            alias=alias,
+            init=init,
+            getter=getter,
+            setter=setter,
+            _type=PropType(),
+        )
+
+    return Col(
+        default=default,
+        default_factory=default_factory,
+        alias=alias,
+        init=init,
+        index=index is not False,
+        primary_key=primary_key is not False,
+        getter=getter,
+        setter=setter,
+        sql_getter=sql_getter,
+        _type=PropType(Col[object]),
+    )
+
+
+class RecordMeta(type):
+    """Metaclass for record types."""
+
+    _record_bases: list[type[Record]]
+    _base_pks: dict[
+        type[Record],
+        dict[Col[Hashable], Col[Hashable]],
+    ]
+
+    _defined_props: dict[str, Col | RelSet]
+    _defined_cols: dict[str, Col]
+    _defined_rels: dict[str, RelSet]
+
+    _is_record: bool = False
+    _template: bool = False
+    _src_mod: ModuleType | None = None
+
+    def __init__(cls, name, bases, dct):
+        """Initialize a new record type."""
+        super().__init__(name, bases, dct)
+
+        if cls._src_mod is None:
+            cls._src_mod = getmodule(cls)
+
+        prop_defs = {
+            name: pt
+            for name, hint in get_annotations(cls).items()
+            if issubclass((pt := PropType(hint, ctx=cls._src_mod)).prop_type(), Prop)
+            or (isinstance(hint, str) and ("Attr" in hint or "Rel" in hint))
+        }
+
+        for prop_name, prop_type in prop_defs.items():
+            if prop_name not in cls.__dict__:
+                pt = prop_type.prop_type()
+                assert issubclass(pt, Prop)
+                setattr(
+                    cls,
+                    prop_name,
+                    pt(_name=prop_name, _type=prop_type),
+                )
+            else:
+                prop = cls.__dict__[prop_name]
+                assert isinstance(prop, Prop)
+                prop._type = prop_type
+
+        cls._record_bases = []
+        base_types: Iterable[type | GenericAlias] = (
+            cls.__dict__["__orig_bases__"]
+            if "__orig_bases__" in cls.__dict__
+            else cls.__bases__
+        )
+        for c in base_types:
+            orig = get_origin(c) if not isinstance(c, type) else c
+            if orig is not c and hasattr(orig, "__parameters__"):
+                typevar_map = dict(zip(getattr(orig, "__parameters__"), get_args(c)))
+            else:
+                typevar_map = {}
+
+            if not isinstance(orig, RecordMeta) or orig._is_record:
+                continue
+
+            if orig._template:
+                for prop_name, prop_set in orig._defined_props.items():
+                    prop_defs[prop_name] = prop_set._type
+                    if prop_name not in cls.__dict__:
+                        if isinstance(prop_set, Col):
+                            prop_set = copy_and_override(
+                                prop_set,
+                                type(prop_set),
+                                _type=copy_and_override(
+                                    prop_set._type,
+                                    type(prop_set._type),
+                                    typevar_map=typevar_map,
+                                    ctx=cls._src_mod,
+                                ),
+                            )
+                        else:
+                            prop_set = copy_and_override(
+                                prop_set,
+                                type(prop_set),
+                                parent_type=prop_set.parent_type,
+                                _type=copy_and_override(
+                                    prop_set._type,
+                                    type(prop_set._type),
+                                    typevar_map=typevar_map,
+                                    ctx=cls._src_mod,
+                                ),
+                            )
+                        setattr(cls, prop_name, prop_set)
+            else:
+                assert orig is c
+                cls._record_bases.append(orig)
+
+        cls._base_pks = (
+            {
+                base: {
+                    Col[Hashable, Any, Record](
+                        _name=pk.name,
+                        primary_key=True,
+                        _type=PropType(Col[pk.value_type, Any, Record]),
+                        record_set=cast(type[Record], cls)._db,
+                    ): pk
+                    for pk in base._primary_keys.values()
+                }
+                for base in cls._record_bases
+            }
+            if not cls._is_record
+            else {}
+        )
+
+        cls._defined_props = {name: getattr(cls, name) for name in prop_defs.keys()}
+
+        cls._defined_cols = {
+            name: col
+            for name, col in cls._defined_props.items()
+            if isinstance(col, Col)
+        }
+
+        cls._defined_rels = {
+            name: rel
+            for name, rel in cls._defined_props.items()
+            if isinstance(rel, RelSet)
+        }
+
+    @property
+    def _defined_rel_cols(cls) -> dict[str, Col[Hashable]]:
+        return {
+            a.name: a
+            for rel in cls._defined_rels.values()
+            if rel.direct_rel is True
+            for a in rel.fk_map.keys()
+        }
+
+    @property
+    def _primary_keys(cls: type[Record]) -> dict[str, Col[Hashable]]:
+        base_pk_cols = {v.name: v for vs in cls._base_pks.values() for v in vs.keys()}
+        defined_pks = {
+            name: a for name, a in cls._defined_cols.items() if a.primary_key
+        }
+
+        if len(base_pk_cols) > 0 and len(defined_pks) > 0:
+            assert set(defined_pks.keys()).issubset(
+                set(base_pk_cols.keys())
+            ), f"Primary keys of {cls} are ambiguous. "
+            return base_pk_cols
+
+        return {**base_pk_cols, **defined_pks}
+
+    @property
+    def _props(cls) -> dict[str, Col | RelSet]:
+        return reduce(
+            lambda x, y: {**x, **y},
+            (c._props for c in cls._record_bases),
+            cls._defined_props,
+        )
+
+    @property
+    def _cols(cls) -> dict[str, Col]:
+        return reduce(
+            lambda x, y: {**x, **y},
+            (c._cols for c in cls._record_bases),
+            cls._defined_cols,
+        )
+
+    @property
+    def _rels(cls) -> dict[str, RelSet]:
+        return reduce(
+            lambda x, y: {**x, **y},
+            (c._rels for c in cls._record_bases),
+            cls._defined_rels,
+        )
+
+    @property
+    def _rel_types(cls) -> set[type[Record]]:
+        return {rel.record_type for rel in cls._rels.values()}
+
+
+class RecDB:
+    """Descriptor to access the database of a record."""
+
+    @overload
+    def __get__(  # noqa: D105
+        self, instance: None, owner: type[Record]
+    ) -> DB[RW, LocalStat]: ...
+
+    @overload
+    def __get__(  # noqa: D105
+        self, instance: Record, owner: type[Record]
+    ) -> DB[RW, DynBackendID]: ...
+
+    def __get__(  # noqa: D105
+        self, instance: Record | None, owner: type[Record]
+    ) -> DB[RW, LocalStat] | DB[RW, DynBackendID]:
+        if instance is None:
+            return DB(b_id=LocalBackend.static, types={owner})
+
+        if "__db" not in instance.__dict__:
+            db = DB(b_id=LocalBackend.dynamic, types={owner})
+            db[owner][instance._index] @= instance
+            instance.__dict__["__db"] = db
+            instance._connected = True
+            instance._root = True
+
+        return instance.__dict__["__db"]
+
+    def __set__(self, instance: Record, value: DB[RW, Any]) -> None:  # noqa: D105
+        instance.__dict__["__db"] = value
+        instance._connected = True
+        instance._root = False
+
+
+@dataclass_transform(kw_only_default=True, field_specifiers=(prop,), eq_default=False)
+class Record(Generic[KeyT], metaclass=RecordMeta):
+    """Schema for a record in a database."""
+
+    _template: ClassVar[bool]
+    _table_name: ClassVar[str] | None = None
+    _type_map: ClassVar[dict[type, sqla.types.TypeEngine]] = {
+        str: sqla.types.String().with_variant(
+            sqla.types.String(50), "oracle"
+        ),  # Avoid oracle error when VARCHAR has no size parameter
+        UUID: UUIDType(binary=False),  # Binary type causes issues with DuckDB
+    }
+    _is_record: ClassVar[bool] = True
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+
+    _db: RecDB = RecDB()
+    _connected: bool = prop(default=False, local=True)
+    _root: bool = prop(default=True, local=True)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Initialize a new record subclass."""
+        super().__init_subclass__(**kwargs)
+        cls._is_record = False
+
+        cls.__dataclass_fields__ = {
+            **{
+                name: Field(
+                    p.default,
+                    p.default_factory,  # type: ignore[reportArgumentType]
+                    p.init,
+                    repr=True,
+                    hash=p.primary_key,
+                    metadata={},
+                    compare=True,
+                    kw_only=True,
+                )
+                for name, p in cls._cols.items()
+            },
+            **{
+                name: Field(
+                    p.default,
+                    p.default_factory,  # type: ignore[reportArgumentType]
+                    p.init,
+                    repr=True,
+                    hash=False,
+                    metadata={},
+                    compare=True,
+                    kw_only=True,
+                )
+                for name, p in cls._rels.items()
+            },
+        }
+
+    def __init__(self, **kwargs: Any) -> None:
+        """Initialize a new record subclass."""
+        super().__init__()
+        for name, value in kwargs.items():
+            setattr(self, name, value)
+
+    @classmethod
+    def _default_table_name(cls) -> str:
+        """Return the name of the table for this schema."""
+        if cls._table_name is not None:
+            return cls._table_name
+
+        fqn_parts = PyObjectRef.reference(cls).fqn.split(".")
+
+        name = fqn_parts[-1]
+        for part in reversed(fqn_parts[:-1]):
+            name = part + "_" + name
+            if len(name) > 40:
+                break
+
+        return name
+
+    @classmethod
+    def _sql_table_name(
+        cls,
+        subs: Mapping[type[Record], sqla.TableClause],
+    ) -> str:
+        """Return a SQLAlchemy table object for this schema."""
+        sub = subs.get(cls)
+        return sub.name if sub is not None else cls._default_table_name()
+
+    @classmethod
+    def _sql_cols(cls, registry: orm.registry) -> dict[str, sqla.Column]:
+        """Columns of this record type's table."""
+        table_cols: dict[str, Col] = {
+            **cls._defined_cols,
+            **cls._defined_rel_cols,
+            **cls._primary_keys,
+        }
+
+        return {
+            name: sqla.Column(
+                col.name,
+                registry._resolve_type(col.value_type),
+                primary_key=col.primary_key,
+                autoincrement=False,
+                index=col.index,
+                nullable=has_type(None, col.value_type),
+            )
+            for name, col in table_cols.items()
+        }
+
+    @classmethod
+    def _foreign_keys(
+        cls, metadata: sqla.MetaData, subs: Mapping[type[Record], sqla.TableClause]
+    ) -> list[sqla.ForeignKeyConstraint]:
+        """Foreign key constraints for this record type's table."""
+        fks: list[sqla.ForeignKeyConstraint] = []
+
+        for rel in cls._defined_rels.values():
+            if len(rel.fk_map) > 0:
+                rel_table = rel.record_type._table(metadata, subs)
+                fks.append(
+                    sqla.ForeignKeyConstraint(
+                        [col.name for col in rel.fk_map.keys()],
+                        [rel_table.c[col.name] for col in rel.fk_map.values()],
+                        name=f"{cls._sql_table_name(subs)}_{rel.name}_fk",
+                    )
+                )
+
+        for base, pks in cls._base_pks.items():
+            base_table = base._table(metadata, subs)
+
+            fks.append(
+                sqla.ForeignKeyConstraint(
+                    [col.name for col in pks.keys()],
+                    [base_table.c[col.name] for col in pks.values()],
+                    name=(
+                        cls._sql_table_name(subs)
+                        + "_base_fk_"
+                        + gen_str_hash(base._sql_table_name(subs), 5)
+                    ),
+                )
+            )
+
+        return fks
+
+    @classmethod
+    def _table(
+        cls,
+        metadata: sqla.MetaData,
+        subs: Mapping[type[Record], sqla.TableClause],
+    ) -> sqla.Table:
+        """Return a SQLAlchemy table object for this schema."""
+        table_name = cls._sql_table_name(subs)
+
+        if table_name in metadata.tables:
+            # Return the table object from metadata if it already exists.
+            # This is necessary to avoid circular dependencies.
+            return metadata.tables[table_name]
+
+        registry = orm.registry(metadata=metadata, type_annotation_map=cls._type_map)
+        sub = subs.get(cls)
+
+        cols = cls._sql_cols(registry)
+
+        # Create a partial SQLAlchemy table object from the class definition
+        # without foreign keys to avoid circular dependencies.
+        # This adds the table to the metadata.
+        sqla.Table(
+            table_name,
+            registry.metadata,
+            *cols.values(),
+            schema=(sub.schema if sub is not None else None),
+        )
+
+        fks = cls._foreign_keys(metadata, subs)
+
+        # Re-create the table object with foreign keys and return it.
+        return sqla.Table(
+            table_name,
+            registry.metadata,
+            *cols.values(),
+            *fks,
+            schema=(sub.schema if sub is not None else None),
+            extend_existing=True,
+        )
+
+    @classmethod
+    def _joined_table(
+        cls,
+        metadata: sqla.MetaData,
+        subs: Mapping[type[Record], sqla.TableClause],
+    ) -> sqla.Table | sqla.Join:
+        """Recursively join all bases of this record to get the full data."""
+        table = cls._table(metadata, subs)
+
+        base_joins = [
+            (base._joined_table(metadata, subs), pk_map)
+            for base, pk_map in cls._base_pks.items()
+        ]
+        for target_table, pk_map in base_joins:
+            table = table.join(
+                target_table,
+                reduce(
+                    sqla.and_,
+                    (
+                        table.c[pk.name] == target_table.c[target_pk.name]
+                        for pk, target_pk in pk_map.items()
+                    ),
+                ),
+            )
+
+        return table
+
+    @classmethod
+    def _backrels_to_rels(
+        cls, target: type[RecT2]
+    ) -> set[RelSet[Self | None, Any, SingleIdx, Any, LocalStat, RecT2]]:
+        """Get all direct relations from a target record type to this type."""
+        rels: set[RelSet[Self | None, Any, SingleIdx, Any, LocalStat, RecT2]] = set()
+        for rel in cls._rels.values():
+            if issubclass(target, rel.fk_record_type):
+                rel = cast(
+                    RelSet[Self | None, Any, Any, Any, LocalStat, RecT2, Self], rel
+                )
+                rels.add(
+                    RelSet[Self | None, Any, SingleIdx, Any, LocalStat, RecT2, Self](
+                        on=rel.on,
+                        _type=PropType(
+                            RelSet[cls | None, Any, Any, Any, Any, target, cls]
+                        ),
+                        parent_type=cast(type[RecT2], rel.fk_record_type),
+                    )
+                )
+
+        return rels
+
+    @classmethod
+    def _rel(
+        cls, other: type[RecT2]
+    ) -> RelSet[RecT2, Any, BaseIdx, Any, LocalStat, Self]:
+        """Dynamically define a relation to another record type."""
+        return RelSet[RecT2, Any, Any, Any, LocalStat, Self](
+            on=other,
+            _type=PropType(RelSet[other, Any, BaseIdx, Any, LocalStat, cls]),
+            parent_type=cls,
+        )
+
+    @classmethod
+    def __clause_element__(cls) -> sqla.TableClause:  # noqa: D105
+        assert cls._default_table_name() is not None
+        return sqla.table(cls._default_table_name())
+
+    @classmethod  # type: ignore[reportArgumentType]
+    def _copy(
+        cls: Callable[Params, RecT2],
+        rec: Record[KeyT],
+        idx: KeyT,
+        *args: Params.args,
+        **kwargs: Params.kwargs,
+    ) -> RecT2:
+        rec_type = type(rec)
+        target_props = rec_type._props
+
+        rec_props = {p: getattr(rec, p.name) for p in target_props.values() if p.init}
+        rec_kwargs = {p.name: v for p, v in rec_props.items()}
+
+        if len(rec_type._primary_keys) > 1:
+            assert isinstance(idx, Iterable)
+            new_idx = dict(zip(rec_type._primary_keys, idx))
+        else:
+            new_idx = {next(iter(rec_type._primary_keys)): idx}
+
+        new_kwargs = {**rec_kwargs, **kwargs, **new_idx}
+
+        return cls(*args, **new_kwargs)
+
+    def __hash__(self) -> int:
+        """Hash the record."""
+        return gen_int_hash(self)
+
+    def __eq__(self, value: Hashable) -> bool:
+        """Check if the record is equal to another record."""
+        return hash(self) == hash(value)
+
+    @overload
+    def _to_dict(
+        self,
+        name_keys: Literal[False] = ...,
+        include: set[type[Prop]] | None = ...,
+    ) -> dict[Col | RelSet, Any]: ...
+
+    @overload
+    def _to_dict(
+        self,
+        name_keys: Literal[True],
+        include: set[type[Prop]] | None = ...,
+    ) -> dict[str, Any]: ...
+
+    def _to_dict(
+        self,
+        name_keys: bool = True,
+        include: set[type[Prop]] | None = None,
+    ) -> dict[Col | RelSet, Any] | dict[str, Any]:
+        """Convert the record to a dictionary."""
+        include_types: tuple[type[Prop], ...] = (
+            tuple(include) if include is not None else (Col,)
+        )
+
+        vals = {
+            p if not name_keys else p.name: getattr(self, p.name)
+            for p in type(self)._props.values()
+            if isinstance(p, include_types)
+        }
+
+        return cast(dict, vals)
+
+    @property
+    def _index(self) -> KeyT:
+        """Return the index of the record."""
+        pks = type(self)._primary_keys
+        if len(pks) == 1:
+            return getattr(self, next(iter(pks)))
+        return cast(KeyT, tuple(getattr(self, pk) for pk in pks))
+
+    @classmethod
+    def _from_partial_dict(
+        cls,
+        data: Mapping[Col | RelSet, Any] | Mapping[str, Any],
+        name_keys: bool = True,
+    ) -> Self:
+        """Return the index contained in a dict representation of this record."""
+        args = {
+            p.name: data.get(p if not name_keys else p.name, State.undef)  # type: ignore[reportArgumentType]
+            for p in cls._props.values()
+        }
+        return cls(**args)
+
+    def __repr__(self) -> str:  # noqa: D105
+        return self._to_dict(name_keys=True).__repr__()
+
+
+ResT = TypeVarX("ResT", covariant=True, bound="Record | None", default="Record | None")
+ResT2 = TypeVarX("ResT2", bound="Record | None")
+
+ResTd = TypeVarX(
+    "ResTd", covariant=True, bound="Record | None", default="Record | None"
+)
+
+RecT = TypeVarX("RecT", bound="Record", default="Record")
+RecTt = TypeVarTuple("RecTt")
+RecT2 = TypeVar("RecT2", bound="Record")
+RecT3 = TypeVar("RecT3", bound="Record")
+
+BsT = TypeVarX(
+    "BsT",
+    bound="StatBackendID",
+    default="LocalStat",
+    covariant=True,
+)
+
+BkT = TypeVarX(
+    "BkT",
+    bound="StatBackendID",
+    default="LocalDyn",
+    covariant=True,
+)
+BtT = TypeVar(
+    "BtT",
+    bound="DynBackendID",
+)
+
+ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
+ParT2 = TypeVar("ParT2", bound="Record")
+
+LnT = TypeVarX("LnT", covariant=True, bound="Record | None", default="Record | None")
+LnT2 = TypeVar("LnT2", bound="Record | None")
 
 
 @dataclass
-class DB:
-    """Relational database consisting of multiple named tables."""
+class RelTree(Generic[*RecTt]):
+    """Tree of relations starting from the same root."""
 
-    # Attributes:
-
-    table_dfs: dict[str, pd.DataFrame] = field(default_factory=dict)
-    """Dataframes containing the data of each table in this database."""
-
-    relations: dict[tuple[str, str], tuple[str, str]] = field(default_factory=dict)
-    """Relations between tables in this database."""
-
-    join_tables: set[str] = field(default_factory=set)
-    """Names of tables that are used as n-to-m join tables in this database."""
-
-    schema: type[DBSchema] | None = None
-    """Schema of this database."""
-
-    updates: dict[pd.Timestamp, dict[str, Any]] = field(default_factory=dict)
-    """List of update times with comments, tags, authors, etc."""
-
-    backend: Path | None = None
-    """File backend of this database, hence where it was loaded from and is
-    saved to by default.
-    """
-
-    _copied: bool = False
-    """Whether this database has been copied from somewhere else."""
-
-    # Construction:
+    rels: Iterable[RelSet[Record | None, Any, Any, Any]] = field(default_factory=set)
 
     def __post_init__(self) -> None:  # noqa: D105
-        if not self._copied:
-            self.updates[pd.Timestamp.now().round("s")] = {
-                "action": "construct",
-                "table_dfs": str(set(self.table_dfs.keys())),
-                "relations": str(set(self.relations.items())),
-                "join_tables": str(self.join_tables),
-            }
+        assert all(
+            rel.root_set == self.root_set for rel in self.rels
+        ), "Relations in set must all start from same root."
+        self.targets = [rel.record_type for rel in self.rels]
 
-    # Public methods:
+    @cached_property
+    def root_set(self) -> RecSet[Record | None, Any, Any]:
+        """Root record type of the set."""
+        return list(self.rels)[-1].root_set
+
+    @cached_property
+    def dict(self) -> DataDict:
+        """Tree representation of the relation set."""
+        tree: DataDict = {}
+
+        for rel in self.rels:
+            subtree = tree
+            if len(rel._rel_path) > 1:
+                for ref in rel._rel_path[1:]:
+                    if ref not in subtree:
+                        subtree[ref] = {}
+                    subtree = subtree[ref]
+
+        return tree
+
+    def prefix(
+        self, prefix: type[Record] | RecSet[Any, Any, Any, Any, Any, Any]
+    ) -> Self:
+        """Prefix all relations in the set with given relation."""
+        rels = {rel.prefix(prefix) for rel in self.rels}
+        return cast(Self, RelTree(rels))
+
+    def __mul__(self, other: RelSet[RecT2] | RelTree) -> RelTree[*RecTt, RecT2]:
+        """Append more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*self.rels, *other.rels])
+
+    def __rmul__(self, other: RelSet[RecT2] | RelTree) -> RelTree[RecT2, *RecTt]:
+        """Append more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*other.rels, *self.rels])
+
+    def __or__(
+        self: RelTree[RecT2], other: RelSet[RecT3] | RelTree[RecT3]
+    ) -> RelTree[RecT2 | RecT3]:
+        """Add more rels to the set."""
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*self.rels, *other.rels])
+
+    @property
+    def types(self) -> tuple[*RecTt]:
+        """Return the record types in the relation tree."""
+        return cast(tuple[*RecTt], tuple(r.record_type for r in self.rels))
+
+
+type AggMap[Rec: Record] = dict[Col[Rec, Any], Col | sqla.Function]
+
+
+@dataclass(kw_only=True, frozen=True)
+class Agg(Generic[RecT]):
+    """Define an aggregation map."""
+
+    target: type[RecT]
+    map: AggMap[RecT]
+
+
+type Join = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
+
+
+@dataclass(kw_only=True, eq=False)
+class RecSet(
+    Generic[ResT, IdxT, RwT, BsT, ResTd, SelT],
+):
+    """Record dataset."""
+
+    db: DB[RwT, BsT] = field(default_factory=lambda: DB[RwT, BsT]())
+    res_type: type[ResT] = NoneType
+
+    keys: Sequence[slice | list[Hashable] | Hashable] = field(default_factory=list)
+    filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
+    merges: RelTree = field(default_factory=RelTree)
+    sel_type: type[SelT] = NoneType
+
+    @property
+    def record_type(self: RecSet[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
+        """Set of all record types in this DB."""
+        t = extract_nullable_type(self.res_type)
+        assert t is not None
+        return t
+
+    @cached_property
+    def _sql_alias(self) -> sqla.FromClause:
+        """Get random alias for a type."""
+        if isinstance(self, RelSet):
+            return self.db._get_joined_table(self.record_type).alias(
+                gen_str_hash(self.to_static(), 8)
+            )
+
+        return self.db._get_joined_table(self.record_type).alias(token_hex(4))
+
+    @cached_property
+    def _idx_cols(self: RecSet[Record, Any, Any, BsT]) -> list[sqla.ColumnElement]:
+        """Return the index columns."""
+        return [
+            *(
+                col.label(f"{self.record_type._default_table_name()}.{col_name}")
+                for col_name, col in self.root_table.columns.items()
+                if self.record_type._cols[col_name] in self.idx
+            ),
+            *(
+                col.label(f"{rel.path_str}.{col_name}")
+                for rel in self.merges.rels
+                for col_name, col in rel._sql_alias.columns.items()
+                if rel.record_type._cols[col_name] in self.idx
+            ),
+        ]
+
+    @cached_property
+    def idx(
+        self,
+    ) -> Mapping[Col[Any, Any, Any, Any, Any], RecSet[Any, Any, Any, Any, Any, Any]]:
+        """Return the index cols."""
+        return {c: self for c in self.record_type._primary_keys.values()}
+
+    @cached_property
+    def single_key(self) -> Hashable | None:
+        """Return the single selected key, if it exists."""
+        single_keys = [k for k in self.keys if not isinstance(k, list | slice)]
+        if len(single_keys) > 0:
+            return single_keys[0]
+
+        return None
+
+    @cached_property
+    def root_table(self) -> sqla.FromClause:
+        """Get the main table for the current selection."""
+        return self._sql_alias
+
+    def _visit_col(
+        self,
+        element: sqla_visitors.ExternallyTraversible,
+        reflist: set[RelSet[Any, Any, Any, Any, Any]] = set(),
+        render: bool = False,
+        **kw: Any,
+    ) -> sqla.ColumnElement | None:
+        if isinstance(element, Col):
+            if isinstance(element.record_set, RelSet):
+                if (
+                    not isinstance(self, RelSet)
+                    or element.record_set.to_static() != self.to_static()
+                ):
+                    element.record_set = element.record_set.prefix(self)
+
+                reflist.add(element.record_set)
+
+            return element.record_set._sql_alias.c[element.name] if render else element
+
+        return None
+
+    def _parse_filters(
+        self,
+        filt: Iterable[sqla.ColumnElement[bool]],
+    ) -> tuple[list[sqla.ColumnElement[bool]], RelTree]:
+        """Parse filter argument and return SQL expression and join operations."""
+        reflist: set[RelSet] = set()
+        replace_func = partial(self._visit_col, reflist=reflist, render=False)
+        parsed_filt = [
+            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
+            for f in filt
+        ]
+        merge = RelTree(reflist)
+
+        return parsed_filt, merge
+
+    @property
+    def _rendered_filters(
+        self,
+    ) -> list[sqla.ColumnElement[bool]]:
+        """Parse filter argument and return SQL expression and join operations."""
+        replace_func = partial(self._visit_col, render=True)
+        parsed_filt = [
+            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
+            for f in self.filters
+        ]
+
+        return parsed_filt
+
+    def _append_rel[
+        RS: RelSet[Any, Any, Any, Any, Any, Any, Any, Any]
+    ](self: RecSet[Any, Any, Any, Any, Any, Any], rel: RS) -> RS:
+        rel_filt, rel_filt_merges = self._parse_filters(rel.filters)
+
+        return cast(
+            RS,
+            copy_and_override(
+                rel,
+                RelSet[Any, Any, Any, Any, Any, Any, Any, Any],
+                parent_type=self.rec,
+                db=self.db,
+                keys=[*self.keys, *rel.keys],
+                filters=[*self.filters, *rel_filt],
+                merges=self.merges * rel.merges.prefix(self) * rel_filt_merges,
+            ),
+        )
+
+    def suffix(
+        self, right: RelSet[RecT2 | None, Any, Any, Any, Any, Any, Any]
+    ) -> RelSet[RecT2 | None, Record, Any, RwT, BsT, Record, Record]:
+        """Prefix this prop with a relation or record type."""
+        if self.res_type is NoneType:
+            return right
+
+        rel_path = right._rel_path[1:] if len(right._rel_path) > 1 else (right,)
+
+        prefixed_rel = reduce(
+            RecSet._append_rel,
+            rel_path,
+            self,
+        )
+
+        return cast(
+            RelSet[RecT2, Record, Any, RwT, BsT, Any, Record],
+            prefixed_rel,
+        )
+
+    @cached_property
+    def rec(self: RecSet[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
+        """Reference props of the target record type."""
+        return cast(
+            type[RecT2],
+            type(
+                self.record_type.__name__ + "_" + token_hex(5),
+                (self.record_type,),
+                {"_rel": self},
+            ),
+        )
+
+    # Overloads: attribute selection:
+
+    # 1. DB-level type selection
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[Any, Any, Any, Any],
+        key: type[RecT2],
+    ) -> RecSet[RecT2, IdxT, RwT, BsT, RecT2]: ...
+
+    # 2. Top-level attribute selection, custom index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[RecT2, KeyT2 | Filt[KeyT2], Any, Any],
+        key: Col[VarT2, Any, RecT2],
+    ) -> Col[VarT2, RwT, KeyT, BsT, RecT2]: ...
+
+    # 3. Top-level attribute selection, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2], Any, Any, Any, RecT2],
+        key: Col[VarT2, Any, RecT2],
+    ) -> Col[VarT2, RwT, KeyT2, BsT, RecT2]: ...
+
+    # 4. Nested attribute selection, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, KeyT2 | Filt[KeyT2], Any, Any],
+        key: Col[VarT2, Any, Any],
+    ) -> Col[VarT2, RwT, KeyT2 | IdxStart[KeyT2], BsT, Record]: ...
+
+    # 5. Nested attribute selection, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2], Any, Any, Any, Any],
+        key: Col[VarT2, Any, Any],
+    ) -> Col[VarT2, RwT, KeyT2 | IdxStart[KeyT2], BsT, Record]: ...
+
+    # Overloads: relation selection:
+
+    # 6. Top-level relation selection, singular, base index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, RecT2],
+        key: RelSet[ResT2, LnT2, SingleIdx | None, Any, LocalStat, RecT2, Any, SelT],
+    ) -> RelSet[ResT2, LnT2, KeyT2, RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 7. Top-level relation selection, singular, single index
+    @overload
+    def __getitem__(
+        self: RecSet[RecT2 | None, SingleIdx, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx, Any, LocalStat, RecT2],
+    ) -> RelSet[ResT2, LnT2, SingleIdx, RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 8. Top-level relation selection, singular nullable, single index
+    @overload
+    def __getitem__(
+        self: RecSet[RecT2 | None, SingleIdx, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx | None, Any, LocalStat, RecT2],
+    ) -> RelSet[
+        ResT2 | Scalar[None], LnT2, SingleIdx, RwT, BsT, RecT2, ResT2, SelT
+    ]: ...
+
+    # 9. Top-level relation selection, singular, custom index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[RecT2 | None, KeyT2 | Filt[KeyT2], Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx | None, Any, LocalStat, RecT2],
+    ) -> RelSet[ResT2, LnT2, KeyT2, RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 10. Top-level relation selection, base plural, base index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, RecT2],
+        key: RelSet[
+            ResT2,
+            LnT2,
+            BaseIdx | Filt[BaseIdx],
+            Any,
+            LocalStat,
+            RecT2,
+            Record[KeyT3],
+        ],
+    ) -> RelSet[ResT2, LnT2, tuple[KeyT2, KeyT3], RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 11. Top-level relation selection, base plural, single index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[RecT2 | None, SingleIdx, Any, Any],
+        key: RelSet[
+            ResT2,
+            LnT2,
+            BaseIdx | Filt[BaseIdx],
+            Any,
+            LocalStat,
+            RecT2,
+            Record[KeyT3],
+        ],
+    ) -> RelSet[ResT2, LnT2, KeyT3, RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 12. Top-level relation selection, base plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecSet[
+            Record[KeyT2] | None, tuple[*IdxTt] | Filt[tuple[*IdxTt]], Any, Any, RecT2
+        ],
+        key: RelSet[
+            ResT2,
+            LnT2,
+            BaseIdx | Filt[BaseIdx],
+            Any,
+            LocalStat,
+            RecT2,
+            Record[KeyT3],
+        ],
+    ) -> RelSet[
+        ResT2,
+        LnT2,
+        tuple[*IdxTt, KeyT3] | tuple[KeyT2, KeyT3],
+        RwT,
+        BsT,
+        RecT2,
+        ResT2,
+        SelT,
+    ]: ...
+
+    # 13. Top-level relation selection, base plural, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, KeyT2 | Filt[KeyT2], Any, Any, RecT2],
+        key: RelSet[
+            ResT2,
+            LnT2,
+            BaseIdx | Filt[BaseIdx],
+            Any,
+            LocalStat,
+            RecT2,
+            Record[KeyT3],
+        ],
+    ) -> RelSet[ResT2, LnT2, tuple[KeyT2, KeyT3], RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 14. Top-level relation selection, plural, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, RecT2],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, RecT2],
+    ) -> RelSet[ResT2, LnT2, tuple[KeyT2, KeyT3], RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 15. Top-level relation selection, plural, single index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RecSet[RecT2 | None, SingleIdx],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, RecT2],
+    ) -> RelSet[ResT2, LnT2, KeyT3, RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 16. Top-level relation selection, plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecSet[
+            Record[KeyT2] | None, tuple[*IdxTt] | Filt[tuple[*IdxTt]], Any, Any, RecT2
+        ],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, RecT2],
+    ) -> RelSet[
+        ResT2,
+        LnT2,
+        tuple[*IdxTt, KeyT3] | tuple[KeyT2, KeyT3],
+        RwT,
+        BsT,
+        RecT2,
+        ResT2,
+        SelT,
+    ]: ...
+
+    # 17. Top-level relation selection, plural, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[RecT2 | None, KeyT2 | Filt[KeyT2], Any, Any],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, RecT2],
+    ) -> RelSet[ResT2, LnT2, tuple[KeyT2, KeyT3], RwT, BsT, RecT2, ResT2, SelT]: ...
+
+    # 18. Nested relation selection, singular, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx, Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, IdxStart[KeyT2], RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 19. Nested relation selection, singular, single index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, SingleIdx, Any, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx, Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, Hashable | SingleIdx, RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 20. Nested relation selection, singular, tuple index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, tuple[*IdxTt] | Filt[tuple[*IdxTt]], Any, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx, Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, IdxTupStart[*IdxTt], RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 21. Nested relation selection, singular, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, KeyT2 | Filt[KeyT2], Any, Any, Any],
+        key: RelSet[ResT2, LnT2, SingleIdx, Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, IdxStart[KeyT2], RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 22. Nested relation selection, base plural, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, Any],
+        key: RelSet[
+            ResT2, LnT2, BaseIdx | Filt[BaseIdx], Any, LocalStat, ParT2, Record[KeyT3]
+        ],
+    ) -> RelSet[
+        ResT2, LnT2, IdxStartEnd[KeyT2, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 23. Nested relation selection, base plural, single index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, SingleIdx, Any, Any, Any],
+        key: RelSet[
+            ResT2, LnT2, BaseIdx | Filt[BaseIdx], Any, LocalStat, ParT2, Record[KeyT3]
+        ],
+    ) -> RelSet[ResT2, LnT2, IdxEnd[KeyT3], RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 24. Nested relation selection, base plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, tuple[*IdxTt] | Filt[tuple[*IdxTt]], Any, Any, Any],
+        key: RelSet[
+            ResT2, LnT2, BaseIdx | Filt[BaseIdx], Any, LocalStat, ParT2, Record[KeyT3]
+        ],
+    ) -> RelSet[
+        ResT2, LnT2, IdxTupStartEnd[*IdxTt, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 25. Nested relation selection, base plural, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, KeyT2 | Filt[KeyT2], Any, Any, Any],
+        key: RelSet[
+            ResT2, LnT2, BaseIdx | Filt[BaseIdx], Any, LocalStat, ParT2, Record[KeyT3]
+        ],
+    ) -> RelSet[
+        ResT2, LnT2, IdxStartEnd[KeyT2, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 26. Nested relation selection, plural, base index
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, BaseIdx | Filt[BaseIdx], Any, Any, Any],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, ParT2],
+    ) -> RelSet[
+        ResT2, LnT2, IdxStartEnd[KeyT2, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 27. Nested relation selection, plural, single index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, SingleIdx],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, IdxEnd[KeyT3], RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # 28. Nested relation selection, plural, tuple index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, tuple[*IdxTt] | Filt[tuple[*IdxTt]]],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, ParT2],
+    ) -> RelSet[
+        ResT2, LnT2, IdxTupStartEnd[*IdxTt, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 29. Nested relation selection, plural, custom index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, KeyT2 | Filt[KeyT2]],
+        key: RelSet[ResT2, LnT2, KeyT3 | Filt[KeyT3], Any, LocalStat, ParT2],
+    ) -> RelSet[
+        ResT2, LnT2, IdxStartEnd[KeyT2, KeyT3], RwT, BsT, ParT2, ResT2, SelT
+    ]: ...
+
+    # 30. Default relation selection
+    @overload
+    def __getitem__(
+        self: RecSet[Any, Any, Any, Any, Any],
+        key: RelSet[ResT2, LnT2, Any, Any, LocalStat, ParT2],
+    ) -> RelSet[ResT2, LnT2, Any, RwT, BsT, ParT2, ResT2, SelT]: ...
+
+    # Index filtering and selection:
+
+    # 31. RelSet: Merge selection, single index
+    @overload
+    def __getitem__(
+        self: RelSet[RecT2 | None, LnT2, SingleIdx, Any, Any, ParT2, Any],
+        key: RelTree[RecT2, *RecTt],
+    ) -> RelSet[
+        ResT,
+        LnT2,
+        BaseIdx,
+        RwT,
+        BsT,
+        ParT2,
+        ResTd,
+        tuple[ResT, *RecTt],
+    ]: ...
+
+    # 32. RelSet: Merge selection, default
+    @overload
+    def __getitem__(
+        self: RelSet[RecT2 | None, LnT2, Any, Any, Any, ParT2, Any],
+        key: RelTree[RecT2, *RecTt],
+    ) -> RelSet[
+        ResT,
+        LnT2,
+        IdxT,
+        RwT,
+        BsT,
+        ParT2,
+        ResTd,
+        tuple[ResT, *RecTt],
+    ]: ...
+
+    # 33. RelSet: Expression filtering, keep index
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RelSet[Any, LnT2, MdxT2 | Filt[MdxT2], Any, Any, ParT2],
+        key: sqla.ColumnElement[bool],
+    ) -> RelSet[ResT, LnT2, Filt[MdxT2], RwT, BsT, ParT2, ResTd]: ...
+
+    # 34. RelSet: List selection
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RelSet[Record[KeyT2] | None, LnT2, MdxT2 | Filt[MdxT2], Any, Any, ParT2],
+        key: Iterable[KeyT2 | MdxT2],
+    ) -> RelSet[ResT, LnT2, Filt[MdxT2], RwT, BsT, ParT2, ResTd]: ...
+
+    # 35. RelSet: Slice selection
+    @overload
+    def __getitem__(  # type: ignore[reportOverlappingOverload]
+        self: RelSet[Any, LnT2, MdxT2 | Filt[MdxT2], Any, Any, ParT2],
+        key: slice | tuple[slice, ...],
+    ) -> RelSet[ResT, LnT2, Filt[MdxT2], RwT, BsT, ParT2, ResTd]: ...
+
+    # 36. RelSet: Index value selection, record
+    @overload
+    def __getitem__(
+        self: RelSet[
+            Record[KeyT2] | None, LnT2, KeyT3 | Index, Any, Any, ParT2, RecT2, Record
+        ],
+        key: KeyT2 | KeyT3,
+    ) -> RecT2: ...
+
+    # 37. RelSet: Index value selection, non-record
+    @overload
+    def __getitem__(
+        self: RelSet[Record[KeyT2] | None, LnT2, KeyT3 | Index, Any, Any, ParT2],
+        key: KeyT2 | KeyT3,
+    ) -> RelSet[ResT, LnT2, SingleIdx, RwT, BsT, ParT2, ResTd]: ...
+
+    # 38. Merge selection, single index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, SingleIdx, Any, Any],
+        key: RelTree[ResT, *RecTt],
+    ) -> RecSet[ResT, BaseIdx, RwT, BsT, ResTd, tuple[ResT, *RecTt]]: ...
+
+    # 39. Merge selection, default
+    @overload
+    def __getitem__(
+        self: RecSet[Any, Any, Any, Any],
+        key: RelTree[ResT, *RecTt],
+    ) -> RecSet[ResT, IdxT, RwT, BsT, ResTd, tuple[ResT, *RecTt]]: ...
+
+    # 40. Expression filtering, keep index
+    @overload
+    def __getitem__(
+        self: RecSet[Any, MdxT2 | Filt[MdxT2], Any, Any], key: sqla.ColumnElement[bool]
+    ) -> RecSet[ResT, Filt[MdxT2], RwT, BsT]: ...
+
+    # 41. List selection
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, MdxT2 | Filt[MdxT2], Any, Any],
+        key: Iterable[KeyT2 | MdxT2],
+    ) -> RecSet[ResT, Filt[MdxT2], RwT, BsT]: ...
+
+    # 42. Slice selection
+    @overload
+    def __getitem__(
+        self: RecSet[Any, MdxT2 | Filt[MdxT2], Any, Any], key: slice | tuple[slice, ...]
+    ) -> RecSet[ResT, Filt[MdxT2], RwT, BsT]: ...
+
+    # 43. Index value selection, record
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, KeyT3 | Index, Any, Any, RecT2, Record],
+        key: KeyT2 | KeyT3,
+    ) -> RecT2: ...
+
+    # 44. Index value selection, non-record
+    @overload
+    def __getitem__(
+        self: RecSet[Record[KeyT2] | None, KeyT3 | Index, Any, Any], key: KeyT2 | KeyT3
+    ) -> RecSet[ResT, SingleIdx, RwT, BsT]: ...
+
+    # 45. Index value selection, default
+    @overload
+    def __getitem__(
+        self: RecSet[Any, Any, Any, Any], key: Hashable
+    ) -> RecSet[ResT, SingleIdx, RwT, BsT]: ...
+
+    # Implementation:
+
+    def __getitem__(  # noqa: D105
+        self: RecSet[Record | None, Any, Any, Any, Any, Any],
+        key: (
+            type[Record]
+            | Col
+            | RecSet
+            | RelTree
+            | sqla.ColumnElement[bool]
+            | list[Hashable]
+            | slice
+            | tuple[slice, ...]
+            | Hashable
+        ),
+    ) -> (
+        Col[Any, Any, Any, Any, Any]
+        | RecSet[Record | None, Any, Any, Any, Any, Any]
+        | Record
+    ):
+        match key:
+            case type():
+                assert issubclass(
+                    key,
+                    self.record_type,
+                )
+                return copy_and_override(self, RecSet[key], res_type=key)
+            case Col():
+                if isinstance(key.record_set, RelSet) and (
+                    not isinstance(self, RelSet)
+                    or (key.record_set.to_static() != self.to_static())
+                ):
+                    return self.suffix(key.record_set)[key]
+
+                return Col(
+                    record_set=self,
+                    _type=key._type,
+                )
+            case RelSet():
+                return self.suffix(key)
+            case RelTree():
+                return copy_and_override(
+                    self, type(self), merges=self.merges * key.prefix(self)
+                )
+            case sqla.ColumnElement():
+                filt, filt_merges = self._parse_filters([key])
+                return copy_and_override(
+                    self,
+                    type(self),
+                    filters=[*self.filters, filt[0]],
+                    merges=self.merges * filt_merges,
+                )
+            case list() | slice() | tuple() | Hashable():
+                if not isinstance(key, list | slice) and not has_type(
+                    key, tuple[slice, ...]
+                ):
+                    assert (
+                        self.single_key is None or key == self.single_key
+                    ), "Cannot select multiple single record keys"
+
+                if isinstance(self.db.b_id, type):
+                    return copy_and_override(self, type(self), keys=[*self.keys, key])
+
+                return list(iter(self))[0]
+
+    @overload
+    def get(
+        self: RecSet[RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2]],
+        key: KeyT2 | KeyT3,
+        default: VarT2,
+    ) -> RecT2 | VarT2: ...
+
+    @overload
+    def get(
+        self: RecSet[RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2]],
+        key: KeyT2 | KeyT3,
+        default: None = ...,
+    ) -> RecT2 | None: ...
+
+    def get(
+        self: RecSet[Record | None, KeyT3 | Index, Any, DynBackendID, Record],
+        key: Hashable | KeyT3,
+        default: VarT2 | None = None,
+    ) -> Record | VarT2 | None:
+        """Get a record by key."""
+        try:
+            return list(iter(self[key]))[0]
+        except KeyError | IndexError:
+            return default
+
+    def select(
+        self,
+        *,
+        index_only: bool = False,
+    ) -> sqla.Select:
+        """Return select statement for this dataset."""
+        select = sqla.select(
+            *(rel._sql_alias.c[col.name] for col, rel in self.idx.items()),
+            *(
+                col.label(f"{self.record_type._default_table_name()}.{col_name}")
+                for col_name, col in self._sql_alias.columns.items()
+                if not index_only
+            ),
+            *(
+                col.label(f"{rel.path_str}.{col_name}")
+                for rel in self.merges.rels
+                for col_name, col in rel._sql_alias.columns.items()
+                if not index_only
+            ),
+        ).select_from(self._sql_alias)
+
+        for join in self._joins():
+            select = select.join(*join)
+
+        for filt in self._rendered_filters:
+            select = select.where(filt)
+
+        return select
+
+    @overload
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, tuple],
+        kind: type[DfT],
+    ) -> tuple[DfT, ...]: ...
+
+    @overload
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, Record | None], kind: type[DfT]
+    ) -> DfT: ...
+
+    @overload
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, tuple],
+        kind: None = ...,
+    ) -> tuple[pl.DataFrame, ...]: ...
+
+    @overload
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, Record | None], kind: None = ...
+    ) -> pl.DataFrame: ...
+
+    @overload
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, Any], kind: None = ...
+    ) -> pl.DataFrame | tuple[pl.DataFrame, ...]: ...
+
+    def to_df(
+        self: RecSet[Any, Any, Any, Any, Any, Any],
+        kind: type[DfT] | None = None,
+    ) -> DfT | tuple[DfT, ...]:
+        """Download selection."""
+        select = self.select()
+
+        idx_cols = [col.name for col in self.idx]
+
+        main_cols = {
+            col: col.lstrip(self.record_type._default_table_name() + ".")
+            for col in select.columns.keys()
+            if col.startswith(self.record_type._default_table_name())
+        }
+
+        extra_cols = {
+            rel: {
+                col: col.lstrip(rel.path_str + ".")
+                for col in select.columns.keys()
+                if col.startswith(rel.path_str)
+            }
+            for rel in self.merges.rels
+        }
+
+        merged_df = None
+        if kind is pd.DataFrame:
+            with self.db.engine.connect() as con:
+                merged_df = pd.read_sql(select, con)
+                merged_df = merged_df.set_index(idx_cols)
+        else:
+            merged_df = pl.read_database(
+                str(select.compile(self.db.engine)), self.db.engine
+            )
+
+        main_df, *extra_dfs = cast(
+            tuple[DfT, ...],
+            (
+                merged_df[list(main_cols.keys())].rename(main_cols),
+                *(
+                    merged_df[list(cols.keys())].rename(cols)
+                    for cols in extra_cols.values()
+                ),
+            ),
+        )
+
+        return main_df, *extra_dfs
+
+    @overload
+    def __iter__(
+        self: RecSet[RecT2 | None, Any, Any, Any, Any, Record | None]
+    ) -> Iterator[RecT2]: ...
+
+    @overload
+    def __iter__(
+        self: RecSet[RecT2 | None, Any, Any, Any, Any, tuple[*RecTt]]
+    ) -> Iterator[tuple[RecT2, *tuple[Record, ...]]]: ...
+
+    def __iter__(  # noqa: D105
+        self: RecSet[RecT2 | None, Any, Any, Any, Any, Any],
+    ) -> Iterator[RecT2 | tuple[RecT2, *tuple[Record, ...]]]:
+        dfs = self.to_df()
+        if isinstance(dfs, pl.DataFrame):
+            dfs = (dfs,)
+
+        rec_types: tuple[type[Record], ...] = (self.record_type, *self.merges.types)
+        idx_cols = [
+            f"{rel.path_str}.{pk}"
+            for rel in self.merges.rels
+            for pk in rel.record_type._primary_keys
+        ]
+
+        for rt in rec_types:
+            if rt not in self.db._instance_map:
+                self.db._instance_map[rt] = {}
+
+        def iterator() -> Generator[RecT2 | tuple[RecT2, *tuple[Record, ...]]]:
+            for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
+                main_row = rows[0]
+                idx = tuple(main_row[i] for i in idx_cols)
+                idx = idx[0] if len(idx) == 1 else idx
+
+                rec_list = []
+                for rec_type, row in zip(rec_types[1:], rows[1:]):
+                    new_rec = self.record_type._from_partial_dict(row)
+                    rec = self.db._instance_map[rec_type].get(new_rec._index) or new_rec
+                    rec._db = self.db
+
+                    rec_list.append(rec)
+
+                yield tuple(rec_list) if len(rec_list) > 1 else rec_list[0]
+
+        return iterator()
+
+    def __imatmul__(
+        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
+        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
+    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        """Aligned assignment."""
+        self._mutate(other, mode="update")
+        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+
+    def __iand__(
+        self: RecSet[RecT2 | None, MdxT, RW, Any, RecT2],
+        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
+    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        """Replacing assignment."""
+        self._mutate(other, mode="replace")
+        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+
+    def __ior__(
+        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
+        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
+    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        """Upserting assignment."""
+        self._mutate(other, mode="upsert")
+        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+
+    def __iadd__(
+        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
+        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
+    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        """Inserting assignment."""
+        self._mutate(other, mode="insert")
+        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+
+    def __isub__(
+        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
+        other: RecSet[RecT2 | None, MdxT, Any, Any] | Iterable[MdxT] | MdxT,
+    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        """Deletion."""
+        raise NotImplementedError("Delete not supported yet.")
+
+    @overload
+    def __lshift__(
+        self: RecSet[Record[KeyT2] | None, BaseIdx, Any, Any, RecT2 | None],
+        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2],
+    ) -> list[KeyT2]: ...
+
+    @overload
+    def __lshift__(
+        self: RecSet[Any, Any, Any, Any, RecT2 | None],
+        other: RecSet[RecT2 | None, KeyT, Any, Any] | RecInput[RecT2, KeyT],
+    ) -> list[KeyT]: ...
+
+    def __lshift__(
+        self: RecSet[Any, Any, Any, Any, RecT2 | None],
+        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, Any],
+    ) -> list:
+        """Injection."""
+        raise NotImplementedError("Inject not supported yet.")
+
+    @overload
+    def __rshift__(
+        self: RecSet[Any, KeyT2, RW, Any, RecT2 | None], other: KeyT2 | Iterable[KeyT2]
+    ) -> dict[KeyT, RecT2]: ...
+
+    @overload
+    def __rshift__(
+        self: RecSet[Record[KeyT2], BaseIdx, RW, Any, RecT2 | None],
+        other: KeyT2 | Iterable[KeyT2],
+    ) -> dict[KeyT2, RecT2]: ...
+
+    def __rshift__(
+        self: RecSet[Any, Any, RW, Any, RecT2 | None],
+        other: Hashable | Iterable[Hashable],
+    ) -> dict[Any, RecT2]:
+        """Extraction."""
+        raise NotImplementedError("Extract not supported yet.")
+
+    # 1. Type deletion
+    @overload
+    def __delitem__(
+        self: RecSet[RecT2 | None, Any, RW, Any, Any], key: type[RecT2]
+    ) -> None: ...
+
+    # 2. List deletion
+    @overload
+    def __delitem__(
+        self: RecSet[
+            Record[KeyT2] | None,
+            BaseIdx | Filt[BaseIdx] | KeyT3 | Filt[KeyT3],
+            RW,
+            Any,
+            RecT2 | None,
+        ],
+        key: Iterable[KeyT2 | KeyT3],
+    ) -> None: ...
+
+    # 3. Index value deletion
+    @overload
+    def __delitem__(
+        self: RecSet[
+            Record[KeyT2] | None,
+            BaseIdx | Filt[BaseIdx] | KeyT3 | Filt[KeyT3],
+            RW,
+            Any,
+            RecT2 | None,
+        ],
+        key: KeyT2 | KeyT3,
+    ) -> None: ...
+
+    # 4. Slice deletion
+    @overload
+    def __delitem__(
+        self: RecSet[Record | None, Any, RW, Any], key: slice | tuple[slice, ...]
+    ) -> None: ...
+
+    # 5. Expression filter deletion
+    @overload
+    def __delitem__(
+        self: RecSet[Record | None, Any, RW, Any], key: sqla.ColumnElement[bool]
+    ) -> None: ...
+
+    # Implementation:
+
+    def __delitem__(  # noqa: D105
+        self: RecSet[Record | None, Any, RW, LocalDyn, Any, Any],
+        key: (
+            type[Record]
+            | list[Hashable]
+            | Hashable
+            | slice
+            | tuple[slice, ...]
+            | sqla.ColumnElement[bool]
+        ),
+    ) -> None:
+        if not isinstance(key, slice) or key != slice(None):
+            del self[key][:]
+
+        select = self.select()
+
+        tables = {
+            self.db._get_table(rec, writable=True)
+            for rec in self.record_type._record_bases
+        }
+
+        statements = []
+
+        for table in tables:
+            # Prepare delete statement.
+            if self.db.engine.dialect.name in (
+                "postgres",
+                "postgresql",
+                "duckdb",
+                "mysql",
+                "mariadb",
+            ):
+                # Delete-from.
+                statements.append(
+                    table.delete().where(
+                        reduce(
+                            sqla.and_,
+                            (
+                                table.c[col.name] == select.c[col.name]
+                                for col in table.primary_key.columns
+                            ),
+                        )
+                    )
+                )
+            else:
+                # Correlated update.
+                raise NotImplementedError("Correlated update not supported yet.")
+
+        # Execute delete statements.
+        with self.db.engine.begin() as con:
+            for statement in statements:
+                con.execute(statement)
+
+    @overload
+    def extract(
+        *,
+        self: RecSet[Record | None, Any, Any, Any, Any],
+        aggs: Mapping[RelSet, Agg] | None = ...,
+        to_backend: None = ...,
+        overlay_with_schema: bool = ...,
+    ) -> DB[RW, BsT]: ...
+
+    @overload
+    def extract(
+        *,
+        self: RecSet[Record | None, Any, Any, Any, Any],
+        aggs: Mapping[RelSet, Agg] | None = ...,
+        to_backend: Backend[BtT],
+        overlay_with_schema: bool = ...,
+    ) -> DB[RW, BtT]: ...
+
+    def extract(
+        self: RecSet[
+            Record | None,
+            Any,
+            Any,
+            Any,
+            Any,
+        ],
+        aggs: Mapping[RelSet, Agg] | None = None,
+        to_backend: Backend[BtT] | None = None,
+        overlay_with_schema: bool = False,
+    ) -> DB[RW, BsT | BtT]:
+        """Extract a new database instance from the current selection."""
+        # Get all rec types in the schema.
+        rec_types = {self.record_type, *self.record_type._rel_types}
+
+        # Get the entire subdag from this selection.
+        all_paths_rels = {
+            r
+            for rel in self.record_type._rels.values()
+            for r in rel._get_subdag(rec_types)
+        }
+
+        # Extract rel paths, which contain an aggregated rel.
+        aggs_per_type: dict[type[Record], list[tuple[RelSet, Agg]]] = {}
+        if aggs is not None:
+            for rel, agg in aggs.items():
+                for path_rel in all_paths_rels:
+                    if rel in path_rel._rel_path:
+                        aggs_per_type[rel.parent_type] = [
+                            *aggs_per_type.get(rel.parent_type, []),
+                            (rel, agg),
+                        ]
+                        all_paths_rels.remove(path_rel)
+
+        replacements: dict[type[Record], sqla.Select] = {}
+        for rec in rec_types:
+            # For each table, create a union of all results from the direct routes.
+            selects = [
+                self[rel].select()
+                for rel in all_paths_rels
+                if issubclass(rec, rel.record_type)
+            ]
+            replacements[rec] = sqla.union(*selects).select()
+
+        aggregations: dict[type[Record], sqla.Select] = {}
+        for rec, rec_aggs in aggs_per_type.items():
+            selects = []
+            for rel, agg in rec_aggs:
+                src_select = self[rel].select()
+                selects.append(
+                    sqla.select(
+                        *[
+                            (
+                                src_select.c[sa.name]
+                                if isinstance(sa, Col)
+                                else sqla_visitors.replacement_traverse(
+                                    sa,
+                                    {},
+                                    replace=lambda element, **kw: (
+                                        src_select.c[element.name]
+                                        if isinstance(element, Col)
+                                        else None
+                                    ),
+                                )
+                            ).label(ta.name)
+                            for ta, sa in agg.map.items()
+                        ]
+                    )
+                )
+
+            aggregations[rec] = sqla.union(*selects).select()
+
+        # Create a new database overlay for the results.
+        overlay_db = copy_and_override(
+            self.db,
+            DB,
+            overlay=f"temp_{token_hex(10)}",
+            overlay_with_schema=overlay_with_schema,
+            schema=None,
+            types=rec_types,
+            _schema_types={},
+            _metadata=sqla.MetaData(),
+            _instance_map={},
+        )
+
+        # Overlay the new tables onto the new database.
+        for rec in replacements:
+            overlay_db[rec] &= replacements[rec]
+
+        for rec, agg_select in aggregations.items():
+            overlay_db[rec] &= agg_select
+
+        # Transfer table to the new database.
+        if to_backend is not None:
+            other_db = copy_and_override(
+                overlay_db,
+                DB,
+                b_id=to_backend.b_id,
+                url=to_backend.url,
+                _schema_types={},
+                _metadata=sqla.MetaData(),
+                _instance_map={},
+            )
+
+            for rec in set(replacements) | set(aggregations):
+                other_db[rec] &= overlay_db[rec].to_df()
+
+            overlay_db = other_db
+
+        return overlay_db
+
+    def __len__(self) -> int:
+        """Return the number of records in the dataset."""
+        with self.db.engine.connect() as conn:
+            res = conn.execute(
+                sqla.select(sqla.func.count()).select_from(self.select().subquery())
+            ).scalar()
+            assert isinstance(res, int)
+            return res
+
+    def __contains__(self: RecSet[Any, Any, Any, DynBackendID], key: Hashable) -> bool:
+        """Check if a record is in the dataset."""
+        return len(self[key]) > 0
+
+    def __clause_element__(self) -> sqla.Subquery:
+        """Return subquery for the current selection to be used inside SQL clauses."""
+        return self.select().subquery()
+
+    def _joins(self, _subtree: DataDict | None = None) -> list[Join]:
+        """Extract join operations from the relation tree."""
+        if self.root_table is None:
+            return []
+
+        joins = []
+        _subtree = _subtree or self.merges.dict
+
+        for rel, next_subtree in _subtree.items():
+            parent = (
+                rel._parent_rel._sql_alias
+                if isinstance(rel._parent_rel, RelSet)
+                else self.root_table
+            )
+
+            temp_alias_map = {rec: rec._db._sql_alias for rec in rel.inter_joins.keys()}
+
+            joins.extend(
+                (
+                    temp_alias_map[rec],
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    parent.c[lk.name] == temp_alias_map[rec].c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in joins
+                        ),
+                    ),
+                )
+                for rec, joins in rel.inter_joins.items()
+            )
+
+            target_table = rel._sql_alias
+
+            joins.append(
+                (
+                    target_table,
+                    reduce(
+                        sqla.or_,
+                        (
+                            reduce(
+                                sqla.and_,
+                                (
+                                    temp_alias_map[lk.parent_type].c[lk.name]
+                                    == target_table.c[rk.name]
+                                    for lk, rk in join_on.items()
+                                ),
+                            )
+                            for join_on in rel.target_joins
+                        ),
+                    ),
+                )
+            )
+
+            joins.extend(self._joins(next_subtree))
+
+        return joins
+
+    def _get_subdag(
+        self,
+        backlink_records: set[type[Record]] | None = None,
+        _traversed: set[RelSet[Record | None, Any, Any, Any, LocalStat]] | None = None,
+    ) -> set[RelSet[Record | None, Any, Any, Any, LocalStat]]:
+        """Find all paths to the target record type."""
+        backlink_records = backlink_records or set()
+        _traversed = _traversed or set()
+
+        # Get relations of the target type as next relations
+        next_rels = set(self.record_type._rels.values())
+
+        for backlink_record in backlink_records:
+            next_rels |= backlink_record._backrels_to_rels(self.record_type)
+
+        # Filter out already traversed relations
+        next_rels = {rel for rel in next_rels if rel not in _traversed}
+
+        # Add next relations to traversed set
+        _traversed |= next_rels
+
+        next_rels = {rel.prefix(self) for rel in next_rels}
+
+        # Return next relations + recurse
+        return next_rels | {
+            rel
+            for next_rel in next_rels
+            for rel in next_rel._get_subdag(backlink_records, _traversed)
+        }
+
+    def _gen_idx_match_expr(
+        self,
+        values: Sequence[slice | list[Hashable] | Hashable | sqla.ColumnElement],
+    ) -> sqla.ColumnElement[bool] | None:
+        """Generate SQL expression for matching index values."""
+        if values == slice(None):
+            return None
+
+        exprs = [
+            (
+                idx.label(None).in_(val)
+                if isinstance(val, list)
+                else (
+                    idx.label(None).between(val.start, val.stop)
+                    if isinstance(val, slice)
+                    else idx.label(None) == val
+                )
+            )
+            for idx, val in zip(self.idx, values)
+        ]
+
+        if len(exprs) == 0:
+            return None
+
+        return reduce(sqla.and_, exprs)
+
+    @cached_property
+    def _has_list_index(self) -> bool:
+        return (
+            isinstance(self, RelSet)
+            and self.path_idx is not None
+            and len(self.path_idx) == 1
+            and is_subtype(list(self.path_idx)[0].value_type, int)
+        )
+
+    def _df_to_table(
+        self,
+        df: pd.DataFrame | pl.DataFrame,
+    ) -> sqla.TableClause:
+        if isinstance(df, pd.DataFrame) and any(
+            name is None for name in df.index.names
+        ):
+            idx_names = [vs.name for vs in self.idx]
+            df.index.set_names(idx_names, inplace=True)
+
+        value_table = sqla.table(
+            f"{self.record_type._default_table_name()}_{token_hex(5)}"
+        )
+
+        if isinstance(df, pd.DataFrame):
+            df.reset_index().to_sql(
+                value_table.name,
+                self.db.engine,
+                if_exists="replace",
+                index=False,
+            )
+        else:
+            df.write_database(str(value_table), self.db.engine)
+
+        return value_table
 
     @staticmethod
-    def load(path: Path | str, auto_parse_dtype: bool = False) -> "DB":
-        """Load a database from an excel file.
+    def _idx_map(idx_names: list[str], idx: Any) -> dict[str, Hashable]:
+        if len(idx_names) == 1:
+            return {idx_names[0]: idx}
 
-        Args:
-            path: Path to the excel file.
-            auto_parse_dtype: Whether to automatically parse the dtypes of the data.
+        assert isinstance(idx, tuple) and len(idx) == len(idx_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, idx)}
 
-        Returns:
-            Database object.
-        """
-        path = Path(path) if isinstance(path, str) else path
+    def _records_to_df(self, records: dict[Any, Record]) -> pl.DataFrame:
+        idx_names = [vs.name for vs in self.idx]
 
-        relations = {}
-        if "_relations" in pd.ExcelFile(path).sheet_names:
-            rel_df = pd.read_excel(path, sheet_name="_relations", index_col=[0, 1])
-            relations = rel_df.apply(
-                lambda r: (r["target_table"], r["target_col"]),
-                axis="columns",
-            ).to_dict()
+        col_data = [
+            {
+                **self._idx_map(idx_names, idx),
+                **{p.name: getattr(rec, p.name) for p in type(rec)._cols.values()},
+            }
+            for idx, rec in records.items()
+        ]
 
-        join_tables = set()
-        if "_join_tables" in pd.ExcelFile(path).sheet_names:
-            jt_df = pd.read_excel(path, sheet_name="_join_tables", index_col=0)
-            join_tables = set(jt_df["name"].tolist())
+        # Transform attribute data into DataFrame.
+        return pl.DataFrame(col_data)
 
-        schema = None
-        if "_schema" in pd.ExcelFile(path).sheet_names:
-            schema_df = pd.read_excel(path, sheet_name="_schema", index_col=0)
-            schema_ref = PyObjectRef(**schema_df["value"].dropna().to_dict())
-            schema_ref.object_type = type
+    def _mutate(  # noqa: C901
+        self: RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
+        value: RecSet[RecT2 | None, Any, Any, Any, Any] | RecInput[RecT2, Any],
+        mode: Literal["update", "upsert", "replace", "insert"] = "update",
+    ) -> None:
+        mutations: list[
+            tuple[
+                type[Record] | RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
+                sqla.FromClause,
+                Literal["update", "upsert", "replace", "insert"],
+            ]
+        ] = []
 
-            schema = schema_ref.resolve()
-            if not issubclass(schema, DBSchema):
-                raise ValueError("Database schema must be a subclass of `DBSchema`.")
+        records: dict[Any, Record] | None = None
+        self_sel = self if isinstance(self, RelSet) else self.record_type
 
-        updates = {}
-        if "_updates" in pd.ExcelFile(path).sheet_names:
-            update_df = pd.read_excel(path, sheet_name="_updates", index_col=0).drop(
-                columns=["comment"]
-            )
-            update_df.index = pd.to_datetime(update_df.index)
-            updates = {
-                cast(pd.Timestamp, t): c.to_dict() for t, c in update_df.iterrows()
+        match value:
+            case sqla.Select():
+                mutations.append((self_sel, value.subquery(), mode))
+            case RecSet():
+                if value.db is not self.db:
+                    remote_db = value if isinstance(value, DB) else value.extract()
+                    for s in remote_db._schema_types:
+                        if remote_db.b_id == self.db.b_id:
+                            mutations.append((s, remote_db._get_table(s), "upsert"))
+                        else:
+                            mutations.append(
+                                (s, self._df_to_table(remote_db[s].to_df()), "upsert")
+                            )
+
+                mutations.append((self_sel, value.select().subquery(), mode))
+            case pd.DataFrame() | pl.DataFrame():
+                mutations.append((self_sel, self._df_to_table(value), mode))
+            case Record():
+                records = {value._index: value}
+            case Mapping() if has_type(value, Mapping[Any, Record]):
+                records = dict(value)
+            case Iterable():
+                records = {idx: rec for idx, rec in enumerate(value)}
+
+        if records is not None:
+            db_grouped = {
+                db: dict(recs)
+                for db, recs in groupby(
+                    sorted(records.items(), key=lambda x: x[1]._db.b_id),
+                    lambda x: None if not x[1]._connected else x[1]._db,
+                )
             }
 
-        df_dict = {
-            str(k): df.apply(parse_dtype, axis="index") if auto_parse_dtype else df
-            for k, df in pd.read_excel(path, sheet_name=None, index_col=0).items()
-            if not k.startswith("_")
-        }
+            local_records = {**db_grouped.get(self.db, {}), **db_grouped.get(None, {})}
 
-        return DB(df_dict, relations, join_tables, schema, updates, path, True)
+            remote_records = {
+                db: recs
+                for db, recs in db_grouped.items()
+                if db is not None and db is not self.db
+            }
 
-    def save(self, path: Path | str | None = None) -> None:
-        """Save this database to an excel file.
+            if local_records:
+                # Get the column data.
+                df_data = self._records_to_df(local_records)
+                mutations.append((self_sel, self._df_to_table(df_data), mode))
 
-        Args:
-            path:
-                Path to excel file. Will be overridden if it exists.
-                Uses this database's backend as default path, if none given.
-        """
-        path = Path(path) if isinstance(path, str) else path
-        if path is None:
-            if self.backend is None:
-                raise ValueError(
-                    "Need to supply explicit path for databases without a backend."
+            for db, recs in remote_records.items():
+                rec_ids = [rec._index for rec in recs.values()]
+                remote_set = db[self.record_type][rec_ids]
+
+                remote_db = (
+                    db
+                    if all(rec._root for rec in recs.values())
+                    else remote_set.extract()
                 )
-            path = self.backend
+                for s in remote_db._schema_types:
+                    if remote_db.b_id == self.db.b_id:
+                        mutations.append((s, remote_db._get_table(s), "upsert"))
+                    else:
+                        mutations.append(
+                            (s, self._df_to_table(remote_db[s].to_df()), "upsert")
+                        )
 
-        sheets = {
-            **(
-                {
-                    "_schema": pd.Series(asdict(PyObjectRef.reference(self.schema)))
-                    .rename("value")
-                    .to_frame()
-                    .rename_axis(index="key")
-                }
-                if self.schema is not None
-                else {}
-            ),
-            "_relations": pd.DataFrame.from_records(
-                list(self.relations.values()),
-                columns=["target_table", "target_col"],
-                index=pd.MultiIndex.from_tuples(list(self.relations.keys())),
-            ).rename_axis(index=["source_table", "source_col"]),
-            "_join_tables": pd.DataFrame({"name": list(self.join_tables)}),
-            "_updates": pd.DataFrame.from_dict(
-                {t.strftime("%Y-%m-%d %X"): d for t, d in self.updates.items()},
-                orient="index",
-            )
-            .rename_axis(index="time")
-            .assign(comment=""),
-            **self.table_dfs,
+                mutations.append((self_sel, remote_set.select().subquery(), mode))
+
+        for rec, value_table, sub_mode in mutations:
+            # Get the statements to perform the mutation.
+            self.db[rec]._mutate_table(value_table, sub_mode)
+
+            # Drop the temporary table, if any.
+            if isinstance(value_table, sqla.TableClause):
+                with self.db.engine.begin() as con:
+                    con.execute(sqla.drop(value_table))
+
+        return
+
+    def _mutate_table(  # noqa: C901
+        self: RecSet[RecT2 | None, Any, RW, BsT, Any, Any],
+        value_table: sqla.FromClause,
+        mode: Literal["update", "upsert", "replace", "insert"] = "update",
+    ) -> None:
+        cols_by_table = {
+            self.db._get_table(rec, writable=True): {
+                a for a in self.record_type._cols.values() if a.record_type is rec
+            }
+            for rec in self.record_type._record_bases
         }
-        with pd.ExcelWriter(
-            path,
-            engine="openpyxl",
-        ) as writer:
-            for name, sheet in sheets.items():
-                sheet.to_excel(writer, sheet_name=name, index=True)
 
-    def describe(self) -> dict[str, str | dict[str, str]]:
+        statements: list[sqla.Executable] = []
+
+        if mode == "replace":
+            # Delete all records in the current selection.
+            select = self.select()
+
+            for table in cols_by_table:
+                # Prepare delete statement.
+                if self.db.engine.dialect.name in (
+                    "postgres",
+                    "postgresql",
+                    "duckdb",
+                    "mysql",
+                    "mariadb",
+                ):
+                    # Delete-from.
+                    statements.append(
+                        table.delete().where(
+                            reduce(
+                                sqla.and_,
+                                (
+                                    table.c[col.name] == select.c[col.name]
+                                    for col in table.primary_key.columns
+                                ),
+                            )
+                        )
+                    )
+                else:
+                    # Correlated update.
+                    raise NotImplementedError("Correlated update not supported yet.")
+
+        if mode in ("replace", "upsert", "insert"):
+            # Construct the insert statements.
+
+            assert len(self.filters) == 0, "Can only upsert into unfiltered datasets."
+
+            for table, cols in cols_by_table.items():
+                # Do an insert-from-select operation, which updates on conflict:
+                statement = table.insert().from_select(
+                    [a.name for a in cols],
+                    value_table,
+                )
+
+                if mode in ("replace", "upsert"):
+                    if isinstance(statement, postgresql.Insert):
+                        # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
+                        statement = statement.on_conflict_do_update(
+                            index_elements=[
+                                col.name for col in table.primary_key.columns
+                            ],
+                            set_=dict(statement.excluded),
+                        )
+                    elif isinstance(statement, mysql.Insert):
+                        # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
+                        statement = statement.prefix_with("INSERT INTO")
+                        statement = statement.on_duplicate_key_update(
+                            **statement.inserted
+                        )
+                    else:
+                        # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
+                        raise NotImplementedError(
+                            "Upsert not supported for this database dialect."
+                        )
+
+                statements.append(statement)
+        else:
+            # Construct the update statements.
+
+            assert isinstance(self.root_table, sqla.Table), "Base must be a table."
+
+            # Derive current select statement and join with value table, if exists.
+            value_join_on = (
+                sqla.text("TRUE")
+                if self.single_key is not None
+                else reduce(
+                    sqla.and_,
+                    (
+                        self.root_table.c[idx_col.name] == idx_col
+                        for idx_col in value_table.primary_key
+                    ),
+                )
+            )
+            select = self.select().join(
+                value_table,
+                value_join_on,
+            )
+
+            for table, cols in cols_by_table.items():
+                col_names = {a.name for a in cols}
+                values = {
+                    c_name: c
+                    for c_name, c in value_table.columns.items()
+                    if c_name in col_names
+                }
+
+                # Prepare update statement.
+                if self.db.engine.dialect.name in (
+                    "postgres",
+                    "postgresql",
+                    "duckdb",
+                    "mysql",
+                    "mariadb",
+                ):
+                    # Update-from.
+                    statements.append(
+                        table.update()
+                        .values(values)
+                        .where(
+                            reduce(
+                                sqla.and_,
+                                (
+                                    table.c[col.name] == select.c[col.name]
+                                    for col in table.primary_key.columns
+                                ),
+                            )
+                        )
+                    )
+                else:
+                    # Correlated update.
+                    raise NotImplementedError("Correlated update not supported yet.")
+
+        # Execute delete / insert / update statements.
+        with self.db.engine.begin() as con:
+            for statement in statements:
+                con.execute(statement)
+
+        if mode in ("replace", "upsert") and isinstance(self, RelSet):
+            # Update incoming relations from parent records.
+            if self.direct_rel is not True:
+                if issubclass(self.fk_record_type, self.parent_type):
+                    # Case: parent links directly to child (n -> 1)
+                    for fk, pk in self.direct_rel.fk_map.items():
+                        self.parent[fk] @= value_table.select().with_only_columns(
+                            value_table.c[pk.name]
+                        )
+                else:
+                    # Case: parent and child are linked via assoc table (n <--> m)
+                    # Update link table with new child indexes.
+                    assert issubclass(self.link_type, Record)
+                    ls = self.links
+                    ls &= value_table.select()
+
+            # Note that the (1 <- n) case is already covered by updating
+            # the child record directly, which includes all its foreign keys.
+
+        return
+
+    def __setitem__(
+        self,
+        key: Any,
+        other: RecSet[Any, Any, Any, Any, Any, Any] | Col[Any, Any, Any, Any, Any],
+    ) -> None:
+        """Catchall setitem."""
+        return
+
+
+@dataclass(kw_only=True, eq=False)
+class Col(  # type: ignore[reportIncompatibleVariableOverride]
+    Prop[VarTi, RwT],
+    sqla.ColumnClause[VarTi],
+    Generic[VarTi, RwT, CdxT, BsT, ParT],
+):
+    """Reference an attribute of a record."""
+
+    def __post_init__(self) -> None:  # noqa: D105
+        # Initialize fields required by SQLAlchemy superclass.
+        self.table = None
+        self.is_literal = False
+
+    record_set: RecSet[ParT | None, Any, RwT, BsT] = field(
+        default_factory=lambda: Record._db
+    )
+
+    index: bool = False
+    primary_key: bool = False
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None
+
+    @cached_property
+    def sql_type(self) -> sqla_types.TypeEngine:
+        """Column key."""
+        return sqla_types.to_instance(self.value_type)  # type: ignore[reportCallIssue]
+
+    def all(self) -> sqla.CollectionAggregate[bool]:
+        """Return a SQL ALL expression for this attribute."""
+        return sqla.all_(self)
+
+    def any(self) -> sqla.CollectionAggregate[bool]:
+        """Return a SQL ANY expression for this attribute."""
+        return sqla.any_(self)
+
+    @cached_property
+    def value_type(self) -> SingleTypeDef[VarTi]:
+        """Value type of the property."""
+        return self._type.value_type()
+
+    @cached_property
+    def record_type(self) -> type[ParT]:
+        """Record type of the set."""
+        return self.record_set.record_type
+
+    @overload
+    def __get__(
+        self, instance: None, owner: type[RecT2]
+    ) -> Col[VarTi, RwT, CdxT, LocalStat, RecT2]: ...
+
+    @overload
+    def __get__(
+        self: Col[Any, Any, Any, LocalStat, Any], instance: RecT2, owner: type[RecT2]
+    ) -> VarTi: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[RecT2] | None
+    ) -> Col[Any, Any, Any, Any, Any] | VarTi | Self:
+        if isinstance(instance, Record):
+            if self.getter is not None:
+                value = self.getter(instance)
+            else:
+                value = instance.__dict__.get(self.name, State.undef)
+
+            if value is State.undef:
+                if self.default_factory is not None:
+                    value = self.default_factory()
+                else:
+                    value = self.default
+
+                assert value is not State.undef, "Property value could not be fetched."
+                instance.__dict__[self.name] = value
+
+            return value
+        elif owner is not None and issubclass(owner, Record):
+            rec_type = cast(type[RecT2], owner)
+            return copy_and_override(
+                self,
+                Col[VarTi, RwT, CdxT, LocalStat, ParT],
+                record_set=cast(
+                    RecSet[ParT | None, BaseIdx, RwT, LocalStat, ParT], rec_type._db
+                ),
+            )
+
+        return self
+
+    def __set__(self: Col[VarT2, RW], instance: Record, value: VarT2 | State) -> None:
+        """Set the value of the column."""
+        if value is State.undef:
+            if self.name in instance.__dict__:
+                value = instance.__dict__[self.name]
+            elif self.default_factory is not None:
+                value = self.default_factory()
+            else:
+                value = self.default
+
+            assert value is not State.undef, "Property value could not be fetched."
+
+        if self.setter is not None:
+            self.setter(instance, cast(VarT2, value))
+        else:
+            instance.__dict__[self.name] = value
+
+    # Plural selection
+    @overload
+    def __getitem__(
+        self: Col[Any, Any, KeyT],
+        key: Iterable[KeyT] | slice | tuple[slice, ...],
+    ) -> Col[VarTi, RwT, KeyT, BsT, ParT]: ...
+
+    # Single value selection
+    @overload
+    def __getitem__(
+        self: Col[Any, Any, KeyT], key: KeyT
+    ) -> Col[VarTi, RwT, SingleIdx, BsT, ParT]: ...
+
+    # Implementation:
+
+    def __getitem__(  # noqa: D105
+        self: Col[Any, Any, KeyT],
+        key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
+    ) -> Col[Any, Any, Any, Any, Any]:
+        return copy_and_override(
+            self, Col, record_set=self.record_set[cast(slice, key)]
+        )
+
+    def __setitem__(
+        self,
+        key: Any,
+        other: Col[Any, Any, Any, Any, Any],
+    ) -> None:
+        """Catchall setitem."""
+        return
+
+    def select(self) -> sqla.Select:
+        """Return select statement for this column."""
+        selection_table = self.record_set.select().subquery()
+
+        return sqla.select(
+            *(selection_table.c[a.name] for a in self.record_set.idx),
+            selection_table.c[self.name],
+        ).select_from(selection_table)
+
+    @overload
+    def to_series(self: Col, kind: type[pd.Series]) -> pd.Series: ...
+
+    @overload
+    def to_series(self: Col, kind: type[pl.Series] = ...) -> pl.Series: ...
+
+    def to_series(
+        self,
+        kind: type[pd.Series | pl.Series] = pl.Series,
+    ) -> pd.Series | pl.Series:
+        """Download selection."""
+        select = self.select()
+        engine = self.record_set.db.engine
+
+        if kind is pd.Series:
+            with engine.connect() as con:
+                return pd.read_sql(select, con).set_index(
+                    [c.key for c in self._idx_cols]
+                )[self.name]
+
+        return pl.read_database(str(select.compile(engine)), engine)[self.name]
+
+    def __imatmul__(
+        self: Col[Any, RW, Any, Any, Any],
+        value: ValInput | Col[VarT, Any, KeyT, BsT],
+    ) -> Col[VarT, RW, KeyT, BsT, ParT]:
+        """Do item-wise, broadcasting assignment on this value set."""
+        match value:
+            case pd.Series() | pl.Series():
+                series = value
+            case Mapping():
+                series = pd.Series(dict(value))
+            case Iterable():
+                series = pd.Series(dict(enumerate(value)))
+            case _:
+                series = pd.Series({self.single_key or 0: value})
+
+        df = series.rename(self.name).to_frame()
+
+        self.record_set._mutate(df)
+        return self
+
+
+@dataclass(kw_only=True, eq=False)
+class RelSet(
+    Prop[ResT | Iterable[ResT], RwT],
+    RecSet[ResT, IdxT, RwT, BsT, ResTd, SelT],
+    Generic[ResT, LnT, IdxT, RwT, BsT, ParT, ResTd, SelT],
+):
+    """Relation set class."""
+
+    parent_type: type[ParT] = Record
+
+    index: bool = False
+    primary_key: bool = False
+
+    on: DirectLink[Record] | BackLink[Record] | BiLink[Record, Any] | None = None
+    order_by: Mapping[Col[Any, Any, Any, LocalStat], int] | None = None
+    map_by: Col[Any, Any, Any, LocalStat] | None = None
+
+    @property
+    def record_type(  # type: ignore[reportIncompatibleMethodOverride]
+        self: RelSet[RecT2 | None, Any, Any, Any, Any, Any, Any, Any]
+    ) -> type[RecT2]:
+        """Record type of the set."""
+        return cast(type[RecT2], self._type.record_type())
+
+    @overload
+    def __get__(
+        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any],
+        instance: None,
+        owner: type[ParT2],
+    ) -> RelSet[ResT, LnT, IdxT, RwT, LocalStat, ParT2, ResT, SelT]: ...
+
+    @overload
+    def __get__(
+        self: RelSet[RecT2 | None, Any, SingleIdx, Any, LocalStat, Any, Any],
+        instance: ParT2,
+        owner: type[ParT2],
+    ) -> RecT2 | None: ...
+
+    @overload
+    def __get__(
+        self: RelSet[RecT2, Any, SingleIdx, Any, LocalStat, Any, Any],
+        instance: ParT2,
+        owner: type[ParT2],
+    ) -> RecT2: ...
+
+    @overload
+    def __get__(
+        self: RelSet[Any, Any, SingleIdx, Any, LocalStat, ParT, Any],
+        instance: ParT2,
+        owner: type[ParT2],
+    ) -> RelSet[ResT, LnT, IdxT, RwT, BsT, ParT, ResT, Record]: ...
+
+    @overload
+    def __get__(
+        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any],
+        instance: object | None,
+        owner: type,
+    ) -> RelSet[ResT, LnT, IdxT, RwT, LocalStat, ParT, ResT, SelT]: ...
+
+    def __get__(  # noqa: D105
+        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any],
+        instance: object | None,
+        owner: type | type[RecT2],
+    ) -> RelSet[Any, Any, Any, Any, Any, Any, Any, Any] | Record | None:
+        # TODO: Implement support for default values of relations.
+        if has_type(instance, Record[Hashable]):
+            if self.direct_rel is True:
+                single_self = cast(
+                    RelSet[Record, Any, SingleIdx, Any, LocalStat, Any, Any], self
+                )
+                return instance._db[type(instance)][single_self].get(instance._index)
+
+            return copy_and_override(
+                instance._db[type(instance)][instance._index][self],
+                RelSet[ResT, LnT, IdxT, RwT, BsT, RecT2, ResTd, Record],
+                sel_type=Record,
+            )
+        elif issubclass(owner, Record):
+            return self.prefix(owner)
+
+        return self
+
+    def __set__(  # noqa: D105
+        self: RelSet[Record[KeyT2], Any, Any, RW, LocalStat, ParT2, RecT2],
+        instance: ParT2,
+        value: (
+            RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2] | RecInput[RecT2, KeyT2]
+        ),
+    ) -> None:
+        rec = cast(Record[Hashable], instance)
+        instance._db[type(rec)][rec._index][self]._mutate(value)
+
+    @staticmethod
+    def _get_tag(rec_type: type[Record]) -> RelSet | None:
+        """Retrieve relation-tag of a record type, if any."""
+        try:
+            rel = getattr(rec_type, "_rel")
+            return rel if isinstance(rel, RelSet) else None
+        except AttributeError:
+            return None
+
+    @cached_property
+    def _parent_rel(self) -> RelSet[ParT, Any, Any, RwT, BsT, Any, ParT] | None:
+        """Parent relation of this Rel."""
+        return cast(
+            RelSet[ParT, Any, Any, RwT, BsT, Any, ParT],
+            (
+                self._get_tag(self.parent_type)
+                if issubclass(self.parent_type, Record)
+                else None
+            ),
+        )
+
+    @cached_property
+    def _rel_path(
+        self,
+    ) -> tuple[RecSet[Record | None, BaseIdx, RwT, BsT, Record], *tuple[RelSet, ...]]:
+        """Path from base record type to this Rel."""
+        if self._parent_rel is None:
+            return (self.parent,)
+
+        return cast(
+            tuple[
+                RecSet[Record | None, BaseIdx, RwT, BsT, Record], *tuple[RelSet, ...]
+            ],
+            (
+                *self._parent_rel._rel_path,
+                self,
+            ),
+        )
+
+    @cached_property
+    def root_set(self) -> RecSet[Record | None, BaseIdx, RwT, BsT, Record]:
+        """Root record type of the set."""
+        return self._rel_path[0]
+
+    @cached_property
+    def idx(
+        self,
+    ) -> Mapping[Col[Any, Any, Any, Any, Any], RecSet[Any, Any, Any, Any, Any, Any]]:
+        """Return the index cols."""
+        return self.path_idx if self.path_idx is not None else super().idx
+
+    @cached_property
+    def root_table(self) -> sqla.FromClause:
+        """Get the main table for the current selection."""
+        return self.root_set._sql_alias
+
+    def to_static(
+        self,
+    ) -> RelSet[ResT, LnT, IdxT, RwT, LocalStat, ParT, ResTd]:
+        """Return backend-less version of this RelSet."""
+        tmpl = cast(
+            RelSet[ResT, LnT, IdxT, RwT, LocalStat, ParT, ResTd],
+            self,
+        )
+        return copy_and_override(
+            tmpl,
+            type(tmpl),
+            merges=RelTree(),
+        )
+
+    def prefix(
+        self,
+        left: type[ParT] | RecSet[ParT | None, Any, Any, Any, Any, Any],
+    ) -> RelSet[ResT, LnT, IdxT, RwT, BsT, ParT, ResTd, SelT]:
+        """Prefix this prop with a relation or record type."""
+        current_root = self.root_set.record_type
+        new_root = left if isinstance(left, RecSet) else left._rel(current_root)
+
+        if new_root.res_type is NoneType:
+            return self
+
+        rel_path = self._rel_path[1:] if len(self._rel_path) > 1 else (self,)
+
+        prefixed_rel = reduce(
+            RelSet._append_rel,
+            rel_path,
+            new_root,
+        )
+
+        return cast(
+            RelSet[ResT, LnT, IdxT, RwT, BsT, ParT, ResTd, SelT],
+            prefixed_rel,
+        )
+
+    @cached_property
+    def path_idx(
+        self,
+    ) -> Mapping[Col[Any, Any, Any, Any], RecSet[Any, Any, Any, Any]] | None:
+        """Get the path index of the relation."""
+        p = {
+            col: rel
+            for rel in self._rel_path[1:]
+            for col in (
+                [rel.map_by]
+                if rel.map_by is not None
+                else rel.order_by.keys() if rel.order_by is not None else []
+            )
+        }
+
+        if len(p) == 0:
+            return None
+
+        return {
+            **{
+                c: self.root_set
+                for c in self.root_set.record_type._primary_keys.values()
+            },
+            **p,
+        }
+
+    @cached_property
+    def path_str(self) -> str:
+        """String representation of the relation path."""
+        prefix = (
+            self.parent_type.__name__
+            if len(self._rel_path) == 0
+            else self._rel_path[-1].path_str
+        )
+        return f"{prefix}.{self.name}"
+
+    @cached_property
+    def parent(self) -> RecSet[ParT, Any, RwT, BsT, ParT]:
+        """Parent set of this Rel."""
+        if self._parent_rel is not None:
+            tmpl = cast(RelSet[ParT, Any, Any, RwT, BsT, Any, ParT], self)
+            return copy_and_override(
+                tmpl,
+                type(tmpl),
+                parent_type=self._parent_rel.parent_type,
+                on=self._parent_rel.on,
+                map_by=self._parent_rel.map_by,
+                order_by=self._parent_rel.order_by,
+            )
+
+        tmpl = cast(RecSet[ParT, Any, RwT, BsT, ParT], self)
+        return copy_and_override(tmpl, type(tmpl))
+
+    @property
+    def link_type(self) -> type[LnT]:
+        """Get the link record type."""
+        return cast(
+            type[LnT],
+            self._type.link_type(),
+        )
+
+    @property
+    def links(
+        self: RelSet[Any, RecT2, Any, Any, Any, Record, Any],
+    ) -> RecSet[RecT2, KeyT, RwT, BsT, RecT2]:
+        """Get the link set."""
+        r = self.parent_type._rel(self.link_type)
+        return cast(RecSet[RecT2, KeyT, RwT, BsT, RecT2], self.parent[r])
+
+    @cached_property
+    def ln(self: RelSet[Any, RecT2, Any, Any, Any, Any]) -> type[RecT2]:
+        """Reference props of the link record type."""
+        return self.links.rec if self.links is not None else cast(type[RecT2], Record)
+
+    @cached_property
+    def fk_record_type(self) -> type[Record]:
+        """Record type of the foreign key."""
+        match self.on:
+            case type():
+                return self.on
+            case RelSet():
+                return self.on.parent_type
+            case tuple():
+                link = self.on[0]
+                assert isinstance(link, RecSet)
+                return link.parent_type
+            case None if issubclass(self.link_type, Record):
+                return self.link_type
+            case dict() | Col() | Iterable() | None:
+                return self.parent_type
+
+    @cached_property
+    def direct_rel(
+        self,
+    ) -> RelSet[ParT, LnT, SingleIdx, RwT, BsT, Record] | Literal[True]:
+        """Direct rel."""
+        on = self.on
+        if on is None and issubclass(self.link_type, Record):
+            on = self.link_type
+
+        match on:
+            case type():
+                rels = [
+                    r
+                    for r in on._rels.values()
+                    if issubclass(self.parent_type, r.record_type)
+                    and r.direct_rel is True
+                ]
+                assert len(rels) == 1, "Direct relation must be unique."
+                return cast(
+                    RelSet[ParT, LnT, SingleIdx, RwT, BsT, Record],
+                    rels[0],
+                )
+            case RelSet():
+                return cast(
+                    RelSet[ParT, LnT, SingleIdx, RwT, BsT, Record],
+                    on,
+                )
+            case tuple():
+                link = on[0]
+                assert isinstance(link, RelSet)
+                return cast(RelSet[ParT, LnT, SingleIdx, RwT, BsT, Record], link)
+            case dict() | Col() | Iterable() | None:
+                return True
+
+    @cached_property
+    def counter_rel(
+        self: RelSet[RecT2 | None, LnT, Any, RwT, BsT, ParT]
+    ) -> RelSet[ParT, LnT, Any, RwT, BsT, RecT2]:
+        """Counter rel."""
+        if self.direct_rel is not True and issubclass(
+            self.direct_rel.parent_type, self.record_type
+        ):
+            return cast(RelSet[ParT, LnT, Any, RwT, BsT, RecT2], self.direct_rel)
+
+        return cast(
+            RelSet[ParT, LnT, Any, RwT, BsT, RecT2],
+            self.record_type._rel(self.parent_type),
+        )
+
+    @cached_property
+    def fk_map(
+        self,
+    ) -> bidict[Col[Hashable], Col[Hashable]]:
+        """Map source foreign keys to target cols."""
+        target = self.record_type
+        on = self.on
+        if on is None and issubclass(self.link_type, Record):
+            on = self.link_type
+
+        match on:
+            case type() | RelSet() | tuple():
+                return bidict()
+            case dict():
+                return bidict(
+                    {
+                        Col[Hashable](
+                            _name=fk.name,
+                            _type=PropType(Col[cast(type[Hashable], fk.value_type)]),
+                            record_set=cast(RelSet, self.to_static()),
+                        ): cast(Col[Hashable], pk)
+                        for fk, pk in on.items()
+                    }
+                )
+            case Col() | Iterable():
+                cols = on if isinstance(on, Iterable) else [on]
+                source_cols = [
+                    Col[Hashable](
+                        _name=col.name,
+                        _type=PropType(Col[cast(type[Hashable], col.value_type)]),
+                        record_set=cast(RelSet, self.to_static()),
+                    )
+                    for col in cols
+                ]
+                target_cols = target._primary_keys.values()
+                fk_map = dict(zip(source_cols, target_cols))
+
+                assert all(
+                    is_subtype(
+                        self.parent_type._defined_cols[fk_col.name].value_type,
+                        pk_col.value_type,
+                    )
+                    for fk_col, pk_col in fk_map.items()
+                    if pk_col.typedef is not None
+                ), "Foreign key value types must match primary key value types."
+
+                return bidict(fk_map)
+            case None:
+                return bidict(
+                    {
+                        Col[Hashable](
+                            _name=f"{self.name}_{target_col.name}",
+                            _type=PropType(Col[target_col.value_type, Any, Record]),
+                            record_set=cast(RelSet, self.to_static()),
+                        ): cast(Col[Hashable], target_col)
+                        for target_col in target._primary_keys.values()
+                    }
+                )
+            case _:
+                return bidict()
+
+    @cached_property
+    def inter_joins(
+        self,
+    ) -> dict[
+        type[Record],
+        list[Mapping[Col[Hashable], Col[Hashable]]],
+    ]:
+        """Intermediate joins required by this rel."""
+        on = self.on
+        if on is None and issubclass(self.link_type, Record):
+            on = self.link_type
+
+        match on:
+            case RelSet():
+                # Relation is defined via other relation
+                other_rel = on
+                assert isinstance(
+                    other_rel, RecSet
+                ), "Back-reference must be an explicit relation"
+
+                if issubclass(other_rel.record_type, self.parent_type):
+                    # Supplied record type object is a backlinking relation
+                    return {}
+                else:
+                    # Supplied record type object is a forward relation
+                    # on a relation table
+                    back_rels = [
+                        rel
+                        for rel in other_rel.parent_type._rels.values()
+                        if issubclass(rel.record_type, self.parent_type)
+                        and len(rel.fk_map) > 0
+                    ]
+
+                    return {
+                        other_rel.parent_type: [
+                            back_rel.fk_map.inverse for back_rel in back_rels
+                        ]
+                    }
+            case type():
+                if issubclass(on, self.record_type):
+                    # Relation is defined via all direct backlinks of given record type.
+                    return {}
+
+                # Relation is defined via relation table
+                back_rels = [
+                    rel
+                    for rel in on._rels.values()
+                    if issubclass(rel.record_type, self.parent_type)
+                    and len(rel.fk_map) > 0
+                ]
+
+                return {on: [back_rel.fk_map.inverse for back_rel in back_rels]}
+            case tuple() if has_type(on, tuple[RelSet, RelSet]):
+                # Relation is defined via back-rel + forward-rel
+                # on a relation table.
+                back, _ = on
+                assert len(back.fk_map) > 0, "Back relation must be direct."
+                assert issubclass(back.parent_type, Record)
+                return {back.parent_type: [back.fk_map.inverse]}
+            case _:
+                # Relation is defined via foreign key attributes
+                return {}
+
+    @cached_property
+    def target_joins(
+        self,
+    ) -> list[Mapping[Col[Hashable], Col[Hashable]]]:
+        """Mappings of column keys to join the target on."""
+        on = self.on
+        if on is None and issubclass(self.link_type, Record):
+            on = self.link_type
+
+        match on:
+            case RelSet():
+                # Relation is defined via other relation or relation table
+                other_rel = on
+                assert (
+                    len(other_rel.fk_map) > 0
+                ), "Backref or forward-ref on relation table must be a direct relation"
+                return [
+                    (
+                        other_rel.fk_map.inverse
+                        if issubclass(other_rel.record_type, self.parent_type)
+                        else other_rel.fk_map
+                    )
+                ]
+
+            case type():
+                if issubclass(on, self.record_type):
+                    # Relation is defined via all direct backlinks of given record type.
+                    back_rels = [
+                        rel
+                        for rel in on._rels.values()
+                        if issubclass(rel.record_type, self.parent_type)
+                        and len(rel.fk_map) > 0
+                    ]
+                    assert len(back_rels) > 0, "No direct backlinks found."
+                    return [back_rel.fk_map.inverse for back_rel in back_rels]
+
+                # Relation is defined via relation table
+                fwd_rels = [
+                    rel
+                    for rel in on._rels.values()
+                    if issubclass(rel.record_type, self.parent_type)
+                    and len(rel.fk_map) > 0
+                ]
+                assert (
+                    len(fwd_rels) > 0
+                ), "No direct forward rels found on relation table."
+                return [fwd_rel.fk_map for fwd_rel in fwd_rels]
+
+            case tuple():
+                assert has_type(on, tuple[RelSet, RelSet])
+                # Relation is defined via back-rel + forward-rel
+                # on a relation table.
+                _, fwd = on
+                assert len(fwd.fk_map) > 0, "Forward relation must be direct."
+                return [fwd.fk_map]
+
+            case _:
+                # Relation is defined via foreign key attributes
+                return [self.fk_map]
+
+
+class LocalBackend(StrEnum):
+    """Local backend."""
+
+    static = "local-stat"
+    dynamic = "local-dyn"
+
+
+@dataclass(kw_only=True, eq=False)
+class Backend(Generic[BkT]):
+    """Data backend."""
+
+    b_id: BkT = LocalBackend.dynamic
+    """Unique name to identify this database's backend by."""
+
+    url: sqla.URL | CloudPath | HttpFile | Path | None = None
+    """Connection URL or path."""
+
+
+@dataclass(kw_only=True, eq=False)
+class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
+    """Database."""
+
+    db: DB[RwT, BkT] = field(init=False, repr=False)
+
+    types: (
+        Mapping[
+            type[Record],
+            Literal[True] | Require | str | sqla.TableClause,
+        ]
+        | set[type[Record]]
+        | None
+    ) = None
+    schema: (
+        type[Schema]
+        | Mapping[
+            type[Schema],
+            Literal[True] | Require | str,
+        ]
+        | None
+    ) = None
+
+    overlay: str | None = None
+    subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
+
+    validate_on_init: bool = True
+    create_cross_fk: bool = True
+    overlay_with_schema: bool = True
+
+    _schema_types: Mapping[
+        type[Record], Literal[True] | Require | str | sqla.TableClause
+    ] = field(default_factory=dict)
+    _metadata: sqla.MetaData = field(default_factory=sqla.MetaData)
+    _instance_map: dict[type[Record], dict[Hashable, Record]] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self):  # noqa: D105
+        self.db = self
+
+        if self.types is not None:
+            types = self.types
+            if isinstance(types, set):
+                types = cast(
+                    dict[type[Record], Literal[True]], {rec: True for rec in self.types}
+                )
+
+            self.subs = {
+                **self.subs,
+                **{
+                    rec: (sub if isinstance(sub, sqla.TableClause) else sqla.table(sub))
+                    for rec, sub in types.items()
+                    if not isinstance(sub, Require) and sub is not True
+                },
+            }
+            self._schema_types = {**self._schema_types, **types}
+
+        if self.schema is not None:
+            if isinstance(self.schema, Mapping):
+                self.subs = {
+                    **self.subs,
+                    **{
+                        rec: sqla.table(rec._default_table_name(), schema=schema_name)
+                        for schema, schema_name in self.schema.items()
+                        for rec in schema._record_types
+                    },
+                }
+                schemas = self.schema
+            else:
+                schemas = {self.schema: True}
+
+            self._schema_types = cast(
+                dict,
+                {
+                    **self._schema_types,
+                    **{
+                        rec: (
+                            req
+                            if not isinstance(req, str)
+                            else sqla.table(rec._default_table_name(), schema=req)
+                        )
+                        for schema, req in schemas.items()
+                        for rec in schema._record_types
+                    },
+                },
+            )
+
+        for rec in self._schema_types:
+            self._schema_types = {
+                **{r: True for r in rec._rel_types},
+                **self._schema_types,
+            }
+
+        self.res_type = get_lowest_common_base(self._schema_types.keys())
+
+        if self.validate_on_init:
+            self.validate()
+
+        if self.overlay is not None and self.overlay_with_schema:
+            self._ensure_schema_exists(self.overlay)
+
+    def __hash__(self) -> int:
+        """Hash the DB."""
+        return gen_int_hash(
+            (self.b_id, self.url, self.overlay, self.overlay_with_schema)
+        )
+
+    @property
+    def record_type(self: RecSet[Any, Any, Any, Any, Any, Any]) -> type[Record]:
+        """Set of all record types in this DB."""
+        return Record
+
+    @cached_property
+    def backend_type(
+        self,
+    ) -> Literal["sql-connection", "sqlite-file", "excel-file", "in-memory"]:
+        """Type of the backend."""
+        match self.url:
+            case Path() | CloudPath():
+                return "excel-file" if "xls" in self.url.suffix else "sqlite-file"
+            case sqla.URL():
+                return (
+                    "sqlite-file"
+                    if self.url.drivername == "sqlite"
+                    else "sql-connection"
+                )
+            case HttpFile():
+                url = yarl.URL(self.url.url)
+                typ = (
+                    ("excel-file" if "xls" in Path(url.path).suffix else "sqlite-file")
+                    if url.scheme in ("http", "https")
+                    else None
+                )
+                if typ is None:
+                    raise ValueError(f"Unsupported URL scheme: {url.scheme}")
+                return typ
+            case None:
+                return "in-memory"
+
+    @cached_property
+    def engine(self) -> sqla.engine.Engine:
+        """SQLA Engine for this DB."""
+        # Create engine based on backend type
+        # For Excel-backends, use duckdb in-memory engine
+        return (
+            sqla.create_engine(
+                self.url if isinstance(self.url, sqla.URL) else str(self.url)
+            )
+            if (
+                self.backend_type == "sql-connection"
+                or self.backend_type == "sqlite-file"
+            )
+            else (sqla.create_engine(f"duckdb:///:memory:{self.b_id}"))
+        )
+
+    @cached_property
+    def assoc_types(self) -> set[type[Record]]:
+        """Set of all association tables in this DB."""
+        assoc_types = set()
+        for rec in self._schema_types:
+            pks = set([col.name for col in rec._primary_keys.values()])
+            fks = set(
+                [col.name for rel in rec._rels.values() for col in rel.fk_map.keys()]
+            )
+            if pks == fks:
+                assoc_types.add(rec)
+
+        return assoc_types
+
+    @cached_property
+    def relation_map(self) -> dict[type[Record], set[RelSet]]:
+        """Maps all tables in this DB to their outgoing or incoming relations."""
+        rels: dict[type[Record], set[RelSet]] = {
+            table: set() for table in self._schema_types
+        }
+
+        for rec in self._schema_types:
+            for rel in rec._rels.values():
+                rels[rec].add(rel)
+                rels[rel.record_type].add(rel)
+
+        return rels
+
+    def describe(self) -> dict[str, str | dict[str, str] | None]:
         """Return a description of this database.
 
         Returns:
             Mapping of table names to table descriptions.
         """
-        join_tables = {
-            name: f"{len(self[name])} links"
-            + (
-                f" x {n_attrs} attributes"
-                if (n_attrs := len(self[name].columns) - 2) > 0
-                else ""
-            )
-            for name in self.join_tables
-        }
-
         schema_desc = {}
-        if self.schema is not None:
+        if isinstance(self.schema, type):
             schema_ref = PyObjectRef.reference(self.schema)
 
             schema_desc = {
@@ -919,179 +4060,15 @@ class DB:
 
         return {
             **schema_desc,
-            "tables": {
-                name: f"{len(df)} objects x {len(df.columns)} attributes"
-                for name, df in self.items()
-                if name not in join_tables
-            },
-            "join tables": join_tables,
+            "backend": (
+                str(self.url)
+                if self.url is not None and self.backend_type != "in-memory"
+                else None
+            ),
         }
-
-    def copy(self, deep: bool = True) -> "DB":
-        """Create a copy of this database, optionally deep.
-
-        Args:
-            deep: Whether to perform a deep copy (copy all dataframes).
-
-        Returns:
-            Copy of this database.
-        """
-        return DB(
-            table_dfs={
-                name: (table.df.copy() if deep else table.df)
-                for name, table in self.items()
-            },
-            relations=self.relations,
-            join_tables=self.join_tables,
-            schema=self.schema,
-            updates=self.updates,
-            _copied=True,
-        )
-
-    def extend(
-        self,
-        other: "DB | dict[str, pd.DataFrame] | Table",
-        conflict_policy: (
-            DataConflictPolicy
-            | dict[str, DataConflictPolicy | dict[str, DataConflictPolicy]]
-        ) = "raise",
-    ) -> "DB":
-        """Extend this database with data from another, returning a new database.
-
-        Args:
-            other: Other database, dataframe dict or table to extend with.
-            conflict_policy:
-                Policy to use for resolving conflicts. Can be a global setting,
-                per-table via supplying a dict with table names as keys, or per-column
-                via supplying a dict of dicts.
-
-        Returns:
-            New database containing the extended data.
-        """
-        # Standardize type of other.
-        other = (
-            other
-            if isinstance(other, DB)
-            else DB(other) if isinstance(other, dict) else other.extract()
-        )
-
-        # Get the union of all table (names) in both databases.
-        tables = set(self.keys()) | set(other.keys())
-
-        # Set up variable to contain the merged database.
-        merged: dict[str, pd.DataFrame] = {}
-
-        for t in tables:
-            if t not in self:
-                merged[t] = other[t].df if isinstance(other, DB) else other[t]
-            elif t not in other:
-                merged[t] = self[t].df
-            # Perform more complicated matching if table exists in both databases.
-            else:
-                table_conflict_policy = (
-                    conflict_policy
-                    if isinstance(conflict_policy, str)
-                    else conflict_policy.get(t) or "raise"
-                )
-                merged[t] = (
-                    self[t]
-                    .extend(
-                        other[t].df if isinstance(other, DB) else other[t],
-                        conflict_policy=table_conflict_policy,
-                    )
-                    .df
-                )
-
-        return DB(
-            table_dfs=merged,
-            relations={**self.relations, **other.relations},
-            join_tables={*self.join_tables, *other.join_tables},
-            schema=self.schema,
-            updates={
-                **self.updates,
-                pd.Timestamp.now().round("s"): {
-                    "action": "extend",
-                    "table_dfs": str(set(other.table_dfs.keys())),
-                    "relations": str(set(other.relations.items())),
-                    "join_tables": str(other.join_tables),
-                },
-            },
-        )
-
-    def trim(
-        self,
-        centers: list[str] | None = None,
-        circuit_breakers: list[str] | None = None,
-    ) -> "DB":
-        """Return new database minus orphan data (relative to given ``centers``).
-
-        Args:
-            centers: Tables to use as centers for the trim.
-            circuit_breakers: Tables to use as circuit breakers for the trim.
-
-        Returns:
-            New database containing the trimmed data.
-        """
-        res = (
-            self._isotropic_trim()
-            if centers is None
-            else self._centered_trim(centers, circuit_breakers)
-        )
-        res.updates[pd.Timestamp.now().round("s")] = {
-            "action": "trim",
-            "centers": str(set(centers or [])),
-            "circuit_breakers": str(set(circuit_breakers or [])),
-            "remaining_tables": str(set(self.keys())),
-        }
-        return res
-
-    def filter(
-        self, filters: dict[str, pd.Series], extra_cb: list[str] | None = None
-    ) -> "DB":
-        """Return new db only containing data related to rows matched by ``filters``.
-
-        Args:
-            filters: Mapping of table names to boolean filter series
-            extra_cb:
-                Additional circuit breakers (on top of the filtered tables)
-                to use when trimming the database according to the filters
-
-        Returns:
-            New database containing the filtered data.
-            The returned database will only contain the filtered tables and
-            all tables that have (indirect) references to them.
-
-        Note:
-            This is equivalent to trimming the database with the filtered tables
-            as centers and the filtered tables and ``extra_cb`` as circuit breakers.
-        """
-        # Filter out unmatched rows of filter tables.
-        new_db = DB(
-            table_dfs={
-                t: (table.df[filters[t]] if t in filters else table.df)
-                for t, table in self.items()
-            },
-            relations=self.relations,
-            join_tables=self.join_tables,
-        )
-
-        # Always use the filter tables as circuit_breakes.
-        # Otherwise filtered-out rows may be re-included.
-        cb = list(set(filters.keys()) | set(extra_cb or []))
-
-        # Trim all other tables such that only rows with (indirect) references to
-        # remaining rows in filter tables are left.
-        res = new_db.trim(list(filters.keys()), circuit_breakers=cb)
-        res.updates[pd.Timestamp.now().round("s")] = {
-            "action": "filter",
-            "filter_tables": str(set(filters.keys())),
-            "extra_cb": str(set(extra_cb or [])),
-            "remaining_tables": str(set(self.keys())),
-        }
-        return res
 
     def to_graph(
-        self, nodes: Sequence[Table | str]
+        self, nodes: Sequence[type[Record]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -1099,25 +4076,14 @@ class DB:
 
         .. _Gephi: https://gephi.org/
         """
-        nodes = [self[n] if isinstance(n, str) else n for n in nodes]
+        node_tables = [self[n] for n in nodes]
+
         # Concat all node tables into one.
         node_dfs = [
-            (
-                n.df.reset_index().assign(table=n.source_map)
-                if isinstance(n.source_map, str)
-                else pd.concat(
-                    [
-                        cast(pd.DataFrame, n.df[p])
-                        .drop_duplicates()
-                        .reset_index()
-                        .assign(table=s)
-                        for p, s in n.source_map.items()
-                        if s not in self.join_tables
-                    ],
-                    ignore_index=True,
-                )
-            )
-            for n in nodes
+            n.to_df(kind=pd.DataFrame)
+            .reset_index()
+            .assign(table=n.record_type._default_table_name())
+            for n in node_tables
         ]
         node_df = (
             pd.concat(node_dfs, ignore_index=True)
@@ -1125,62 +4091,79 @@ class DB:
             .rename(columns={"index": "node_id"})
         )
 
-        if "level_0" in node_df.columns:
-            node_df = node_df.drop(columns=["level_0"])
+        directed_edges = reduce(set.union, (self.relation_map[n] for n in nodes))
 
-        # Find all link tables between the given node tables.
-        node_names = list(node_df["table"].unique())
-
-        directed_edges = self._get_rels(sources=node_names, targets=node_names)
-        undirected_edges = pd.concat(
-            [self._get_rels(sources=[j], targets=node_names) for j in self.join_tables]
-        )
+        undirected_edges: dict[type[Record], set[tuple[RelSet, ...]]] = {
+            t: set() for t in nodes
+        }
+        for n in nodes:
+            for at in self.assoc_types:
+                if len(at._rels) == 2:
+                    left, right = (r for r in at._rels.values())
+                    assert left is not None and right is not None
+                    if left.record_type == n:
+                        undirected_edges[n].add((left, right))
+                    elif right.record_type == n:
+                        undirected_edges[n].add((right, left))
 
         # Concat all edges into one table.
         edge_df = pd.concat(
             [
                 *[
-                    node_df.loc[node_df["table"] == str(rel["source_table"])]
+                    node_df.loc[
+                        node_df["table"]
+                        == str((rel.parent_type or Record)._default_table_name())
+                    ]
                     .rename(columns={"node_id": "source"})
                     .merge(
-                        node_df.loc[node_df["table"] == str(rel["target_table"])],
-                        left_on=rel["source_col"],
-                        right_on=rel["target_col"],
+                        node_df.loc[
+                            node_df["table"]
+                            == str(rel.record_type._default_table_name())
+                        ],
+                        left_on=[c.name for c in rel.fk_map.keys()],
+                        right_on=[c.name for c in rel.fk_map.values()],
                     )
                     .rename(columns={"node_id": "target"})[["source", "target"]]
-                    .assign(ltr=rel["source_col"], rtl=None)
-                    for _, rel in directed_edges.iterrows()
+                    .assign(ltr=",".join(c.name for c in rel.fk_map.keys()), rtl=None)
+                    for rel in directed_edges
                 ],
                 *[
-                    self[str(source_table)]
-                    .df.merge(
+                    self[assoc_table]
+                    .to_df(kind=pd.DataFrame)
+                    .merge(
                         node_df.loc[
-                            node_df["table"] == str(rel.iloc[0]["target_table"])
+                            node_df["table"]
+                            == str(left_rel.record_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=rel.iloc[0]["source_col"],
-                        right_on=rel.iloc[0]["target_col"],
+                        left_on=[c.name for c in left_rel.fk_map.keys()],
+                        right_on=[c.name for c in left_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "source"})
                     .merge(
                         node_df.loc[
-                            node_df["table"] == str(rel.iloc[1]["target_table"])
+                            node_df["table"]
+                            == str(left_rel.record_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=rel.iloc[1]["source_col"],
-                        right_on=rel.iloc[1]["target_col"],
+                        left_on=[c.name for c in right_rel.fk_map.keys()],
+                        right_on=[c.name for c in right_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "target"})[
                         list(
-                            {"source", "target", *self[str(source_table)].columns}
-                            - {rel.iloc[0]["source_col"], rel.iloc[1]["source_col"]}
+                            {
+                                "source",
+                                "target",
+                                *(a for a in (left_rel.parent_type or Record)._cols),
+                            }
                         )
                     ]
                     .assign(
-                        ltr=rel.iloc[1]["source_col"], rtl=rel.iloc[0]["source_col"]
+                        ltr=",".join(c.name for c in right_rel.fk_map.keys()),
+                        rtl=",".join(c.name for c in left_rel.fk_map.keys()),
                     )
-                    for source_table, rel in undirected_edges.groupby("source_table")
-                    if len(rel) == 2  # We do not export hyper-graphs.
+                    for assoc_table, rels in undirected_edges.items()
+                    for left_rel, right_rel in rels
                 ],
             ],
             ignore_index=True,
@@ -1188,306 +4171,352 @@ class DB:
 
         return node_df, edge_df
 
-    # Dictionary interface:
+    def validate(self) -> None:
+        """Perform pre-defined schema validations."""
+        types = {}
 
-    def __getitem__(self, name: str) -> SingleTable:  # noqa: D105
-        if name.startswith("_"):
-            raise KeyError(f"Table '{name}' does not exist in this database.")
-        return (
-            SourceTable(name=name, db=self)
-            if name in self.table_dfs
-            else self._manifest_virtual_table(name)
-        )
+        if self.types is not None:
+            types |= {
+                rec: (isinstance(req, Require) and req.present) or req is True
+                for rec, req in self._schema_types.items()
+            }
 
-    def __setitem__(  # noqa: D105
-        self, name: str, value: SingleTable | pd.DataFrame
-    ) -> None:
-        if name.startswith("_"):
-            raise KeyError("Table names starting with '_' are not allowed.")
+        if isinstance(self.schema, Mapping):
+            types |= {
+                rec: isinstance(req, Require) and req.present
+                for schema, req in self.schema.items()
+                for rec in schema._record_types
+            }
 
-        value = value.df if isinstance(value, SingleTable) else value
-        rels = self._get_rels()
-        target_tables = rels["target_table"].unique()
-        if name in target_tables:
-            target_cols = rels.loc[rels["target_table"] == name, "target_col"].unique()
-            if not set(target_cols).issubset(value.reset_index().columns):
-                raise ValueError(
-                    "Relations to given table name already exist, "
-                    f"but not all referenced columns were supplied: {target_cols}."
+        tables = {self._get_table(rec): required for rec, required in types.items()}
+
+        inspector = sqla.inspect(self.engine)
+
+        # Iterate over all tables and perform validations for each
+        for table, required in tables.items():
+            has_table = inspector.has_table(table.name, table.schema)
+
+            if not has_table and not required:
+                continue
+
+            # Check if table exists
+            assert has_table
+
+            db_columns = {
+                c["name"]: c for c in inspector.get_columns(table.name, table.schema)
+            }
+            for column in table.columns:
+                # Check if column exists
+                assert column.name in db_columns
+
+                db_col = db_columns[column.name]
+
+                # Check if column type and nullability match
+                assert isinstance(db_col["type"], type(column.type))
+                assert db_col["nullable"] == column.nullable or column.nullable is None
+
+            # Check if primary key is compatible
+            db_pk = inspector.get_pk_constraint(table.name, table.schema)
+            if len(db_pk["constrained_columns"]) > 0:  # Allow source tbales without pk
+                assert set(db_pk["constrained_columns"]) == set(
+                    table.primary_key.columns.keys()
                 )
 
-        self.table_dfs[name] = value
-        self.updates[pd.Timestamp.now().round("s")] = {
-            "action": "set_table",
-            "table": name,
-        }
-
-    def __contains__(self, name: str) -> bool:  # noqa: D105
-        return name in self.keys() and not name.startswith("_")
-
-    def __iter__(self) -> Iterable[str]:  # noqa: D105
-        return (k for k in self.keys() if not k.startswith("_"))
-
-    def __len__(self) -> int:  # noqa: D105
-        return len(list(k for k in self.keys() if not k.startswith("_")))
-
-    def keys(self) -> set[str]:  # noqa: D102
-        return set(k for k in self.table_dfs if not k.startswith("_")) | set(
-            self._get_rels()["target_table"].unique()
-        )
-
-    def values(self) -> Iterable[SingleTable]:  # noqa: D102
-        return [self[name] for name in self.keys() if not name.startswith("_")]
-
-    def items(self) -> Iterable[tuple[str, SingleTable]]:  # noqa: D102
-        return [(name, self[name]) for name in self.keys() if not name.startswith("_")]
-
-    def get(self, name: str) -> SingleTable | None:  # noqa: D102
-        return (
-            self[name] if not name.startswith("_") and name in self.table_dfs else None
-        )
-
-    # Custom operators:
-
-    def __or__(self, other: "DB") -> "DB":  # noqa: D105
-        return self.extend(other)
-
-    # Internals:
-
-    def _get_rels(
-        self, sources: list[str] | None = None, targets: list[str] | None = None
-    ) -> pd.DataFrame:
-        """Return all relations contained in this database."""
-        return pd.DataFrame.from_records(
-            [
-                (st, sc, tt, tc)
-                for (st, sc), (tt, tc) in self.relations.items()
-                if (sources is None or st in sources)
-                and (targets is None or tt in targets)
-            ],
-            columns=["source_table", "source_col", "target_table", "target_col"],
-        )
-
-    def _get_valid_refs(
-        self, sources: list[str] | None = None, targets: list[str] | None = None
-    ) -> pd.DataFrame:
-        """Return all valid references contained in this database."""
-        rel_vals = []
-        rel_keys = []
-
-        all_rels = self._get_rels(sources, targets)
-
-        for t, rels in all_rels.groupby("source_table"):
-            table = self[str(t)]
-            df = (
-                table.df.rename_axis("id", axis="index")
-                if not table.df.index.name
-                else table.df
-            )
-
-            for tt, r in rels.groupby("target_table"):
-                f_df = pd.DataFrame(
-                    {
-                        c: (
-                            df[[c]]
-                            .reset_index()
-                            .merge(
-                                self[str(tt)].df.pipe(
-                                    lambda df: (
-                                        df.rename_axis("id", axis="index")
-                                        if not df.index.name
-                                        else df
-                                    )
-                                ),
-                                left_on=c,
-                                right_on=tc,
-                            )
-                            .set_index(df.index.name)[str(c)]
-                            .groupby(df.index.name)
-                            .agg("first")
-                        )
-                        for c, tc in r[["source_col", "target_col"]].itertuples(
-                            index=False
-                        )
-                    }
-                )
-                rel_vals.append(f_df)
-                rel_keys.append((t, tt))
-
-        return pd.concat(rel_vals, keys=rel_keys, names=["src_table", "target_table"])
-
-    def _manifest_virtual_table(
-        self, name: str, rel: tuple[str, str] | None = None
-    ) -> "SingleTable":
-        """Manifest a virtual table with the required cols."""
-        rels = (
-            self._get_rels(targets=[name])
-            if rel is None
-            else pd.DataFrame.from_records(
-                [(*rel, *self.relations[rel])],
-                columns=["source_table", "source_col", "target_table", "target_col"],
-            )
-        )
-        if len(rels) == 0:
-            raise ValueError(f"Cannot find any relations with target table '{name}'.")
-
-        frames = []
-        for tc, rel_group in rels.groupby("target_col"):
-            col_values = reduce(
-                set.union,
-                (
-                    set(self[st][sc].unique())
-                    for st, sc in rel_group[["source_table", "source_col"]]
-                    .drop_duplicates()
-                    .itertuples(index=False)
-                ),
-            )
-            frames.append(pd.DataFrame({tc: list(col_values)}))
-
-        return SingleTable(name=name, db=self, df=pd.concat(frames, ignore_index=True))
-
-    def _isotropic_trim(self) -> "DB":
-        """Return new database without orphan data (data w/ no refs to or from)."""
-        # Get the status of each single reference.
-        valid_refs = self._get_valid_refs()
-
-        result = {}
-        for t, table in self.items():
-            f = pd.Series(False, index=table.df.index)
-
-            # Include all rows with any valid outgoing reference.
-            try:
-                outgoing = valid_refs.loc[(t, slice(None), slice(None)), :]
-
-                for _, refs in outgoing.groupby("target_table"):
-                    f |= (
-                        refs.droplevel(["src_table", "target_table"])
-                        .notna()
-                        .any(axis="columns")
+            # Check if foreign keys are compatible
+            db_fks = inspector.get_foreign_keys(table.name, table.schema)
+            for fk in table.foreign_key_constraints:
+                matches = [
+                    (
+                        set(db_fk["constrained_columns"]) == set(fk.column_keys),
+                        (
+                            db_fk["referred_table"].lower()
+                            == fk.referred_table.name.lower()
+                        ),
+                        set(db_fk["referred_columns"])
+                        == set(f.column.name for f in fk.elements),
                     )
-            except KeyError:
-                pass
+                    for db_fk in db_fks
+                ]
 
-            # Include all rows with any valid incoming reference.
-            try:
-                incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
+                assert any(all(m) for m in matches)
 
-                for _, refs in incoming.groupby("src_table"):
-                    for _, col in refs.items():
-                        f |= pd.Series(True, index=col.unique())
-            except KeyError:
-                pass
+    def execute[
+        *T
+    ](
+        self,
+        stmt: sqla.Select[tuple[*T]] | sqla.Insert | sqla.Update | sqla.Delete,
+    ) -> sqla.Result[tuple[*T]]:
+        """Execute a SQL statement in this database's context."""
+        stmt = self._parse_expr(stmt)
+        with self.engine.begin() as conn:
+            return conn.execute(self._parse_expr(stmt))
 
-            result[t] = table.df.loc[f]
-
-        return DB(
-            table_dfs=result,
-            relations=self.relations,
-            join_tables=self.join_tables,
-            schema=self.schema,
+    def to_set(
+        self: DB[RW, Any],
+        data: pd.DataFrame | pl.DataFrame | sqla.Select,
+        fks: Mapping[str, Col] | None = None,
+    ) -> RecSet[DynRecord, Any, RO, BsT]:
+        """Create a temporary dataset instance from a DataFrame or SQL query."""
+        name = (
+            f"temp_df_{gen_str_hash(data, 10)}"
+            if isinstance(data, pd.DataFrame | pl.DataFrame)
+            else f"temp_{token_hex(5)}"
         )
 
-    def _centered_trim(
-        self, centers: list[str], circuit_breakers: list[str] | None = None
-    ) -> "DB":
-        """Return new database minus data without (indirect) refs to any given table."""
-        circuit_breakers = circuit_breakers or []
+        rec = dynamic_record_type(name, props=props_from_data(data, fks))
+        ds = RecSet[DynRecord, BaseIdx, RW, BsT, DynRecord](res_type=rec, db=self.db)
 
-        # Get the status of each single reference.
-        valid_refs = self._get_valid_refs()
+        ds &= data
 
-        current_stage = {c: set(self[c].df.index) for c in centers}
-        visit_counts = {
-            t: pd.Series(0, index=table.df.index) for t, table in self.items()
-        }
-        visited: set[str] = set()
+        return ds
 
-        while any(len(s) > 0 for s in current_stage.values()):
-            next_stage = {t: set() for t in self.keys()}
-            for t, idx in current_stage.items():
-                if t in visited and t in circuit_breakers:
-                    continue
+    def _get_table(
+        self, rec: type[Record] | None = None, writable: bool = False
+    ) -> sqla.Table:
+        rec_type = rec or self.record_type
 
-                current, additions = visit_counts[t].align(
-                    pd.Series(1, index=list(idx)), fill_value=0
-                )
-                visit_counts[t] = current + additions
+        if writable and self.overlay is not None and rec not in self.subs:
+            # Create an empty overlay table for the record type
+            self.subs[rec_type] = sqla.table(
+                (
+                    (self.overlay + "_" + rec_type._default_table_name())
+                    if not self.overlay_with_schema
+                    else rec_type._default_table_name()
+                ),
+                schema=self.overlay if self.overlay_with_schema else None,
+            )
 
-                idx_sel = list(
-                    idx & set(visit_counts[t].loc[visit_counts[t] == 1].index)
-                )
+        table_name = rec_type._sql_table_name(self.subs)
 
-                if len(idx_sel) == 0:
-                    continue
+        if table_name in self._metadata.tables:
+            return self._metadata.tables[table_name]
 
-                visited |= set([t])
+        new_metadata = sqla.MetaData()
+        for t in self._metadata.tables.values():
+            t.to_metadata(new_metadata)
 
-                # Include all rows with any valid outgoing reference.
-                try:
-                    outgoing = valid_refs.loc[(t, slice(None), idx_sel), :]
+        table = rec_type._table(new_metadata, self.subs)
 
-                    for tt, refs in outgoing.groupby("target_table"):
-                        tt = str(tt)
-                        for col_name, col in refs.items():
-                            try:
-                                ref_vals = col.dropna().unique()
-                                target_df = self[tt].df
-                                target_col = self.relations[(t, str(col_name))][1]
-                                target_idx = (
-                                    ref_vals
-                                    if target_col in target_df.index.names
-                                    else target_df.loc[
-                                        target_df[target_col].isin(ref_vals)
-                                    ].index.unique()
-                                )
-                                next_stage[tt] |= set(target_idx)
-                            except KeyError:
-                                pass
-                except KeyError:
-                    pass
+        # Create any missing tables in the database.
+        if self.b_id is not None:
+            new_tables = set(new_metadata.tables) - set(self._metadata.tables)
+            if len(new_tables) > 0:
+                new_metadata.create_all(self.engine, checkfirst=True)
 
-                # Include all rows with any valid incoming reference.
-                try:
-                    incoming = valid_refs.loc[(slice(None), t, slice(None)), :]
+        return table
 
-                    for st, refs in incoming.groupby("src_table"):
-                        refs = refs.dropna(axis="columns", how="all")
-                        target_df = self[t].df
-                        target_cols = {
-                            c: self.relations[(str(st), str(c))][1]
-                            for c in refs.columns
-                        }
-                        target_values = {
-                            c: (
-                                target_df.loc[idx_sel][tc].dropna().unique()
-                                if tc in target_df.columns
-                                else idx_sel
-                            )
-                            for c, tc in target_cols.items()
-                        }
-                        next_stage[str(st)] |= set(
-                            pd.concat(
-                                [
-                                    col.isin(target_values[str(c)])
-                                    for c, col in refs.droplevel(
-                                        ["src_table", "target_table"]
-                                    ).items()
-                                ],
-                                axis="columns",
-                            )
-                            .any(axis="columns")
-                            .replace(False, pd.NA)
-                            .dropna()
-                            .index
-                        )
-                except KeyError:
-                    pass
+    def _get_joined_table(
+        self, rec: type[Record] | None = None
+    ) -> sqla.Table | sqla.Join:
+        rec_type = rec or self.record_type
 
-            current_stage = next_stage
+        new_metadata = sqla.MetaData()
+        for t in self._metadata.tables.values():
+            t.to_metadata(new_metadata)
 
-        return DB(
-            table_dfs={t: self[t].df.loc[rc > 0] for t, rc in visit_counts.items()},
-            relations=self.relations,
-            join_tables=self.join_tables,
-            schema=self.schema,
+        table = rec_type._joined_table(new_metadata, self.subs)
+
+        # Create any missing tables in the database.
+        if self.b_id is not None:
+            new_tables = set(new_metadata.tables) - set(self._metadata.tables)
+            if len(new_tables) > 0:
+                new_metadata.create_all(self.engine, checkfirst=True)
+
+        return table
+
+    def _parse_schema_items(
+        self,
+        element: sqla_visitors.ExternallyTraversible,
+        **kw: Any,
+    ) -> sqla.ColumnElement | sqla.FromClause | None:
+        if isinstance(element, RelSet):
+            return element._sql_alias
+        elif isinstance(element, Col):
+            return element.record_set._sql_alias.c[element.name]
+        elif has_type(element, type[Record]):
+            return self._get_table(element)
+
+        return None
+
+    def _parse_expr[CE: sqla.ClauseElement](self, expr: CE) -> CE:
+        """Parse an expression in this database's context."""
+        return cast(
+            CE,
+            sqla_visitors.replacement_traverse(
+                expr, {}, replace=self._parse_schema_items
+            ),
         )
+
+    def _ensure_schema_exists(self, schema_name: str) -> str:
+        """Ensure that the table exists in the database, then return it."""
+        if not sqla.inspect(self.engine).has_schema(schema_name):
+            with self.engine.begin() as conn:
+                conn.execute(sqla.schema.CreateSchema(schema_name))
+
+        return schema_name
+
+    def _table_exists(self, sqla_table: sqla.Table) -> bool:
+        """Check if a table exists in the database."""
+        return sqla.inspect(self.engine).has_table(
+            sqla_table.name, schema=sqla_table.schema
+        )
+
+    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
+        """Create SQL-side table from Table class."""
+        if not self.create_cross_fk:
+            # Create a temporary copy of the table object and remove external FKs.
+            # That way, local metadata will retain info on the FKs
+            # (for automatic joins) but the FKs won't be created in the DB.
+            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
+            _remove_external_fk(sqla_table)
+
+        sqla_table.create(self.engine)
+
+    def _load_from_excel(self, record_types: list[type[Record]] | None = None) -> None:
+        """Load all tables from Excel."""
+        assert self.b_id is not None
+        assert self.backend_type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.url, Path | CloudPath | HttpFile)
+
+        path = self.url.get() if isinstance(self.url, HttpFile) else self.url
+
+        with open(path, "rb") as file:
+            for rec in record_types or self._schema_types:
+                pl.read_excel(
+                    file, sheet_name=rec._default_table_name()
+                ).write_database(
+                    str(self._get_table(rec, writable=True)), str(self.engine.url)
+                )
+
+    def _save_to_excel(
+        self, record_types: Iterable[type[Record]] | None = None
+    ) -> None:
+        """Save all (or selected) tables to Excel."""
+        assert self.b_id is not None
+        assert self.backend_type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.url, Path | CloudPath | HttpFile)
+
+        file = BytesIO() if isinstance(self.url, HttpFile) else self.url.open("wb")
+
+        with ExcelWorkbook(file) as wb:
+            for rec in record_types or self._schema_types:
+                pl.read_database(
+                    f"SELECT * FROM {self._get_table(rec)}",
+                    self.engine,
+                ).write_excel(wb, worksheet=rec._default_table_name())
+
+        if isinstance(self.url, HttpFile):
+            assert isinstance(file, BytesIO)
+            self.url.set(file)
+
+    def _delete_from_excel(self, record_types: Iterable[type[Record]]) -> None:
+        """Delete selected table from Excel."""
+        assert self.b_id is not None
+        assert self.backend_type == "excel-file", "Backend must be an Excel file."
+        assert isinstance(self.url, Path | CloudPath | HttpFile)
+
+        file = BytesIO() if isinstance(self.url, HttpFile) else self.url.open("wb")
+
+        wb = openpyxl.load_workbook(file)
+        for rec in record_types or self._schema_types:
+            del wb[rec._default_table_name()]
+
+        if isinstance(self.url, HttpFile):
+            assert isinstance(file, BytesIO)
+            self.url.set(file)
+
+
+class Rel(RelSet[ResT, None, SingleIdx, RwT, BsT, ParT, ResTd, SelT]):
+    """Singular relation."""
+
+
+class RecUUID(Record[UUID]):
+    """Record type with a default UUID primary key."""
+
+    _template = True
+    _id: Col[UUID] = prop(primary_key=True, default_factory=uuid4)
+
+
+class RecHashed(Record[int]):
+    """Record type with a default hashed primary key."""
+
+    _template = True
+
+    _id: Col[int] = prop(primary_key=True, init=False)
+
+    def __post_init__(self) -> None:  # noqa: D105
+        self._id = gen_int_hash(
+            {a.name: getattr(self, a.name) for a in self._defined_cols.values()}
+        )
+
+
+class Scalar(Record[KeyT], Generic[VarT2, KeyT]):
+    """Dynamically defined record type."""
+
+    _template = True
+
+    _id: Col[KeyT] = prop(primary_key=True, default_factory=uuid4)
+    _value: Col[VarT2]
+
+
+class DynRecordMeta(RecordMeta):
+    """Metaclass for dynamically defined record types."""
+
+    def __getitem__(cls: type[Record], name: str) -> Col[Any, Any, Record]:
+        """Get dynamic attribute by dynamic name."""
+        return Col(_name=name, _type=PropType(Col[cls]), record_set=cls._db)
+
+    def __getattr__(cls: type[Record], name: str) -> Col[Any, Any, Record]:
+        """Get dynamic attribute by name."""
+        if not TYPE_CHECKING and name.startswith("__"):
+            return super().__getattribute__(name)
+
+        return Col(_name=name, _type=PropType(Col[cls]), record_set=cls._db)
+
+
+class DynRecord(Record, metaclass=DynRecordMeta):
+    """Dynamically defined record type."""
+
+    _template = True
+
+
+a = DynRecord
+
+
+def dynamic_record_type(
+    name: str, props: Iterable[Prop[Any, Any]] = []
+) -> type[DynRecord]:
+    """Create a dynamically defined record type."""
+    return type(name, (DynRecord,), {p.name: p for p in props})
+
+
+class Link(RecHashed, Generic[RecT2, RecT3]):
+    """Automatically defined relation record type."""
+
+    _template = True
+
+    _from: RelSet[RecT2]
+    _to: RelSet[RecT3]
+
+
+class Schema:
+    """Group multiple record types into a schema."""
+
+    _record_types: set[type[Record]]
+    _rel_record_types: set[type[Record]]
+
+    def __init_subclass__(cls) -> None:  # noqa: D105
+        subclasses = get_subclasses(cls, max_level=1)
+        cls._record_types = {s for s in subclasses if isinstance(s, Record)}
+        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
+        super().__init_subclass__()
+
+
+@dataclass
+class Require:
+    """Mark schema or record type as required."""
+
+    present: bool = True
+
+
+type DataDict = dict[RelSet, DataDict]
