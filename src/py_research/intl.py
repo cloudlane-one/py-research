@@ -9,7 +9,7 @@ from functools import partial
 from locale import LC_ALL, getlocale, normalize, setlocale
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar, cast
+from typing import Any, Literal, ParamSpec, Self, TypeVar, cast
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -23,7 +23,6 @@ from babel.dates import (
 from babel.numbers import format_decimal
 from deep_translator import GoogleTranslator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self
 from yaml import CLoader, load
 
 from py_research.caching import get_cache
@@ -606,7 +605,7 @@ class Localization:
             else self.term(label, locale=locale)
         )
 
-    def value(
+    def value(  # noqa: C901
         self,
         v: Any,
         options: Format = Format(),
