@@ -2638,7 +2638,7 @@ class RecSet(
         overlay_db = copy_and_override(
             self.db,
             DB,
-            overlay=f"temp_{token_hex(10)}",
+            write_to_overlay=f"temp_{token_hex(10)}",
             overlay_with_schema=overlay_with_schema,
             schema=None,
             types=rec_types,
@@ -3478,6 +3478,7 @@ class RelSet(
         return copy_and_override(
             tmpl,
             type(tmpl),
+            db=DB(b_id=LocalBackend.static, types={self.record_type}),
             merges=RelTree(),
         )
 
@@ -3871,16 +3872,17 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         | None
     ) = None
 
-    overlay: str | None = None
-    subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
+    write_to_overlay: str | None = None
+    overlay_with_schema: bool = True
 
     validate_on_init: bool = True
     create_cross_fk: bool = True
-    overlay_with_schema: bool = True
 
     _schema_types: Mapping[
         type[Record], Literal[True] | Require | str | sqla.TableClause
     ] = field(default_factory=dict)
+    _subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
+
     _metadata: sqla.MetaData = field(default_factory=sqla.MetaData)
     _instance_map: dict[type[Record], dict[Hashable, Record]] = field(
         default_factory=dict
@@ -3896,8 +3898,8 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
                     dict[type[Record], Literal[True]], {rec: True for rec in self.types}
                 )
 
-            self.subs = {
-                **self.subs,
+            self._subs = {
+                **self._subs,
                 **{
                     rec: (sub if isinstance(sub, sqla.TableClause) else sqla.table(sub))
                     for rec, sub in types.items()
@@ -3908,8 +3910,8 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
 
         if self.schema is not None:
             if isinstance(self.schema, Mapping):
-                self.subs = {
-                    **self.subs,
+                self._subs = {
+                    **self._subs,
                     **{
                         rec: sqla.table(rec._default_table_name(), schema=schema_name)
                         for schema, schema_name in self.schema.items()
@@ -3947,13 +3949,17 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         if self.validate_on_init:
             self.validate()
 
-        if self.overlay is not None and self.overlay_with_schema:
-            self._ensure_schema_exists(self.overlay)
+        if self.write_to_overlay is not None and self.overlay_with_schema:
+            self._ensure_schema_exists(self.write_to_overlay)
 
     def __hash__(self) -> int:
         """Hash the DB."""
         return gen_int_hash(
-            (self.b_id, self.url, self.overlay, self.overlay_with_schema)
+            (
+                self.b_id,
+                self.url,
+                self._subs,
+            )
         )
 
     @property
@@ -4278,18 +4284,18 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
     ) -> sqla.Table:
         rec_type = rec or self.record_type
 
-        if writable and self.overlay is not None and rec not in self.subs:
+        if writable and self.write_to_overlay is not None and rec not in self._subs:
             # Create an empty overlay table for the record type
-            self.subs[rec_type] = sqla.table(
+            self._subs[rec_type] = sqla.table(
                 (
-                    (self.overlay + "_" + rec_type._default_table_name())
+                    (self.write_to_overlay + "_" + rec_type._default_table_name())
                     if not self.overlay_with_schema
                     else rec_type._default_table_name()
                 ),
-                schema=self.overlay if self.overlay_with_schema else None,
+                schema=self.write_to_overlay if self.overlay_with_schema else None,
             )
 
-        table_name = rec_type._sql_table_name(self.subs)
+        table_name = rec_type._sql_table_name(self._subs)
 
         if table_name in self._metadata.tables:
             return self._metadata.tables[table_name]
@@ -4298,7 +4304,7 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         for t in self._metadata.tables.values():
             t.to_metadata(new_metadata)
 
-        table = rec_type._table(new_metadata, self.subs)
+        table = rec_type._table(new_metadata, self._subs)
 
         # Create any missing tables in the database.
         if self.b_id is not None:
@@ -4317,7 +4323,7 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         for t in self._metadata.tables.values():
             t.to_metadata(new_metadata)
 
-        table = rec_type._joined_table(new_metadata, self.subs)
+        table = rec_type._joined_table(new_metadata, self._subs)
 
         # Create any missing tables in the database.
         if self.b_id is not None:
