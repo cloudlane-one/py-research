@@ -486,6 +486,9 @@ async def _load_record[  # noqa: C901
             obj_cache[rec_type][rec._index] = rec
             return rec
 
+    # TODO: Handle matching of partial record by postponing the rest of this function
+    # until the record is fully loaded from another mapping.
+
     rels = {
         cast(RelSet[Any, Any, Any, Any, Any, Rec], rel): sel
         for rel, sel in mapping.items()

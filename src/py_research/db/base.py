@@ -21,7 +21,7 @@ from io import BytesIO
 from itertools import groupby
 from pathlib import Path
 from secrets import token_hex
-from types import GenericAlias, ModuleType, NoneType, UnionType, new_class
+from types import ModuleType, NoneType, UnionType, new_class
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -48,6 +48,7 @@ import sqlalchemy as sqla
 import sqlalchemy.dialects.mysql as mysql
 import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.orm as orm
+import sqlalchemy.sql.elements as sqla_elements
 import sqlalchemy.sql.type_api as sqla_types
 import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
@@ -71,6 +72,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
+    GenericProtocol,
     SingleTypeDef,
     extract_nullable_type,
     get_lowest_common_base,
@@ -223,38 +225,52 @@ def map_col_dtype(c: sqla.ColumnElement) -> type | None:
             return None
 
 
+def _gen_prop(
+    name: str,
+    data: pd.Series | pl.Series | sqla.ColumnElement,
+    pk: bool = False,
+    fks: Mapping[str, Col] = {},
+) -> Prop[Any, Any]:
+    is_rel = name in fks
+    value_type = (
+        map_df_dtype(data)
+        if isinstance(data, pd.Series | pl.Series)
+        else map_col_dtype(data)
+    ) or Any
+    col = Col[value_type](
+        primary_key=pk,
+        _name=name if not is_rel else f"fk_{name}",
+        _type=PropType(Col[value_type]),
+        _parent_type=DynRecord,
+    )
+    return (
+        col
+        if not is_rel
+        else RelSet(
+            on={col: fks[name]},
+            _type=PropType(RelSet[cast(type, fks[name].value_type)]),
+            _name=f"rel_{name}",
+            _parent_type=DynRecord,
+        )
+    )
+
+
 def props_from_data(
     data: pd.DataFrame | pl.DataFrame | sqla.Select,
     foreign_keys: Mapping[str, Col] | None = None,
+    primary_keys: list[str] | None = None,
 ) -> list[Prop]:
     """Extract prop definitions from dataframe or query."""
     foreign_keys = foreign_keys or {}
 
-    def _gen_prop(
-        name: str, data: pd.Series | pl.Series | sqla.ColumnElement
-    ) -> Prop[Any, Any]:
-        is_rel = name in foreign_keys
-        value_type = (
-            map_df_dtype(data)
-            if isinstance(data, pd.Series | pl.Series)
-            else map_col_dtype(data)
-        ) or Any
-        col = Col[value_type](
-            primary_key=True,
-            _name=name if not is_rel else f"fk_{name}",
-            _type=PropType(Col[value_type]),
-            _parent_type=DynRecord,
+    if isinstance(data, pd.DataFrame):
+        data.index.rename(
+            [n or f"index_{i}" for i, n in enumerate(data.index.names)], inplace=True
         )
-        return (
-            col
-            if not is_rel
-            else RelSet(
-                on={col: foreign_keys[name]},
-                _type=PropType(RelSet[cast(type, foreign_keys[name].value_type)]),
-                _name=f"rel_{name}",
-                _parent_type=DynRecord,
-            )
-        )
+        primary_keys = primary_keys or list(data.index.names)
+        data = data.reset_index()
+
+    primary_keys = primary_keys or []
 
     columns = (
         [data[col] for col in data.columns]
@@ -262,26 +278,13 @@ def props_from_data(
         else list(data.columns)
     )
 
-    index_props = []
-    if isinstance(data, pd.DataFrame):
-        levels = {name: name for name in data.index.names}
-        if any(lvl is None for lvl in levels.values()):
-            levels = {i: f"index_{i}" for i in range(len(levels))}
-
-        for level_name, prop_name in levels.items():
-            index_props.append(
-                _gen_prop(
-                    prop_name, data.index.get_level_values(level_name).to_series()
-                )
-            )
-
     return [
-        *index_props,
-        *(_gen_prop(str(col.name), col) for col in columns),
+        _gen_prop(str(col.name), col, col.name in primary_keys, foreign_keys)
+        for col in columns
     ]
 
 
-def _remove_external_fk(table: sqla.Table):
+def _remove_cross_fk(table: sqla.Table):
     """Dirty vodoo to remove external FKs from existing table."""
     for c in table.columns.values():
         c.foreign_keys = set(
@@ -319,7 +322,7 @@ class PropType(Generic[VarT]):
         if hint is None:
             return NoneType
 
-        if isinstance(hint, type | GenericAlias):
+        if isinstance(hint, type | GenericProtocol):
             base = get_origin(hint)
             if base is None or not issubclass(base, Prop):
                 return NoneType
@@ -561,14 +564,11 @@ class Attr(Prop[VarT, RwT, ParT]):
             else:
                 value = self.default
 
-            assert (
-                value is not State.undef
-            ), f"Property value for `{self.name}` could not be fetched."
-
-        if self.setter is not None:
-            self.setter(instance, cast(VarT2, value))
-        else:
-            instance.__dict__[self.name] = value
+        if value is not State.undef:
+            if self.setter is not None:
+                self.setter(instance, cast(VarT2, value))
+            else:
+                instance.__dict__[self.name] = value
 
 
 type DirectLink[Rec: Record] = (
@@ -1038,7 +1038,10 @@ class RecordMeta(type):
             name: pt
             for name, hint in get_annotations(cls).items()
             if issubclass((pt := PropType(hint, ctx=cls._src_mod)).prop_type(), Prop)
-            or (isinstance(hint, str) and ("Attr" in hint or "Rel" in hint))
+            or (
+                isinstance(hint, str)
+                and ("Attr" in hint or "Col" in hint or "Rel" in hint)
+            )
         }
 
         for prop_name, prop_type in prop_defs.items():
@@ -1056,7 +1059,7 @@ class RecordMeta(type):
                 prop._type = prop_type
 
         cls._record_bases = []
-        base_types: Iterable[type | GenericAlias] = (
+        base_types: Iterable[type | GenericProtocol] = (
             cls.__dict__["__orig_bases__"]
             if "__orig_bases__" in cls.__dict__
             else cls.__bases__
@@ -1337,8 +1340,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             self.__dict__["__db"] = db
             self._connected = True
             self._root = True
-            x = db[rec_type][self._index]
-            x @= self
+            db[rec_type][self._index] @= self
 
         return self.__dict__["__db"]
 
@@ -1560,7 +1562,7 @@ class RecSet(
     @cached_property
     def idx_cols(
         self,
-    ) -> list[sqla.ColumnElement]:
+    ) -> list[sqla_elements.KeyedColumnElement]:
         """Return the index cols."""
         return [self._table.c[c.name] for c in self.record_type._primary_keys.values()]
 
@@ -1828,12 +1830,12 @@ class RecSet(
 
     def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
         """Create SQL-side table from Table class."""
-        if not self.db.create_cross_fk:
+        if self.db.remove_cross_fks:
             # Create a temporary copy of the table object and remove external FKs.
             # That way, local metadata will retain info on the FKs
             # (for automatic joins) but the FKs won't be created in the DB.
             sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
-            _remove_external_fk(sqla_table)
+            _remove_cross_fk(sqla_table)
 
         sqla_table.create(self.db.engine, checkfirst=True)
 
@@ -2452,9 +2454,7 @@ class RecSet(
     def query(self) -> sqla.Subquery:
         """Get select for this relset with stable alias name."""
         return self.select().alias(
-            self.record_type._get_table_name(self.db._subs)
-            + "."
-            + hash(self).to_bytes(4, "big")[:3].hex()
+            self.record_type._get_table_name(self.db._subs) + "." + hex(hash(self))[:6]
         )
 
     @overload
@@ -3027,16 +3027,23 @@ class RecSet(
     def _df_to_table(
         self,
         df: pd.DataFrame | pl.DataFrame,
-    ) -> sqla.TableClause:
+        pks: list[str] | None = None,
+    ) -> sqla.Table:
         if isinstance(df, pd.DataFrame) and any(
             name is None for name in df.index.names
         ):
             idx_names = [vs.name for vs in self.idx_cols]
             df.index.set_names(idx_names, inplace=True)
 
-        value_table = sqla.table(
-            f"{self.record_type._default_table_name()}_{token_hex(5)}"
+        if isinstance(df, pd.DataFrame):
+            pks = pks or list(df.index.names)
+        pks = pks or []
+
+        rec = dynamic_record_type(
+            f"{self.record_type._default_table_name()}_{token_hex(5)}",
+            props=props_from_data(df, primary_keys=pks),
         )
+        value_table = self.db[rec]._base_table()
 
         if isinstance(df, pd.DataFrame):
             df.reset_index().to_sql(
@@ -3046,7 +3053,9 @@ class RecSet(
                 index=False,
             )
         else:
-            df.write_database(str(value_table), self.db.engine)
+            df.write_database(
+                str(value_table), self.db.engine, if_table_exists="replace"
+            )
 
         return value_table
 
@@ -3059,7 +3068,7 @@ class RecSet(
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, idx)}
 
     def _records_to_df(self, records: dict[Any, Record]) -> pl.DataFrame:
-        idx_names = [vs.name for vs in self.idx_cols]
+        idx_names = [vs.key for vs in self.idx_cols]
 
         col_data = [
             {
@@ -3070,7 +3079,7 @@ class RecSet(
         ]
 
         # Transform attribute data into DataFrame.
-        return pl.DataFrame(col_data)
+        return pl.DataFrame(col_data).sort(by=idx_names)
 
     def _mutate(  # noqa: C901
         self: RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
@@ -3099,12 +3108,25 @@ class RecSet(
                             mutations.append((s, remote_db[s].query, "upsert"))
                         else:
                             mutations.append(
-                                (s, self._df_to_table(remote_db[s].to_df()), "upsert")
+                                (
+                                    s,
+                                    self._df_to_table(
+                                        remote_db[s].to_df(),
+                                        pks=[c.key for c in remote_db[s].idx_cols],
+                                    ),
+                                    "upsert",
+                                )
                             )
 
                 mutations.append((self_sel, value.select().subquery(), mode))
             case pd.DataFrame() | pl.DataFrame():
-                mutations.append((self_sel, self._df_to_table(value), mode))
+                mutations.append(
+                    (
+                        self_sel,
+                        self._df_to_table(value, pks=[c.key for c in self.idx_cols]),
+                        mode,
+                    )
+                )
             case Record():
                 records = {value._index: value}
             case Mapping() if has_type(value, Mapping[Any, Record]):
@@ -3132,7 +3154,13 @@ class RecSet(
             if local_records:
                 # Get the column data.
                 df_data = self._records_to_df(local_records)
-                mutations.append((self_sel, self._df_to_table(df_data), mode))
+                mutations.append(
+                    (
+                        self_sel,
+                        self._df_to_table(df_data, pks=[c.key for c in self.idx_cols]),
+                        mode,
+                    )
+                )
 
             for db, recs in remote_records.items():
                 rec_ids = [rec._index for rec in recs.values()]
@@ -3148,7 +3176,14 @@ class RecSet(
                         mutations.append((s, remote_db[s].query, "upsert"))
                     else:
                         mutations.append(
-                            (s, self._df_to_table(remote_db[s].to_df()), "upsert")
+                            (
+                                s,
+                                self._df_to_table(
+                                    remote_db[s].to_df(),
+                                    pks=[c.key for c in remote_db[s].idx_cols],
+                                ),
+                                "upsert",
+                            )
                         )
 
                 mutations.append((self_sel, remote_set.select().subquery(), mode))
@@ -3160,9 +3195,8 @@ class RecSet(
                 self.db[rec]._save_to_excel()
 
             # Drop the temporary table, if any.
-            if isinstance(value_table, sqla.TableClause):
-                with self.db.engine.begin() as con:
-                    con.execute(sqla.drop(value_table))
+            if isinstance(value_table, sqla.Table):
+                value_table.drop(self.db.engine)
 
         return
 
@@ -3571,11 +3605,14 @@ class RelSet(
         self: RelSet[Record[KeyT2], Any, Any, RW, LocalStat, ParT2, RecT2],
         instance: ParT2,
         value: (
-            RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2] | RecInput[RecT2, KeyT2]
+            RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2]
+            | RecInput[RecT2, KeyT2]
+            | State
         ),
     ) -> None:
-        rec = cast(Record[Hashable], instance)
-        instance._db[type(rec)][rec._index][self]._mutate(value)
+        if value is not State.undef:
+            rec = cast(Record[Hashable], instance)
+            instance._db[type(rec)][rec._index][self]._mutate(value)
 
     @staticmethod
     def _get_tag(rec_type: type[Record]) -> RelSet | None:
@@ -3624,7 +3661,7 @@ class RelSet(
     @cached_property
     def idx_cols(
         self,
-    ) -> list[sqla.ColumnElement]:
+    ) -> list[sqla_elements.KeyedColumnElement]:
         """Return the index cols."""
         return (
             [rel.query.c[col.name] for col, rel in self.path_idx.items()]
@@ -3715,9 +3752,7 @@ class RelSet(
     @cached_property
     def query(self) -> sqla.Subquery:
         """Get select for this relset with stable alias name."""
-        return self.select().alias(
-            self.path_str + "." + hash(self).to_bytes(4, "big")[:3].hex()
-        )
+        return self.select().alias(self.path_str + "." + hex(hash(self))[:6])
 
     @cached_property
     def parent(self) -> RecSet[ParT, Any, RwT, BsT, ParT]:
@@ -4053,7 +4088,7 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
     overlay_with_schema: bool = True
 
     validate_on_init: bool = False
-    create_cross_fk: bool = False
+    remove_cross_fks: bool = False
 
     _def_types: Mapping[
         type[Record], Literal[True] | Require | str | sqla.TableClause
@@ -4335,7 +4370,7 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
 
                 assert any(all(m) for m in matches)
 
-    def create_set(
+    def load(
         self: DB[RW, Any],
         data: pd.DataFrame | pl.DataFrame | sqla.Select,
         fks: Mapping[str, Col] | None = None,
@@ -4528,7 +4563,14 @@ def dynamic_record_type(
     name: str, props: Iterable[Prop[Any, Any]] = []
 ) -> type[DynRecord]:
     """Create a dynamically defined record type."""
-    return type(name, (DynRecord,), {p.name: p for p in props})
+    return type(
+        name,
+        (DynRecord,),
+        {
+            **{p.name: p for p in props},
+            "__annotations__": {p.name: p._type.hint for p in props},
+        },
+    )
 
 
 class Link(RecHashed, Generic[RecT2, RecT3]):
