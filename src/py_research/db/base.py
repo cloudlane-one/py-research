@@ -452,125 +452,6 @@ class PropType(Generic[VarT]):
         return rec_type
 
 
-ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
-ParT2 = TypeVar("ParT2", bound="Record")
-
-
-@dataclass(eq=False)
-class Prop(ABC, Generic[VarT, RwT, ParT]):
-    """Reference a property of a record."""
-
-    _type: PropType[VarT] = field(default_factory=PropType[VarT])
-    _name: str | None = None
-    _parent_type: type[ParT] | None = None
-
-    alias: str | None = None
-    default: VarT | State = State.undef
-    default_factory: Callable[[], VarT] | None = None
-    init: bool = True
-
-    getter: Callable[[Record], VarT] | None = None
-    setter: Callable[[Record, VarT], None] | None = None
-
-    local: bool = False
-
-    @property
-    def name(self) -> str:
-        """Property name."""
-        if self.alias is not None:
-            return self.alias
-
-        assert self._name is not None
-        return self._name
-
-    @cached_property
-    def value_type(self) -> SingleTypeDef[VarT]:
-        """Value type of the property."""
-        return self._type.value_type()
-
-    @cached_property
-    def parent_type(self) -> type[ParT]:
-        """Parent record type."""
-        return cast(type[ParT], self._parent_type or Record)
-
-    def __set_name__(self, _, name: str) -> None:  # noqa: D105
-        if self._name is None:
-            self._name = name
-        else:
-            assert name == self._name
-
-    def __hash__(self: Prop[Any, Any, Any]) -> int:
-        """Hash the Prop."""
-        return gen_int_hash((self.parent_type, self.name))
-
-    def __eq__(self, other: object) -> bool:
-        """Hash the Prop."""
-        return hash(self) == hash(other)
-
-
-class Attr(Prop[VarT, RwT, ParT]):
-    """Record attribute."""
-
-    @overload
-    def __get__(self, instance: None, owner: type[RecT2]) -> Attr[VarT, RwT, RecT2]: ...
-
-    @overload
-    def __get__(self, instance: RecT2, owner: type[RecT2]) -> VarT: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type | type[RecT2] | None
-    ) -> Attr[Any, Any, Any] | VarT | Self:
-        if isinstance(instance, Record):
-            if self.getter is not None:
-                value = self.getter(instance)
-            else:
-                value = instance.__dict__.get(self.name, State.undef)
-
-            if value is State.undef:
-                if self.default_factory is not None:
-                    value = self.default_factory()
-                else:
-                    value = self.default
-
-                assert (
-                    value is not State.undef
-                ), f"Property value for `{self.name}` could not be fetched."
-                instance.__dict__[self.name] = value
-
-            return value
-        elif owner is not None and issubclass(owner, Record):
-            rec_type = cast(type[RecT2], owner)
-            return cast(
-                Attr[VarT, RwT, RecT2],
-                copy_and_override(
-                    self,
-                    type(self),
-                    _parent_type=rec_type,  # type: ignore
-                ),
-            )
-
-        return self
-
-    def __set__(self: Prop[VarT2, RW], instance: Record, value: VarT2 | State) -> None:
-        """Set the value of the column."""
-        if value is State.undef:
-            if self.name in instance.__dict__:
-                value = instance.__dict__[self.name]
-            elif self.default_factory is not None:
-                value = self.default_factory()
-            else:
-                value = self.default
-
-        if value is not State.undef:
-            if self.setter is not None:
-                self.setter(instance, cast(VarT2, value))
-            else:
-                instance.__dict__[self.name] = value
-
-
 type DirectLink[Rec: Record] = (
     Col[Any, Any, Any, Any, Any] | dict[Col, Col[Any, Any, Any, Any, Rec]]
 )
@@ -1416,6 +1297,125 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
     def __repr__(self) -> str:  # noqa: D105
         return self._to_dict(name_keys=True).__repr__()
+
+
+ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
+ParT2 = TypeVar("ParT2", bound="Record")
+
+
+@dataclass(eq=False)
+class Prop(ABC, Generic[VarT, RwT, ParT]):
+    """Reference a property of a record."""
+
+    _type: PropType[VarT] = field(default_factory=PropType[VarT])
+    _name: str | None = None
+    _parent_type: type[ParT] | None = None
+
+    alias: str | None = None
+    default: VarT | State = State.undef
+    default_factory: Callable[[], VarT] | None = None
+    init: bool = True
+
+    getter: Callable[[Record], VarT] | None = None
+    setter: Callable[[Record, VarT], None] | None = None
+
+    local: bool = False
+
+    @property
+    def name(self) -> str:
+        """Property name."""
+        if self.alias is not None:
+            return self.alias
+
+        assert self._name is not None
+        return self._name
+
+    @cached_property
+    def value_type(self) -> SingleTypeDef[VarT]:
+        """Value type of the property."""
+        return self._type.value_type()
+
+    @cached_property
+    def parent_type(self) -> type[ParT]:
+        """Parent record type."""
+        return cast(type[ParT], self._parent_type or Record)
+
+    def __set_name__(self, _, name: str) -> None:  # noqa: D105
+        if self._name is None:
+            self._name = name
+        else:
+            assert name == self._name
+
+    def __hash__(self: Prop[Any, Any, Any]) -> int:
+        """Hash the Prop."""
+        return gen_int_hash((self.parent_type, self.name))
+
+    def __eq__(self, other: object) -> bool:
+        """Hash the Prop."""
+        return hash(self) == hash(other)
+
+
+class Attr(Prop[VarT, RwT, ParT]):
+    """Record attribute."""
+
+    @overload
+    def __get__(self, instance: None, owner: type[RecT2]) -> Attr[VarT, RwT, RecT2]: ...
+
+    @overload
+    def __get__(self, instance: RecT2, owner: type[RecT2]) -> VarT: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[RecT2] | None
+    ) -> Attr[Any, Any, Any] | VarT | Self:
+        if isinstance(instance, Record):
+            if self.getter is not None:
+                value = self.getter(instance)
+            else:
+                value = instance.__dict__.get(self.name, State.undef)
+
+            if value is State.undef:
+                if self.default_factory is not None:
+                    value = self.default_factory()
+                else:
+                    value = self.default
+
+                assert (
+                    value is not State.undef
+                ), f"Property value for `{self.name}` could not be fetched."
+                instance.__dict__[self.name] = value
+
+            return value
+        elif owner is not None and issubclass(owner, Record):
+            rec_type = cast(type[RecT2], owner)
+            return cast(
+                Attr[VarT, RwT, RecT2],
+                copy_and_override(
+                    self,
+                    type(self),
+                    _parent_type=rec_type,  # type: ignore
+                ),
+            )
+
+        return self
+
+    def __set__(self: Prop[VarT2, RW], instance: Record, value: VarT2 | State) -> None:
+        """Set the value of the column."""
+        if value is State.undef:
+            if self.name in instance.__dict__:
+                value = instance.__dict__[self.name]
+            elif self.default_factory is not None:
+                value = self.default_factory()
+            else:
+                value = self.default
+
+        if value is not State.undef:
+            if self.setter is not None:
+                self.setter(instance, cast(VarT2, value))
+            else:
+                instance.__dict__[self.name] = value
 
 
 ResT = TypeVarX("ResT", covariant=True, bound="Record | None", default="Record | None")
