@@ -42,7 +42,6 @@ from typing import (
 )
 from uuid import UUID, uuid4
 
-import openpyxl
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
@@ -1243,19 +1242,6 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         for name, value in kwargs.items():
             setattr(self, name, value)
 
-    @overload
-    @classmethod
-    def _set(cls, db: None = ...) -> RecSet[Self, BaseIdx, RO, LocalStat]: ...
-
-    @overload
-    @classmethod
-    def _set(cls, db: DB[RwT, BkT]) -> RecSet[Self, BaseIdx, RwT, BkT]: ...
-
-    @classmethod
-    def _set(cls, db: DB[Any, Any] | None = None) -> RecSet[Self, BaseIdx, Any, Any]:
-        """Return this type's base set in a given db."""
-        return RecSet(db=db or DB(b_id=LocalBackend.static, types={cls}), res_type=cls)
-
     @classmethod
     def _default_table_name(cls) -> str:
         """Return the name of the table for this schema."""
@@ -1698,7 +1684,7 @@ class RecSet(
                 )
 
         for base, pks in self.record_type._base_pks.items():
-            base_table = base._set(self.db)._base_table()
+            base_table = self.db[base]._base_table()
 
             fks.append(
                 sqla.ForeignKeyConstraint(
@@ -1780,7 +1766,7 @@ class RecSet(
             extend_existing=True,
         )
 
-        table.create(self.db.engine, checkfirst=True)
+        self._create_sqla_table(table)
 
         if orig_table is not None and mode == "upsert":
             with self.db.engine.connect() as conn:
@@ -1800,7 +1786,7 @@ class RecSet(
         table = self._base_table("read")
 
         base_joins = [
-            (base._set(self.db)._table, pk_map)
+            (self.db[base]._table, pk_map)
             for base, pk_map in self.record_type._base_pks.items()
         ]
         for target_table, pk_map in base_joins:
@@ -1827,7 +1813,7 @@ class RecSet(
         elif isinstance(element, Col):
             return element.record_set.query.c[element.name]
         elif has_type(element, type[Record]):
-            return element._set(self.db).query
+            return self.db[element].query
 
         return None
 
@@ -1839,6 +1825,48 @@ class RecSet(
                 expr, {}, replace=self._parse_schema_items
             ),
         )
+
+    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
+        """Create SQL-side table from Table class."""
+        if not self.db.create_cross_fk:
+            # Create a temporary copy of the table object and remove external FKs.
+            # That way, local metadata will retain info on the FKs
+            # (for automatic joins) but the FKs won't be created in the DB.
+            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
+            _remove_external_fk(sqla_table)
+
+        sqla_table.create(self.db.engine, checkfirst=True)
+
+    def _load_from_excel(self) -> None:
+        """Load all tables from Excel."""
+        assert isinstance(self.db.url, Path | CloudPath | HttpFile)
+        path = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
+
+        recs: list[type[Record]] = [self.record_type, *self.record_type._record_bases]
+        with open(path, "rb") as file:
+            for rec in recs:
+                pl.read_excel(
+                    file, sheet_name=rec._get_table_name(self.db._subs)
+                ).write_database(
+                    str(self.db[rec]._base_table("replace")), str(self.db.engine.url)
+                )
+
+    def _save_to_excel(self) -> None:
+        """Save all (or selected) tables to Excel."""
+        assert isinstance(self.db.url, Path | CloudPath | HttpFile)
+        file = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
+
+        recs: list[type[Record]] = [self.record_type, *self.record_type._record_bases]
+        with ExcelWorkbook(file) as wb:
+            for rec in recs:
+                pl.read_database(
+                    str(self.db[rec]._base_table().select()),
+                    self.db.engine,
+                ).write_excel(wb, worksheet=rec._get_table_name(self.db._subs))
+
+        if isinstance(self.db.url, HttpFile):
+            assert isinstance(file, BytesIO)
+            self.db.url.set(file)
 
     def suffix(
         self, right: RelSet[RecT2 | None, Any, Any, Any, Any, Any, Any]
@@ -2421,7 +2449,7 @@ class RecSet(
         return select
 
     @cached_property
-    def query(self) -> sqla.FromClause:
+    def query(self) -> sqla.Subquery:
         """Get select for this relset with stable alias name."""
         return self.select().alias(
             self.record_type._get_table_name(self.db._subs)
@@ -2689,7 +2717,7 @@ class RecSet(
         select = self.select()
 
         tables = {
-            rec._set(self.db)._base_table(mode="upsert")
+            self.db[rec]._base_table(mode="upsert")
             for rec in self.record_type._record_bases
         }
 
@@ -2724,6 +2752,9 @@ class RecSet(
         with self.db.engine.begin() as con:
             for statement in statements:
                 con.execute(statement)
+
+        if self.db.backend_type == "excel-file":
+            self._save_to_excel()
 
     @overload
     def extract(
@@ -2870,7 +2901,7 @@ class RecSet(
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
-        return self.select().subquery()
+        return self.query
 
     def _joins(self, _subtree: DataDict | None = None) -> list[Join]:
         """Extract join operations from the relation tree."""
@@ -2881,20 +2912,19 @@ class RecSet(
             parent = (
                 rel._parent_rel.query
                 if rel._parent_rel is not None
-                else rel.parent_type._set(self.db)._table
+                else self.db[rel.parent_type]._table
             )
 
             joins.extend(
                 (
-                    rec._set(self.db)._table,
+                    self.db[rec]._table,
                     reduce(
                         sqla.or_,
                         (
                             reduce(
                                 sqla.and_,
                                 (
-                                    parent.c[lk.name]
-                                    == rec._set(self.db)._table.c[rk.name]
+                                    parent.c[lk.name] == self.db[rec]._table.c[rk.name]
                                     for lk, rk in join_on.items()
                                 ),
                             )
@@ -2914,7 +2944,7 @@ class RecSet(
                             reduce(
                                 sqla.and_,
                                 (
-                                    lk.parent_type._set(self.db)._table.c[lk.name]
+                                    self.db[lk.parent_type]._table.c[lk.name]
                                     == rel.query.c[rk.name]
                                     for lk, rk in join_on.items()
                                 ),
@@ -3126,6 +3156,8 @@ class RecSet(
         for rec, value_table, sub_mode in mutations:
             # Get the statements to perform the mutation.
             self.db[rec]._mutate_table(value_table, sub_mode)
+            if self.db.backend_type == "excel-file":
+                self.db[rec]._save_to_excel()
 
             # Drop the temporary table, if any.
             if isinstance(value_table, sqla.TableClause):
@@ -3140,7 +3172,7 @@ class RecSet(
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         cols_by_table = {
-            rec._set(self.db)._base_table(
+            self.db[rec]._base_table(
                 "upsert" if mode in ("update", "insert", "upsert") else "replace"
             ): {a for a in self.record_type._cols.values() if a.parent_type is rec}
             for rec in self.record_type._record_bases
@@ -3681,9 +3713,9 @@ class RelSet(
         return f"{prefix}.{self.name}"
 
     @cached_property
-    def query(self) -> sqla.FromClause:
+    def query(self) -> sqla.Subquery:
         """Get select for this relset with stable alias name."""
-        return super().query.alias(
+        return self.select().alias(
             self.path_str + "." + hash(self).to_bytes(4, "big")[:3].hex()
         )
 
@@ -4091,6 +4123,10 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         if self.write_to_overlay is not None and self.overlay_with_schema:
             self._ensure_schema_exists(self.write_to_overlay)
 
+        if self.backend_type == "excel-file":
+            for rec in self._def_types:
+                self[rec]._load_from_excel()
+
     def __hash__(self) -> int:
         """Hash the DB."""
         return gen_int_hash(
@@ -4226,6 +4262,98 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
             ),
         }
 
+    def validate(self) -> None:
+        """Perform pre-defined schema validations."""
+        types: dict[type[Record], Any] = {}
+
+        if self.types is not None:
+            types |= {
+                rec: (isinstance(req, Require) and req.present) or req is True
+                for rec, req in self._def_types.items()
+            }
+
+        if isinstance(self.schema, Mapping):
+            types |= {
+                rec: isinstance(req, Require) and req.present
+                for schema, req in self.schema.items()
+                for rec in schema._record_types
+            }
+
+        tables = {
+            self[b_rec]._base_table(): required
+            for rec, required in types.items()
+            for b_rec in [rec, *rec._record_bases]
+        }
+
+        inspector = sqla.inspect(self.engine)
+
+        # Iterate over all tables and perform validations for each
+        for table, required in tables.items():
+            has_table = inspector.has_table(table.name, table.schema)
+
+            if not has_table and not required:
+                continue
+
+            # Check if table exists
+            assert has_table
+
+            db_columns = {
+                c["name"]: c for c in inspector.get_columns(table.name, table.schema)
+            }
+            for column in table.columns:
+                # Check if column exists
+                assert column.name in db_columns
+
+                db_col = db_columns[column.name]
+
+                # Check if column type and nullability match
+                assert isinstance(db_col["type"], type(column.type))
+                assert db_col["nullable"] == column.nullable or column.nullable is None
+
+            # Check if primary key is compatible
+            db_pk = inspector.get_pk_constraint(table.name, table.schema)
+            if len(db_pk["constrained_columns"]) > 0:  # Allow source tbales without pk
+                assert set(db_pk["constrained_columns"]) == set(
+                    table.primary_key.columns.keys()
+                )
+
+            # Check if foreign keys are compatible
+            db_fks = inspector.get_foreign_keys(table.name, table.schema)
+            for fk in table.foreign_key_constraints:
+                matches = [
+                    (
+                        set(db_fk["constrained_columns"]) == set(fk.column_keys),
+                        (
+                            db_fk["referred_table"].lower()
+                            == fk.referred_table.name.lower()
+                        ),
+                        set(db_fk["referred_columns"])
+                        == set(f.column.name for f in fk.elements),
+                    )
+                    for db_fk in db_fks
+                ]
+
+                assert any(all(m) for m in matches)
+
+    def create_set(
+        self: DB[RW, Any],
+        data: pd.DataFrame | pl.DataFrame | sqla.Select,
+        fks: Mapping[str, Col] | None = None,
+    ) -> RecSet[DynRecord, Any, RO, BsT]:
+        """Create a temporary dataset instance from a DataFrame or SQL query."""
+        name = (
+            f"temp_df_{gen_str_hash(data, 10)}"
+            if isinstance(data, pd.DataFrame | pl.DataFrame)
+            else f"temp_{token_hex(5)}"
+        )
+
+        rec = dynamic_record_type(name, props=props_from_data(data, fks))
+        ds = RecSet[DynRecord, BaseIdx, RW, BsT, DynRecord](res_type=rec, db=self.db)
+
+        ds &= data
+
+        return ds
+
     def to_graph(
         self, nodes: Sequence[type[Record]]
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -4330,98 +4458,6 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
 
         return node_df, edge_df
 
-    def validate(self) -> None:
-        """Perform pre-defined schema validations."""
-        types: dict[type[Record], Any] = {}
-
-        if self.types is not None:
-            types |= {
-                rec: (isinstance(req, Require) and req.present) or req is True
-                for rec, req in self._def_types.items()
-            }
-
-        if isinstance(self.schema, Mapping):
-            types |= {
-                rec: isinstance(req, Require) and req.present
-                for schema, req in self.schema.items()
-                for rec in schema._record_types
-            }
-
-        tables = {
-            self[b_rec]._base_table(): required
-            for rec, required in types.items()
-            for b_rec in [rec, *rec._record_bases]
-        }
-
-        inspector = sqla.inspect(self.engine)
-
-        # Iterate over all tables and perform validations for each
-        for table, required in tables.items():
-            has_table = inspector.has_table(table.name, table.schema)
-
-            if not has_table and not required:
-                continue
-
-            # Check if table exists
-            assert has_table
-
-            db_columns = {
-                c["name"]: c for c in inspector.get_columns(table.name, table.schema)
-            }
-            for column in table.columns:
-                # Check if column exists
-                assert column.name in db_columns
-
-                db_col = db_columns[column.name]
-
-                # Check if column type and nullability match
-                assert isinstance(db_col["type"], type(column.type))
-                assert db_col["nullable"] == column.nullable or column.nullable is None
-
-            # Check if primary key is compatible
-            db_pk = inspector.get_pk_constraint(table.name, table.schema)
-            if len(db_pk["constrained_columns"]) > 0:  # Allow source tbales without pk
-                assert set(db_pk["constrained_columns"]) == set(
-                    table.primary_key.columns.keys()
-                )
-
-            # Check if foreign keys are compatible
-            db_fks = inspector.get_foreign_keys(table.name, table.schema)
-            for fk in table.foreign_key_constraints:
-                matches = [
-                    (
-                        set(db_fk["constrained_columns"]) == set(fk.column_keys),
-                        (
-                            db_fk["referred_table"].lower()
-                            == fk.referred_table.name.lower()
-                        ),
-                        set(db_fk["referred_columns"])
-                        == set(f.column.name for f in fk.elements),
-                    )
-                    for db_fk in db_fks
-                ]
-
-                assert any(all(m) for m in matches)
-
-    def to_set(
-        self: DB[RW, Any],
-        data: pd.DataFrame | pl.DataFrame | sqla.Select,
-        fks: Mapping[str, Col] | None = None,
-    ) -> RecSet[DynRecord, Any, RO, BsT]:
-        """Create a temporary dataset instance from a DataFrame or SQL query."""
-        name = (
-            f"temp_df_{gen_str_hash(data, 10)}"
-            if isinstance(data, pd.DataFrame | pl.DataFrame)
-            else f"temp_{token_hex(5)}"
-        )
-
-        rec = dynamic_record_type(name, props=props_from_data(data, fks))
-        ds = RecSet[DynRecord, BaseIdx, RW, BsT, DynRecord](res_type=rec, db=self.db)
-
-        ds &= data
-
-        return ds
-
     def _ensure_schema_exists(self, schema_name: str) -> str:
         """Ensure that the table exists in the database, then return it."""
         if not sqla.inspect(self.engine).has_schema(schema_name):
@@ -4429,79 +4465,6 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
                 conn.execute(sqla.schema.CreateSchema(schema_name))
 
         return schema_name
-
-    def _table_exists(self, sqla_table: sqla.Table) -> bool:
-        """Check if a table exists in the database."""
-        return sqla.inspect(self.engine).has_table(
-            sqla_table.name, schema=sqla_table.schema
-        )
-
-    def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
-        """Create SQL-side table from Table class."""
-        if not self.create_cross_fk:
-            # Create a temporary copy of the table object and remove external FKs.
-            # That way, local metadata will retain info on the FKs
-            # (for automatic joins) but the FKs won't be created in the DB.
-            sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
-            _remove_external_fk(sqla_table)
-
-        sqla_table.create(self.engine)
-
-    def _load_from_excel(self, record_types: list[type[Record]] | None = None) -> None:
-        """Load all tables from Excel."""
-        assert self.b_id is not None
-        assert self.backend_type == "excel-file", "Backend must be an Excel file."
-        assert isinstance(self.url, Path | CloudPath | HttpFile)
-
-        path = self.url.get() if isinstance(self.url, HttpFile) else self.url
-
-        with open(path, "rb") as file:
-            for rec in record_types or self._def_types:
-                for b_rec in [rec, *rec._record_bases]:
-                    pl.read_excel(
-                        file, sheet_name=b_rec._get_table_name(self._subs)
-                    ).write_database(
-                        str(self[b_rec]._base_table("replace")), str(self.engine.url)
-                    )
-
-    def _save_to_excel(
-        self, record_types: Iterable[type[Record]] | None = None
-    ) -> None:
-        """Save all (or selected) tables to Excel."""
-        assert self.b_id is not None
-        assert self.backend_type == "excel-file", "Backend must be an Excel file."
-        assert isinstance(self.url, Path | CloudPath | HttpFile)
-
-        file = BytesIO() if isinstance(self.url, HttpFile) else self.url.open("wb")
-
-        with ExcelWorkbook(file) as wb:
-            for rec in record_types or self._def_types:
-                for b_rec in [rec, *rec._record_bases]:
-                    pl.read_database(
-                        str(self[b_rec]._base_table().select()),
-                        self.engine,
-                    ).write_excel(wb, worksheet=b_rec._get_table_name(self._subs))
-
-        if isinstance(self.url, HttpFile):
-            assert isinstance(file, BytesIO)
-            self.url.set(file)
-
-    def _delete_from_excel(self, record_types: Iterable[type[Record]]) -> None:
-        """Delete selected table from Excel."""
-        assert self.b_id is not None
-        assert self.backend_type == "excel-file", "Backend must be an Excel file."
-        assert isinstance(self.url, Path | CloudPath | HttpFile)
-
-        file = BytesIO() if isinstance(self.url, HttpFile) else self.url.open("wb")
-
-        wb = openpyxl.load_workbook(file)
-        for rec in record_types or self._def_types:
-            for b_rec in [rec, *rec._record_bases]:
-                del wb[b_rec._get_table_name(self._subs)]
-
-        if isinstance(self.url, HttpFile):
-            assert isinstance(file, BytesIO)
-            self.url.set(file)
 
 
 class Rel(RelSet[ResT, None, SingleIdx, RwT, BsT, ParT, ResTd, SelT]):
