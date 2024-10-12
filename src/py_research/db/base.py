@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC
 from collections.abc import (
     Callable,
@@ -54,6 +55,7 @@ import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
 from bidict import bidict
 from cloudpathlib import CloudPath
+from duckdb_engine import DuckDBEngineWarning
 from pandas.api.types import (
     is_bool_dtype,
     is_datetime64_dtype,
@@ -230,7 +232,7 @@ def _gen_prop(
     data: pd.Series | pl.Series | sqla.ColumnElement,
     pk: bool = False,
     fks: Mapping[str, Col] = {},
-) -> Prop[Any, Any]:
+) -> Prop[Any, Any, Any]:
     is_rel = name in fks
     value_type = (
         map_df_dtype(data)
@@ -311,7 +313,7 @@ def _remove_cross_fk(table: sqla.Table):
 class PropType(Generic[VarT]):
     """Reference to a type."""
 
-    hint: str | type[Prop[VarT]] | None = None
+    hint: str | type[Prop[VarT, Any, Any]] | None = None
     ctx: ModuleType | None = None
     typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
 
@@ -450,6 +452,121 @@ class PropType(Generic[VarT]):
             return NoneType
 
         return rec_type
+
+
+@dataclass(eq=False)
+class Prop[V, Rw: R, Rec: Record](ABC):
+    """Reference a property of a record."""
+
+    _type: PropType[V] = field(default_factory=PropType[V])
+    _name: str | None = None
+    _parent_type: type[Rec] | None = None
+
+    alias: str | None = None
+    default: V | State = State.undef
+    default_factory: Callable[[], V] | None = None
+    init: bool = True
+
+    getter: Callable[[Record], V] | None = None
+    setter: Callable[[Record, V], None] | None = None
+
+    local: bool = False
+
+    @property
+    def name(self) -> str:
+        """Property name."""
+        if self.alias is not None:
+            return self.alias
+
+        assert self._name is not None
+        return self._name
+
+    @cached_property
+    def value_type(self) -> SingleTypeDef[V]:
+        """Value type of the property."""
+        return self._type.value_type()
+
+    @cached_property
+    def parent_type(self) -> type[Rec]:
+        """Parent record type."""
+        return cast(type[Rec], self._parent_type or Record)
+
+    def __set_name__(self, _, name: str) -> None:  # noqa: D105
+        if self._name is None:
+            self._name = name
+        else:
+            assert name == self._name
+
+    def __hash__(self: Prop[Any, Any, Any]) -> int:
+        """Hash the Prop."""
+        return gen_int_hash((self.parent_type, self.name))
+
+    def __eq__(self, other: object) -> bool:
+        """Hash the Prop."""
+        return hash(self) == hash(other)
+
+
+class Attr[V, Rw: R, Rec: Record](Prop[V, Rw, Rec]):
+    """Record attribute."""
+
+    @overload
+    def __get__(self, instance: None, owner: type[RecT2]) -> Attr[V, RwT, RecT2]: ...
+
+    @overload
+    def __get__(self, instance: RecT2, owner: type[RecT2]) -> V: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[RecT2] | None
+    ) -> Attr[Any, Any, Any] | V | Self:
+        if isinstance(instance, Record):
+            if self.getter is not None:
+                value = self.getter(instance)
+            else:
+                value = instance.__dict__.get(self.name, State.undef)
+
+            if value is State.undef:
+                if self.default_factory is not None:
+                    value = self.default_factory()
+                else:
+                    value = self.default
+
+                assert (
+                    value is not State.undef
+                ), f"Property value for `{self.name}` could not be fetched."
+                instance.__dict__[self.name] = value
+
+            return value
+        elif owner is not None and issubclass(owner, Record):
+            rec_type = cast(type[RecT2], owner)
+            return cast(
+                Attr[V, Rw, RecT2],
+                copy_and_override(
+                    self,
+                    type(self),
+                    _parent_type=rec_type,  # type: ignore
+                ),
+            )
+
+        return self
+
+    def __set__(self: Prop[V, RW, Any], instance: Record, value: V | State) -> None:
+        """Set the value of the column."""
+        if value is State.undef:
+            if self.name in instance.__dict__:
+                value = instance.__dict__[self.name]
+            elif self.default_factory is not None:
+                value = self.default_factory()
+            else:
+                value = self.default
+
+        if value is not State.undef:
+            if self.setter is not None:
+                self.setter(instance, cast(V, value))
+            else:
+                instance.__dict__[self.name] = value
 
 
 type DirectLink[Rec: Record] = (
@@ -633,7 +750,7 @@ def prop(
     sql_getter: None = ...,
     local: bool = ...,
     init: bool = ...,
-) -> Prop[VarT2, RO]: ...
+) -> Prop[VarT2, RO, Any]: ...
 
 
 @overload
@@ -654,7 +771,7 @@ def prop(
     sql_getter: None = ...,
     local: bool = ...,
     init: bool = ...,
-) -> Prop[VarT2, RW]: ...
+) -> Prop[VarT2, RW, Any]: ...
 
 
 @overload
@@ -852,7 +969,7 @@ def prop(
             init=init,
             getter=getter,
             setter=setter,
-            _type=PropType(Attr[object]),
+            _type=PropType(Attr[object, Any, Any]),
             local=local,
         )
 
@@ -1301,121 +1418,6 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
 ParT = TypeVarX("ParT", covariant=True, bound="Record", default="Record")
 ParT2 = TypeVar("ParT2", bound="Record")
-
-
-@dataclass(eq=False)
-class Prop(ABC, Generic[VarT, RwT, ParT]):
-    """Reference a property of a record."""
-
-    _type: PropType[VarT] = field(default_factory=PropType[VarT])
-    _name: str | None = None
-    _parent_type: type[ParT] | None = None
-
-    alias: str | None = None
-    default: VarT | State = State.undef
-    default_factory: Callable[[], VarT] | None = None
-    init: bool = True
-
-    getter: Callable[[Record], VarT] | None = None
-    setter: Callable[[Record, VarT], None] | None = None
-
-    local: bool = False
-
-    @property
-    def name(self) -> str:
-        """Property name."""
-        if self.alias is not None:
-            return self.alias
-
-        assert self._name is not None
-        return self._name
-
-    @cached_property
-    def value_type(self) -> SingleTypeDef[VarT]:
-        """Value type of the property."""
-        return self._type.value_type()
-
-    @cached_property
-    def parent_type(self) -> type[ParT]:
-        """Parent record type."""
-        return cast(type[ParT], self._parent_type or Record)
-
-    def __set_name__(self, _, name: str) -> None:  # noqa: D105
-        if self._name is None:
-            self._name = name
-        else:
-            assert name == self._name
-
-    def __hash__(self: Prop[Any, Any, Any]) -> int:
-        """Hash the Prop."""
-        return gen_int_hash((self.parent_type, self.name))
-
-    def __eq__(self, other: object) -> bool:
-        """Hash the Prop."""
-        return hash(self) == hash(other)
-
-
-class Attr(Prop[VarT, RwT, ParT]):
-    """Record attribute."""
-
-    @overload
-    def __get__(self, instance: None, owner: type[RecT2]) -> Attr[VarT, RwT, RecT2]: ...
-
-    @overload
-    def __get__(self, instance: RecT2, owner: type[RecT2]) -> VarT: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type | type[RecT2] | None
-    ) -> Attr[Any, Any, Any] | VarT | Self:
-        if isinstance(instance, Record):
-            if self.getter is not None:
-                value = self.getter(instance)
-            else:
-                value = instance.__dict__.get(self.name, State.undef)
-
-            if value is State.undef:
-                if self.default_factory is not None:
-                    value = self.default_factory()
-                else:
-                    value = self.default
-
-                assert (
-                    value is not State.undef
-                ), f"Property value for `{self.name}` could not be fetched."
-                instance.__dict__[self.name] = value
-
-            return value
-        elif owner is not None and issubclass(owner, Record):
-            rec_type = cast(type[RecT2], owner)
-            return cast(
-                Attr[VarT, RwT, RecT2],
-                copy_and_override(
-                    self,
-                    type(self),
-                    _parent_type=rec_type,  # type: ignore
-                ),
-            )
-
-        return self
-
-    def __set__(self: Prop[VarT2, RW], instance: Record, value: VarT2 | State) -> None:
-        """Set the value of the column."""
-        if value is State.undef:
-            if self.name in instance.__dict__:
-                value = instance.__dict__[self.name]
-            elif self.default_factory is not None:
-                value = self.default_factory()
-            else:
-                value = self.default
-
-        if value is not State.undef:
-            if self.setter is not None:
-                self.setter(instance, cast(VarT2, value))
-            else:
-                instance.__dict__[self.name] = value
 
 
 ResT = TypeVarX("ResT", covariant=True, bound="Record | None", default="Record | None")
@@ -3045,17 +3047,19 @@ class RecSet(
         )
         value_table = self.db[rec]._base_table()
 
-        if isinstance(df, pd.DataFrame):
-            df.reset_index().to_sql(
-                value_table.name,
-                self.db.engine,
-                if_exists="replace",
-                index=False,
-            )
-        else:
-            df.write_database(
-                str(value_table), self.db.engine, if_table_exists="replace"
-            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DuckDBEngineWarning)
+            if isinstance(df, pd.DataFrame):
+                df.reset_index().to_sql(
+                    value_table.name,
+                    self.db.engine,
+                    if_exists="replace",
+                    index=False,
+                )
+            else:
+                df.write_database(
+                    str(value_table), self.db.engine, if_table_exists="replace"
+                )
 
         return value_table
 
@@ -4560,7 +4564,7 @@ a = DynRecord
 
 
 def dynamic_record_type(
-    name: str, props: Iterable[Prop[Any, Any]] = []
+    name: str, props: Iterable[Prop[Any, Any, Any]] = []
 ) -> type[DynRecord]:
     """Create a dynamically defined record type."""
     return type(
