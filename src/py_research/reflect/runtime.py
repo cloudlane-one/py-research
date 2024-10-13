@@ -2,8 +2,10 @@
 
 import inspect
 from collections.abc import Callable, Sequence
-from types import ModuleType
+from types import ModuleType, UnionType
 from typing import Any, TypeVar
+
+from .types import SingleTypeDef
 
 T = TypeVar("T")
 
@@ -49,7 +51,7 @@ def get_full_args_dict(
     return {**kwdefaults, **posargs, **(kwargs or {})}
 
 
-def get_return_type(func: Callable) -> type | None:
+def get_return_type(func: Callable) -> SingleTypeDef | UnionType | None:
     """Get the return type annotation of given function, if any."""
     sig = inspect.signature(func)
     return (

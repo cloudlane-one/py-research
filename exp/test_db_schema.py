@@ -21,9 +21,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: RelSet[Project, SearchResult, int] = prop(
-        order_by={SearchResult.score: -1},
-    )
+    results: RelSet[Project, SearchResult]
 
 
 Assignment = Link["User", "Task"]

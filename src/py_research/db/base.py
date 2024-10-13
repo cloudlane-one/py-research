@@ -168,9 +168,11 @@ class RW(RO):
     """Read-write flag."""
 
 
-type RecInput[Rec: Record, Key: MutateIdx] = pd.DataFrame | pl.DataFrame | Iterable[
-    Rec
-] | Mapping[Key, Rec] | sqla.Select | Rec
+type RecInput[
+    Rec: Record, Key: MutateIdx, RKey: Hashable
+] = pd.DataFrame | pl.DataFrame | Iterable[Rec | RKey] | Mapping[
+    Key, Rec | RKey
+] | sqla.Select | Rec | RKey
 
 
 type ValInput[Val, Key: Hashable] = pd.Series | pl.Series | Mapping[
@@ -596,7 +598,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -617,7 +618,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: None = ...,
@@ -638,7 +638,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: Callable[[Record, VarT2], None],
@@ -659,7 +658,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -680,7 +678,6 @@ def prop(
     link_on: DirectLink[RecT2],
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -701,7 +698,6 @@ def prop(
     link_on: DirectLink[RecT2] | None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -722,7 +718,6 @@ def prop(
     link_on: DirectLink[RecT2] | None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -743,7 +738,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: None = ...,
@@ -764,7 +758,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: Callable[[Record, VarT2], None],
@@ -785,7 +778,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: None = ...,
@@ -806,7 +798,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: Callable[[Record, VarT2], None],
@@ -827,7 +818,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: None = ...,
@@ -848,7 +838,6 @@ def prop(
     link_on: None = ...,
     link_from: None = ...,
     link_via: None = ...,
-    order_by: None = ...,
     map_by: None = ...,
     getter: Callable[[Record], VarT2],
     setter: Callable[[Record, VarT2], None],
@@ -869,7 +858,6 @@ def prop(  # type: ignore[reportOverlappingOverload]
     link_on: None = ...,
     link_from: BackLink[RecT2] | None = ...,
     link_via: BiLink[RecT2, Link],
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -890,7 +878,6 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[RecT2] | None = ...,
     link_via: BiLink[RecT2, RecT3] | None = ...,  # type: ignore[reportInvalidTypeVarUse]
-    order_by: None = ...,
     map_by: None = ...,
     getter: None = ...,
     setter: None = ...,
@@ -898,27 +885,6 @@ def prop(
     local: bool = ...,
     init: bool = ...,
 ) -> RelSet[RecT2, RecT3]: ...
-
-
-@overload
-def prop(
-    *,
-    default: RecT2 | None = ...,  # type: ignore[reportInvalidTypeVarUse]
-    default_factory: Callable[[], RecT2 | VarT3] | None = ...,
-    alias: str | None = ...,
-    index: Literal[False] = ...,
-    primary_key: Literal[False] = ...,
-    link_on: None = ...,
-    link_from: BackLink[RecT2] | None = ...,
-    link_via: BiLink[RecT2, RecT3] | None = ...,  # type: ignore[reportInvalidTypeVarUse]
-    order_by: Mapping[Col[Any, Any, Any, LocalStat, RecT2 | RecT3], int],
-    map_by: None = ...,
-    getter: None = ...,
-    setter: None = ...,
-    sql_getter: None = ...,
-    local: bool = ...,
-    init: bool = ...,
-) -> RelSet[RecT2, RecT3, int]: ...
 
 
 @overload
@@ -932,7 +898,6 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[RecT2] | None = ...,
     link_via: BiLink[RecT2, RecT3] | None = ...,
-    order_by: None = ...,
     map_by: Col[VarT4, Any, Any, LocalStat, RecT2 | RecT3],
     getter: None = ...,
     setter: None = ...,
@@ -952,7 +917,6 @@ def prop(
     link_on: DirectLink[Record] | None = None,
     link_from: BackLink[Record] | None = None,
     link_via: BiLink[Record, Any] | None = None,
-    order_by: Mapping[Col, int] | None = None,
     map_by: Col | None = None,
     getter: Callable[[Record], Any] | None = None,
     setter: Callable[[Record, Any], None] | None = None,
@@ -973,9 +937,9 @@ def prop(
             local=local,
         )
 
-    if any(
-        a is not None for a in (link_on, link_from, link_via, order_by, map_by)
-    ) or any(a == "fk" for a in (index, primary_key)):
+    if any(a is not None for a in (link_on, link_from, link_via, map_by)) or any(
+        a == "fk" for a in (index, primary_key)
+    ):
         return RelSet(
             default=default,
             default_factory=default_factory,
@@ -988,7 +952,6 @@ def prop(
                 if link_on is not None
                 else link_from if link_from is not None else link_via
             ),  # type: ignore[reportArgumentType]
-            order_by=order_by,
             map_by=map_by,
             _type=PropType(RelSet[Record]),
         )
@@ -1024,13 +987,14 @@ class RecordMeta(type):
     _is_record: bool = False
     _template: bool = False
     _src_mod: ModuleType | None = None
+    _derivate: bool = False
 
     def __init__(cls, name, bases, dct):
         """Initialize a new record type."""
         super().__init__(name, bases, dct)
 
         if "_src_mod" not in cls.__dict__:
-            cls._src_mod = getmodule(cls)
+            cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
         prop_defs = {
             name: pt
@@ -1072,7 +1036,7 @@ class RecordMeta(type):
             if not isinstance(orig, RecordMeta) or orig._is_record:
                 continue
 
-            if orig._template:
+            if orig._template or cls._derivate:
                 for prop_name, prop_set in orig._defined_props.items():
                     prop_defs[prop_name] = prop_set._type
                     if prop_name not in cls.__dict__:
@@ -1201,6 +1165,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         UUID: UUIDType(binary=False),  # Binary type causes issues with DuckDB
     }
     _is_record: ClassVar[bool] = True
+    _derivate: ClassVar[bool] = False
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -1400,17 +1365,32 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return cast(KeyT, tuple(getattr(self, pk) for pk in pks))
 
     @classmethod
-    def _from_partial_dict(
+    def _is_complete_dict(
         cls,
         data: Mapping[Col | RelSet, Any] | Mapping[str, Any],
-        name_keys: bool = True,
-    ) -> Self:
-        """Return the index contained in a dict representation of this record."""
-        args = {
-            p.name: data.get(p if not name_keys else p.name, State.undef)  # type: ignore[reportArgumentType]
-            for p in cls._props.values()
-        }
-        return cls(**args)
+    ) -> bool:
+        """Check if dict data contains all required info for record type."""
+        data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
+        return not any(
+            data.get(p.name, State.undef) is State.undef
+            and p.getter is None
+            and p.default is State.undef
+            and p.default_factory is None
+            for p in cls._cols.values()
+        )
+
+    @classmethod
+    def _index_from_dict(
+        cls, data: Mapping[Col | RelSet, Any] | Mapping[str, Any]
+    ) -> KeyT | None:
+        """Return the index of the record."""
+        data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
+        pks = cls._primary_keys
+        if len(pks) == 1:
+            return data.get(next(iter(pks)))
+
+        keys = [data.get(pk) for pk in pks]
+        return cast(KeyT, tuple(keys)) if not any(k is None for k in keys) else None
 
     def __repr__(self) -> str:  # noqa: D105
         return self._to_dict(name_keys=True).__repr__()
@@ -1539,7 +1519,7 @@ class RecSet(
     db: DB[RwT, BsT] = field(default_factory=lambda: DB[RwT, BsT]())
     res_type: type[ResT] = NoneType
 
-    keys: Sequence[slice | list[Hashable] | Hashable] = field(default_factory=list)
+    sel_keys: Sequence[slice | list[Hashable] | Hashable] = field(default_factory=list)
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
     merges: RelTree = field(default_factory=RelTree)
     sel_type: type[SelT] = NoneType
@@ -1547,7 +1527,7 @@ class RecSet(
     def __hash__(self: RecSet[Any, Any, Any, Any, Any, Any]) -> int:
         """Hash the RecSet."""
         return gen_int_hash(
-            (self.db, self.record_type, self.keys, self.filters, self.merges)
+            (self.db, self.record_type, self.sel_keys, self.filters, self.merges)
         )
 
     def __eq__(self, other: object) -> bool:
@@ -1571,7 +1551,7 @@ class RecSet(
     @cached_property
     def single_key(self) -> Hashable | None:
         """Return the single selected key, if it exists."""
-        single_keys = [k for k in self.keys if not isinstance(k, list | slice)]
+        single_keys = [k for k in self.sel_keys if not isinstance(k, list | slice)]
         if len(single_keys) > 0:
             return single_keys[0]
 
@@ -1640,7 +1620,7 @@ class RecSet(
                 RelSet[Any, Any, Any, Any, Any, Any, Any, Any],
                 _parent_type=self.rec,
                 db=self.db,
-                keys=[*self.keys, *rel.keys],
+                sel_keys=[*self.sel_keys, *rel.sel_keys],
                 filters=[*self.filters, *rel_filt],
                 merges=self.merges * rel.merges.prefix(self) * rel_filt_merges,
             ),
@@ -2388,7 +2368,9 @@ class RecSet(
                         self.single_key is None or key == self.single_key
                     ), "Cannot select multiple single record keys"
 
-                key_set = copy_and_override(self, type(self), keys=[*self.keys, key])
+                key_set = copy_and_override(
+                    self, type(self), sel_keys=[*self.sel_keys, key]
+                )
 
                 if not is_subtype(self.sel_type, Record):
                     return key_set
@@ -2463,37 +2445,59 @@ class RecSet(
     def to_df(
         self: RecSet[Any, Any, Any, Any, Any, tuple],
         kind: type[DfT],
+        index_only: Literal[False] = ...,
     ) -> tuple[DfT, ...]: ...
 
     @overload
     def to_df(
-        self: RecSet[Any, Any, Any, Any, Any, Record | None], kind: type[DfT]
+        self: RecSet[Any, Any, Any, Any, Any, Record | None],
+        kind: type[DfT],
+        index_only: bool = ...,
     ) -> DfT: ...
 
     @overload
     def to_df(
         self: RecSet[Any, Any, Any, Any, Any, tuple],
         kind: None = ...,
+        index_only: Literal[False] = ...,
     ) -> tuple[pl.DataFrame, ...]: ...
 
     @overload
     def to_df(
-        self: RecSet[Any, Any, Any, Any, Any, Record | None], kind: None = ...
+        self: RecSet[Any, Any, Any, Any, Any, Record | None],
+        kind: None = ...,
+        index_only: bool = ...,
     ) -> pl.DataFrame: ...
 
     @overload
     def to_df(
-        self: RecSet[Any, Any, Any, Any, Any, Any], kind: None = ...
+        self: RecSet[Any, Any, Any, Any, Any, Any],
+        kind: None = ...,
+        index_only: Literal[False] = ...,
     ) -> pl.DataFrame | tuple[pl.DataFrame, ...]: ...
 
     def to_df(
         self: RecSet[Record | None, Any, Any, Any, Any, Any],
         kind: type[DfT] | None = None,
+        index_only: bool = False,
     ) -> DfT | tuple[DfT, ...]:
         """Download selection."""
-        select = self.select()
+        select = self.select(index_only=index_only)
 
         idx_cols = [col.name for col in self.idx_cols]
+
+        merged_df = None
+        if kind is pd.DataFrame:
+            with self.db.engine.connect() as con:
+                merged_df = pd.read_sql(select, con)
+                merged_df = merged_df.set_index(idx_cols)
+        else:
+            merged_df = pl.read_database(
+                str(select.compile(self.db.engine)), self.db.engine
+            )
+
+        if index_only:
+            return cast(DfT, merged_df)
 
         main_prefix = self.record_type._default_table_name() + "."
         main_cols = {
@@ -2510,16 +2514,6 @@ class RecSet(
             }
             for rel in self.merges.rels
         }
-
-        merged_df = None
-        if kind is pd.DataFrame:
-            with self.db.engine.connect() as con:
-                merged_df = pd.read_sql(select, con)
-                merged_df = merged_df.set_index(idx_cols)
-        else:
-            merged_df = pl.read_database(
-                str(select.compile(self.db.engine)), self.db.engine
-            )
 
         main_df, *extra_dfs = cast(
             tuple[DfT, ...],
@@ -2552,11 +2546,6 @@ class RecSet(
             dfs = (dfs,)
 
         rec_types: tuple[type[Record], ...] = (self.record_type, *self.merges.types)
-        idx_cols = [
-            f"{rel.path_str}.{pk}"
-            for rel in self.merges.rels
-            for pk in rel.record_type._primary_keys
-        ]
 
         for rt in rec_types:
             if rt not in self.db._instance_map:
@@ -2564,13 +2553,11 @@ class RecSet(
 
         def iterator() -> Generator[RecT2 | tuple[RecT2, *tuple[Record, ...]]]:
             for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
-                main_row = rows[0]
-                idx = tuple(main_row[i] for i in idx_cols)
-                idx = idx[0] if len(idx) == 1 else idx
+                rows = cast(tuple[dict[str, Any], ...], rows)
 
                 rec_list = []
-                for rec_type, row in zip(rec_types[1:], rows[1:]):
-                    new_rec = self.record_type._from_partial_dict(row)
+                for rec_type, row in zip(rec_types, rows):
+                    new_rec = self.record_type(**row)
                     rec = self.db._instance_map[rec_type].get(new_rec._index) or new_rec
                     rec._db = self.db
 
@@ -2580,60 +2567,96 @@ class RecSet(
 
         return iterator()
 
+    @overload
+    def keys(
+        self: RecSet[Any, Filt[KeyT2] | KeyT2, Any, Any, Any, Any],
+    ) -> Sequence[KeyT2]: ...
+
+    @overload
+    def keys(
+        self: RecSet[Record[KeyT3], Any, Any, Any, Any, Any],
+    ) -> Sequence[KeyT3]: ...
+
+    def keys(
+        self: RecSet[Any, Any, Any, Any, Any, Any],
+    ) -> Sequence[Hashable]:
+        """Iterable over index keys."""
+        df = self.to_df(index_only=True)
+        if len(self.idx_cols) == 1:
+            return [tup[0] for tup in df.iter_rows()]
+
+        return list(df.iter_rows())
+
     def __imatmul__(
-        self: RecSet[RecT2 | None, MdxT | SingleIdx, RW, Any, ResT2],
-        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
-    ) -> RecSet[ResT2, IdxT, RW, Any, ResT2]:
+        self: RecSet[
+            RecT2 | None,
+            KeyT2 | Filt[KeyT2] | BaseIdx | Filt[BaseIdx] | SingleIdx,
+            RW,
+            Any,
+            Record[KeyT3] | None,
+        ],
+        other: (
+            RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2 | KeyT3, KeyT3]
+        ),
+    ) -> RecSet[ResT, IdxT, RW, BsT, ResT]:
         """Aligned assignment."""
         self._mutate(other, mode="update")
-        return cast(RecSet[ResT2, IdxT, RW, Any, ResT2], self)
+        return cast(RecSet[ResT, IdxT, RW, Any, ResT], self)
 
     def __iand__(
-        self: RecSet[RecT2 | None, MdxT, RW, Any, RecT2],
-        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
-    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        self: RecSet[RecT2 | None, KeyT2 | BaseIdx, RW, Any, Record[KeyT3] | None],
+        other: (
+            RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2 | KeyT3, KeyT3]
+        ),
+    ) -> RecSet[ResT, IdxT, RW, BsT, ResT]:
         """Replacing assignment."""
         self._mutate(other, mode="replace")
-        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+        return cast(RecSet[ResT, IdxT, RW, Any, ResT], self)
 
     def __ior__(
-        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
-        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
-    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        self: RecSet[RecT2 | None, KeyT2 | BaseIdx, RW, Any, Record[KeyT3] | None],
+        other: (
+            RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2 | KeyT3, KeyT3]
+        ),
+    ) -> RecSet[ResT, IdxT, RW, BsT, ResT]:
         """Upserting assignment."""
         self._mutate(other, mode="upsert")
-        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+        return cast(RecSet[ResT, IdxT, RW, Any, ResT], self)
 
     def __iadd__(
-        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
-        other: RecSet[RecT2 | None, MdxT, Any, Any] | RecInput[RecT2, MdxT],
-    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        self: RecSet[RecT2 | None, KeyT2 | BaseIdx, RW, Any, Record[KeyT3] | None],
+        other: (
+            RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2 | KeyT3, KeyT3]
+        ),
+    ) -> RecSet[ResT, IdxT, RW, BsT, ResT]:
         """Inserting assignment."""
         self._mutate(other, mode="insert")
-        return cast(RecSet[ResT2, MdxT, RW, Any, ResT2], self)
+        return cast(RecSet[ResT, IdxT, RW, Any, ResT], self)
 
     def __isub__(
-        self: RecSet[RecT2 | None, MdxT, RW, Any, ResT2],
-        other: RecSet[RecT2 | None, MdxT, Any, Any] | Iterable[MdxT] | MdxT,
-    ) -> RecSet[ResT2, MdxT, RW, Any, ResT2]:
+        self: RecSet[RecT2 | None, KeyT2 | BaseIdx, RW, Any, Record[KeyT3] | None],
+        other: (
+            RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2 | KeyT3, KeyT3]
+        ),
+    ) -> RecSet[ResT, IdxT, RW, BsT, ResT]:
         """Deletion."""
         raise NotImplementedError("Delete not supported yet.")
 
     @overload
     def __lshift__(
         self: RecSet[Record[KeyT2] | None, BaseIdx, Any, Any, RecT2 | None],
-        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2],
+        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, KeyT2, KeyT2],
     ) -> list[KeyT2]: ...
 
     @overload
     def __lshift__(
-        self: RecSet[Any, Any, Any, Any, RecT2 | None],
-        other: RecSet[RecT2 | None, KeyT, Any, Any] | RecInput[RecT2, KeyT],
+        self: RecSet[Record[KeyT2] | None, KeyT3, Any, Any, RecT2 | None],
+        other: RecSet[RecT2 | None, KeyT, Any, Any] | RecInput[RecT2, KeyT3, KeyT2],
     ) -> list[KeyT]: ...
 
     def __lshift__(
         self: RecSet[Any, Any, Any, Any, RecT2 | None],
-        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, Any],
+        other: RecSet[RecT2 | None, Any, Any, Any] | RecInput[RecT2, Any, Any],
     ) -> list:
         """Injection."""
         raise NotImplementedError("Inject not supported yet.")
@@ -2897,9 +2920,11 @@ class RecSet(
             assert isinstance(res, int)
             return res
 
-    def __contains__(self: RecSet[Any, Any, Any, DynBackendID], key: Hashable) -> bool:
+    def __contains__(
+        self: RecSet[RecT2, Any, Any, DynBackendID], key: Hashable | RecT2
+    ) -> bool:
         """Check if a record is in the dataset."""
-        return len(self[key]) > 0
+        return len(self[key._index if isinstance(key, Record) else key]) > 0
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
@@ -3041,9 +3066,10 @@ class RecSet(
             pks = pks or list(df.index.names)
         pks = pks or []
 
-        rec = dynamic_record_type(
-            f"{self.record_type._default_table_name()}_{token_hex(5)}",
-            props=props_from_data(df, primary_keys=pks),
+        rec = type(
+            self.record_type.__name__ + "_" + token_hex(5),
+            (self.record_type,),
+            {"_derivate": True},
         )
         value_table = self.db[rec]._base_table()
 
@@ -3085,135 +3111,160 @@ class RecSet(
         # Transform attribute data into DataFrame.
         return pl.DataFrame(col_data).sort(by=idx_names)
 
-    def _mutate(  # noqa: C901
+    def _mutate(
         self: RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
-        value: RecSet[RecT2 | None, Any, Any, Any, Any] | RecInput[RecT2, Any],
+        value: (
+            RecSet[RecT2 | None, Any, Any, Any, Any]
+            | RecInput[RecT2, Hashable, Hashable]
+        ),
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
-        mutations: list[
-            tuple[
-                type[Record] | RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
-                sqla.FromClause,
-                Literal["update", "upsert", "replace", "insert"],
-            ]
-        ] = []
-
-        records: dict[Any, Record] | None = None
-        self_sel = self if isinstance(self, RelSet) else self.record_type
+        record_ids: dict[Hashable, Hashable] | None = None
 
         match value:
             case sqla.Select():
-                mutations.append((self_sel, value.subquery(), mode))
+                self._mutate_from_sql(value.subquery(), mode)
             case RecSet():
                 if value.db != self.db:
                     remote_db = value if isinstance(value, DB) else value.extract()
                     for s in remote_db._def_types:
                         if remote_db.b_id == self.db.b_id:
-                            mutations.append((s, remote_db[s].query, "upsert"))
+                            self.db[s]._mutate_from_sql(remote_db[s].query, "upsert")
                         else:
-                            mutations.append(
-                                (
-                                    s,
-                                    self._df_to_table(
-                                        remote_db[s].to_df(),
-                                        pks=[c.key for c in remote_db[s].idx_cols],
-                                    ),
-                                    "upsert",
-                                )
+                            value_table = self._df_to_table(
+                                remote_db[s].to_df(),
+                                pks=[c.key for c in remote_db[s].idx_cols],
                             )
-
-                mutations.append((self_sel, value.select().subquery(), mode))
-            case pd.DataFrame() | pl.DataFrame():
-                mutations.append(
-                    (
-                        self_sel,
-                        self._df_to_table(value, pks=[c.key for c in self.idx_cols]),
-                        mode,
-                    )
-                )
-            case Record():
-                records = {value._index: value}
-            case Mapping() if has_type(value, Mapping[Any, Record]):
-                records = dict(value)
-            case Iterable():
-                records = {idx: rec for idx, rec in enumerate(value)}
-
-        if records is not None:
-            db_grouped = {
-                db: dict(recs)
-                for db, recs in groupby(
-                    sorted(records.items(), key=lambda x: x[1]._db.b_id),
-                    lambda x: None if not x[1]._connected else x[1]._db,
-                )
-            }
-
-            local_records = {**db_grouped.get(self.db, {}), **db_grouped.get(None, {})}
-
-            remote_records = {
-                db: recs
-                for db, recs in db_grouped.items()
-                if db is not None and db != self.db
-            }
-
-            if local_records:
-                # Get the column data.
-                df_data = self._records_to_df(local_records)
-                mutations.append(
-                    (
-                        self_sel,
-                        self._df_to_table(df_data, pks=[c.key for c in self.idx_cols]),
-                        mode,
-                    )
-                )
-
-            for db, recs in remote_records.items():
-                rec_ids = [rec._index for rec in recs.values()]
-                remote_set = db[self.record_type][rec_ids]
-
-                remote_db = (
-                    db
-                    if all(rec._root for rec in recs.values())
-                    else remote_set.extract()
-                )
-                for s in remote_db._def_types:
-                    if remote_db.b_id == self.db.b_id:
-                        mutations.append((s, remote_db[s].query, "upsert"))
-                    else:
-                        mutations.append(
-                            (
-                                s,
-                                self._df_to_table(
-                                    remote_db[s].to_df(),
-                                    pks=[c.key for c in remote_db[s].idx_cols],
-                                ),
+                            self.db[s]._mutate_from_sql(
+                                value_table,
                                 "upsert",
                             )
-                        )
+                            value_table.drop(self.db.engine)
 
-                mutations.append((self_sel, remote_set.select().subquery(), mode))
-
-        for rec, value_table, sub_mode in mutations:
-            # Get the statements to perform the mutation.
-            self.db[rec]._mutate_table(value_table, sub_mode)
-            if self.db.backend_type == "excel-file":
-                self.db[rec]._save_to_excel()
-
-            # Drop the temporary table, if any.
-            if isinstance(value_table, sqla.Table):
+                self._mutate_from_sql(value.select().subquery(), mode)
+            case pd.DataFrame() | pl.DataFrame():
+                value_table = self._df_to_table(
+                    value, pks=[c.key for c in self.idx_cols]
+                )
+                self._mutate_from_sql(
+                    value_table,
+                    mode,
+                )
                 value_table.drop(self.db.engine)
+            case Record():
+                self._mutate_from_records({value._index: value}, mode)
+            case Mapping():
+                self._mutate_from_records(
+                    {idx: rec for idx, rec in value.items() if isinstance(rec, Record)},
+                    mode,
+                )
+                record_ids = {
+                    idx: rec
+                    for idx, rec in value.items()
+                    if not isinstance(rec, Record)
+                }
+                if len(record_ids) > 0:
+                    assert isinstance(
+                        self, RelSet
+                    ), "Can only update relation sets with record ids."
+                    self._mutate_from_rec_ids(record_ids, mode)
+            case Iterable():
+                self._mutate_from_records(
+                    {
+                        idx: rec
+                        for idx, rec in enumerate(value)
+                        if isinstance(rec, Record)
+                    },
+                    mode,
+                )
+                record_ids = {
+                    idx: rec
+                    for idx, rec in enumerate(value)
+                    if not isinstance(rec, Record)
+                }
+                if len(record_ids) > 0:
+                    assert isinstance(
+                        self, RelSet
+                    ), "Can only update relation sets with record ids."
+                    self._mutate_from_rec_ids(record_ids, mode)
+            case Hashable():
+                assert isinstance(
+                    self, RelSet
+                ), "Can only update relation sets with record ids."
+                self._mutate_from_rec_ids({value: value}, mode)
 
         return
 
-    def _mutate_table(  # noqa: C901
+    def _mutate_from_records(
         self: RecSet[RecT2 | None, Any, RW, BsT, Any, Any],
+        records: dict[Hashable, Record],
+        mode: Literal["update", "upsert", "replace", "insert"] = "update",
+    ) -> None:
+        db_grouped = {
+            db: dict(recs)
+            for db, recs in groupby(
+                sorted(records.items(), key=lambda x: x[1]._db.b_id),
+                lambda x: None if not x[1]._connected else x[1]._db,
+            )
+        }
+
+        local_records = {**db_grouped.get(self.db, {}), **db_grouped.get(None, {})}
+
+        remote_records = {
+            db: recs
+            for db, recs in db_grouped.items()
+            if db is not None and db != self.db
+        }
+
+        if local_records:
+            # Get the column data.
+            df_data = self._records_to_df(local_records)
+            value_table = self._df_to_table(df_data, pks=[c.key for c in self.idx_cols])
+            self._mutate_from_sql(
+                value_table,
+                mode,
+            )
+            value_table.drop(self.db.engine)
+
+        for db, recs in remote_records.items():
+            rec_ids = [rec._index for rec in recs.values()]
+            remote_set = db[self.record_type][rec_ids]
+
+            remote_db = (
+                db if all(rec._root for rec in recs.values()) else remote_set.extract()
+            )
+            for s in remote_db._def_types:
+                if remote_db.b_id == self.db.b_id:
+                    self.db[s]._mutate_from_sql(remote_db[s].query, "upsert")
+                else:
+                    value_table = self._df_to_table(
+                        remote_db[s].to_df(),
+                        pks=[c.key for c in remote_db[s].idx_cols],
+                    )
+                    self.db[s]._mutate_from_sql(
+                        value_table,
+                        "upsert",
+                    )
+                    value_table.drop(self.db.engine)
+
+            self._mutate_from_sql(remote_set.select().subquery(), mode)
+
+        return
+
+    def _mutate_from_sql(
+        self: RecSet[RecT2 | None, Any, RW, Any, Any, Any],
         value_table: sqla.FromClause,
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
+        base_recs: list[type[Record]] = [
+            self.record_type,
+            *self.record_type._record_bases,
+        ]
         cols_by_table = {
             self.db[rec]._base_table(
                 "upsert" if mode in ("update", "insert", "upsert") else "replace"
             ): {a for a in self.record_type._cols.values() if a.parent_type is rec}
-            for rec in self.record_type._record_bases
+            for rec in base_recs
         }
 
         statements: list[sqla.Executable] = []
@@ -3237,7 +3288,7 @@ class RecSet(
                             reduce(
                                 sqla.and_,
                                 (
-                                    table.c[col.name] == select.c[col.name]
+                                    col == select.corresponding_column(col)
                                     for col in table.primary_key.columns
                                 ),
                             )
@@ -3254,23 +3305,40 @@ class RecSet(
 
             for table, cols in cols_by_table.items():
                 # Do an insert-from-select operation, which updates on conflict:
-                statement = table.insert().from_select(
-                    [a.name for a in cols],
-                    value_table,
-                )
-
-                if mode in ("replace", "upsert"):
-                    if isinstance(statement, postgresql.Insert):
+                if mode == "upsert":
+                    if self.db.engine.dialect.name in (
+                        "postgres",
+                        "postgresql",
+                        "duckdb",
+                    ):
                         # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
+                        statement = postgresql.Insert(table).from_select(
+                            [a.name for a in cols],
+                            value_table,
+                        )
                         statement = statement.on_conflict_do_update(
                             index_elements=[
                                 col.name for col in table.primary_key.columns
                             ],
-                            set_=dict(statement.excluded),
+                            set_={
+                                c.name: statement.excluded[c.name]
+                                for c in cols
+                                if c.name not in table.primary_key.columns
+                            },
                         )
-                    elif isinstance(statement, mysql.Insert):
+                    elif self.db.engine.dialect.name in (
+                        "mysql",
+                        "mariadb",
+                    ):
                         # For MySQL / MariaDB, use: https://docs.sqlalchemy.org/en/20/dialects/mysql.html#insert-on-duplicate-key-update-upsert
-                        statement = statement.prefix_with("INSERT INTO")
+                        statement = (
+                            mysql.Insert(table)
+                            .from_select(
+                                [a.name for a in cols],
+                                value_table,
+                            )
+                            .prefix_with("INSERT INTO")
+                        )
                         statement = statement.on_duplicate_key_update(
                             **statement.inserted
                         )
@@ -3279,6 +3347,11 @@ class RecSet(
                         raise NotImplementedError(
                             "Upsert not supported for this database dialect."
                         )
+                else:
+                    statement = table.insert().from_select(
+                        [a.name for a in cols],
+                        value_table,
+                    )
 
                 statements.append(statement)
         else:
@@ -3325,7 +3398,7 @@ class RecSet(
                             reduce(
                                 sqla.and_,
                                 (
-                                    table.c[col.name] == select.c[col.name]
+                                    col == select.corresponding_column(col)
                                     for col in table.primary_key.columns
                                 ),
                             )
@@ -3340,24 +3413,8 @@ class RecSet(
             for statement in statements:
                 con.execute(statement)
 
-        if mode in ("replace", "upsert") and isinstance(self, RelSet):
-            # Update incoming relations from parent records.
-            if self.direct_rel is not True:
-                if issubclass(self.fk_record_type, self.parent_type):
-                    # Case: parent links directly to child (n -> 1)
-                    for fk, pk in self.direct_rel.fk_map.items():
-                        self.parent[fk] @= value_table.select().with_only_columns(
-                            value_table.c[pk.name]
-                        )
-                else:
-                    # Case: parent and child are linked via assoc table (n <--> m)
-                    # Update link table with new child indexes.
-                    assert issubclass(self.link_type, Record)
-                    ls = self.links
-                    ls &= value_table.select()
-
-            # Note that the (1 <- n) case is already covered by updating
-            # the child record directly, which includes all its foreign keys.
+        if self.db.backend_type == "excel-file":
+            self._save_to_excel()
 
         return
 
@@ -3527,7 +3584,6 @@ class RelSet(
     primary_key: bool = False
 
     on: DirectLink[Record] | BackLink[Record] | BiLink[Record, Any] | None = None
-    order_by: Mapping[Col[Any, Any, Any, LocalStat], int] | None = None
     map_by: Col[Any, Any, Any, LocalStat] | None = None
 
     def __hash__(self) -> int:
@@ -3606,11 +3662,11 @@ class RelSet(
         return self
 
     def __set__(  # noqa: D105
-        self: RelSet[Record[KeyT2], Any, Any, RW, LocalStat, ParT2, RecT2],
+        self: RelSet[Record[KeyT2], Any, KeyT3 | Any, RW, LocalStat, ParT2, RecT2],
         instance: ParT2,
         value: (
             RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2]
-            | RecInput[RecT2, KeyT2]
+            | RecInput[RecT2, KeyT2 | KeyT2, KeyT2]
             | State
         ),
     ) -> None:
@@ -3673,6 +3729,78 @@ class RelSet(
             else super().idx_cols
         )
 
+    def _indexes_to_df(self, indexes: dict[Hashable, Hashable]) -> pl.DataFrame:
+        idx_names = [vs.key for vs in self.idx_cols]
+        base_idx_names = [vs.key for vs in self.db[self.record_type].idx_cols]
+
+        col_data = [
+            {
+                **self._idx_map(idx_names, idx),
+                **self._idx_map(base_idx_names, base_idx),
+            }
+            for idx, base_idx in indexes.items()
+        ]
+
+        # Transform attribute data into DataFrame.
+        return pl.DataFrame(col_data).sort(by=idx_names)
+
+    def _mutate_from_rec_ids(  # noqa: C901
+        self: RelSet[RecT2 | None, Any, Any, RW, BsT, Any, Any, Any],
+        indexes: dict[Hashable, Hashable],
+        mode: Literal["update", "upsert", "replace", "insert"] = "update",
+    ) -> None:
+        idx_df = self._indexes_to_df(indexes)
+        self._mutate_from_sql(
+            self._df_to_table(idx_df, pks=[c.key for c in self.idx_cols]),
+            mode,
+            rel_only=True,
+        )
+        return
+
+    def _mutate_from_sql(  # noqa: C901
+        self: RelSet[RecT2 | None, Any, Any, RW, Any, Any, Any, Any],
+        value_table: sqla.FromClause,
+        mode: Literal["update", "upsert", "replace", "insert"] = "update",
+        rel_only: bool = False,
+    ) -> None:
+        if not rel_only:
+            RecSet._mutate_from_sql(self, value_table, mode)
+
+        # Update relations with parent records.
+        if self.direct_rel is not True:
+            if issubclass(self.fk_record_type, self.parent_type):
+                # Case: parent links directly to child (n -> 1)
+                self.parent._mutate_from_sql(
+                    value_table.select()
+                    .with_only_columns(
+                        *(
+                            value_table.c[pk.name].label(fk.name)
+                            for fk, pk in self.direct_rel.fk_map.items()
+                        )
+                    )
+                    .subquery(),
+                    "update",
+                )
+            else:
+                # Case: parent and child are linked via assoc table (n <--> m)
+                # Update link table with new child indexes.
+                assert issubclass(self.link_type, Record)
+                link_cols = [
+                    *(
+                        value_table.c[pk.name].label(fk.name)
+                        for fk, pk in self.direct_rel.fk_map.items()
+                    ),
+                    *(value_table.c[col.key] for col in self.idx_cols),
+                ]
+                self.links._mutate_from_sql(
+                    value_table.select().with_only_columns(*link_cols).subquery(), mode
+                )
+
+        # Note that the (1 <- n) case is already covered by updating
+        # the child record directly, which includes all its foreign keys.
+
+        return
+
     @cached_property
     def root_query(self) -> sqla.FromClause:
         """Get the main table for the current selection."""
@@ -3725,11 +3853,7 @@ class RelSet(
         p = {
             col: rel
             for rel in self._rel_path[1:]
-            for col in (
-                [rel.map_by]
-                if rel.map_by is not None
-                else rel.order_by.keys() if rel.order_by is not None else []
-            )
+            for col in ([rel.map_by] if rel.map_by is not None else [])
         }
 
         if len(p) == 0:
@@ -3769,7 +3893,6 @@ class RelSet(
                 _parent_type=self._parent_rel.parent_type,
                 on=self._parent_rel.on,
                 map_by=self._parent_rel.map_by,
-                order_by=self._parent_rel.order_by,
             )
 
         tmpl = cast(RecSet[ParT, Any, RwT, BsT, ParT], self)

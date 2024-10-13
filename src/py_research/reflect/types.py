@@ -3,7 +3,7 @@
 from collections.abc import Iterable
 from functools import reduce
 from inspect import getmro
-from types import NoneType, UnionType
+from types import GenericAlias, NoneType, UnionType
 from typing import (
     Any,
     ForwardRef,
@@ -41,7 +41,9 @@ class GenericProtocol(Protocol[T]):
     __origin__: type[T]
 
 
-type SingleTypeDef[T] = GenericProtocol[T] | TypeAliasType | NewType | type[T]
+type SingleTypeDef[T] = GenericProtocol[T] | TypeAliasType | NewType | type[
+    T
+] | GenericAlias
 
 
 @runtime_checkable

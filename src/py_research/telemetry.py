@@ -5,14 +5,15 @@
 
 import logging
 import sys
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterable, Iterable, Mapping
 from functools import wraps
 from logging import StreamHandler
-from typing import IO, Literal, TypeVar, cast
+from typing import IO, Literal, TypeVar, cast, overload
 
 import structlog
 from stqdm import stqdm
 from tqdm import tqdm as base_tqdm
+from tqdm.asyncio import tqdm_asyncio as aiotqdm
 from tqdm.autonotebook import tqdm as atqdm
 
 
@@ -51,12 +52,76 @@ def _check_streamlit():
 T = TypeVar("T")
 
 
-@wraps(base_tqdm)
+@overload
 def tqdm(
     iterable: Iterable[T],
+    desc: str | None = ...,
+    total: float | None = ...,
+    leave: bool | None = ...,
+    file: IO[str] | None = ...,
+    ncols: int | None = ...,
+    mininterval: float = ...,
+    maxinterval: float = ...,
+    miniters: float | None = ...,
+    ascii: bool | str | None = ...,
+    disable: bool | None = ...,
+    unit: str = ...,
+    unit_scale: bool | float = ...,
+    dynamic_ncols: bool = False,
+    smoothing: float = ...,
+    bar_format: str | None = ...,
+    initial: float = 0,
+    position: int | None = ...,
+    postfix: Mapping[str, object] | str | None = ...,
+    unit_divisor: float = ...,
+    write_bytes: bool = ...,
+    lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
+    nrows: int | None = ...,
+    colour: str | None = ...,
+    delay: float | None = ...,
+    gui: bool = ...,
+    **other_kwargs,
+) -> Iterable[T]: ...
+
+
+@overload
+def tqdm(
+    iterable: AsyncIterable[T],
+    desc: str | None = ...,
+    total: float | None = ...,
+    leave: bool | None = ...,
+    file: IO[str] | None = ...,
+    ncols: int | None = ...,
+    mininterval: float = ...,
+    maxinterval: float = ...,
+    miniters: float | None = ...,
+    ascii: bool | str | None = ...,
+    disable: bool | None = ...,
+    unit: str = ...,
+    unit_scale: bool | float = ...,
+    dynamic_ncols: bool = False,
+    smoothing: float = ...,
+    bar_format: str | None = ...,
+    initial: float = 0,
+    position: int | None = ...,
+    postfix: Mapping[str, object] | str | None = ...,
+    unit_divisor: float = ...,
+    write_bytes: bool = ...,
+    lock_args: tuple[bool | None, float | None] | tuple[bool | None] | None = ...,
+    nrows: int | None = ...,
+    colour: str | None = ...,
+    delay: float | None = ...,
+    gui: bool = ...,
+    **other_kwargs,
+) -> AsyncIterable[T]: ...
+
+
+@wraps(base_tqdm)
+def tqdm(
+    iterable: Iterable[T] | AsyncIterable[T],
     desc: str | None = None,
     total: float | None = None,
-    leave: bool | None = True,
+    leave: bool | None = False,
     file: IO[str] | None = None,
     ncols: int | None = None,
     mininterval: float = 0.1,
@@ -80,7 +145,7 @@ def tqdm(
     delay: float | None = 0,
     gui: bool = False,
     **other_kwargs,
-) -> Iterable[T]:
+) -> Iterable[T] | AsyncIterable[T]:
     """Return a tqdm instace adapted to the current environment.
 
     (Terminal, Jupyter or Streamlit)
@@ -115,7 +180,7 @@ def tqdm(
         **other_kwargs,
     )
 
-    res_tqdm = stqdm(**kwargs) if _check_streamlit() else atqdm(**kwargs)  # type: ignore  # noqa: E501
+    res_tqdm = aiotqdm(**kwargs) if isinstance(iterable, AsyncIterable) else stqdm(**kwargs) if _check_streamlit() else atqdm(**kwargs)  # type: ignore  # noqa: E501
     TqdmHandler.tqdm = res_tqdm
     return cast(Iterable[T], res_tqdm)
 

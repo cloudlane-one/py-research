@@ -2,7 +2,7 @@
 
 from typing import Any, Literal
 
-type DataConflictPolicy = Literal["raise", "ignore", "override"]
+type DataConflictPolicy = Literal["raise", "ignore", "override", "collect"]
 """Policy for handling data conflicts."""
 
 type DataConflicts = dict[tuple[str, str, str], tuple[Any, Any]]
