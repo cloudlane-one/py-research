@@ -36,12 +36,10 @@
       "members": [
         {
           "name": "John",
-          "age": 20,
           "role": "baker"
         },
         {
           "name": "John",
-          "age": 20,
           "role": "manager"
         }
       ]
@@ -73,12 +71,10 @@
       "members": [
         {
           "name": "John",
-          "age": 20,
           "role": "cleaner"
         },
         {
           "name": "Jane",
-          "age": 30,
           "role": "manager"
         }
       ]
@@ -103,17 +99,14 @@
       "members": [
         {
           "name": "John",
-          "age": 20,
           "role": "mechanic"
         },
         {
           "name": "Jane",
-          "age": 30,
           "role": "manager"
         },
         {
           "name": "Jack",
-          "age": 40,
           "role": "manager"
         }
       ]

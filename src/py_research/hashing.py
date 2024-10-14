@@ -67,7 +67,7 @@ def _hashing_context(func: Callable[Concatenate[set[int], P], T]) -> Callable[P,
 
 
 @_hashing_context
-def gen_int_hash(_ctx: set[int], obj: Any) -> int:
+def gen_int_hash(_ctx: set[int], obj: Any) -> int:  # noqa: C901
     """Generate stable hash for obj (must be known, hashable or composed of such)."""
     if id(obj) in _ctx:
         return 0
@@ -75,8 +75,10 @@ def gen_int_hash(_ctx: set[int], obj: Any) -> int:
     match obj:
         case None:
             return 0
-        case type() | ModuleType() | TypeAliasType():
-            return gen_int_hash(PyObjectRef.reference(obj).to_url())
+        case ModuleType():
+            return gen_int_hash(obj.__name__)
+        case type() | TypeAliasType():
+            return gen_int_hash((obj.__module__, obj.__name__))
         case FunctionType() if hasattr(obj, "__name__"):
             return gen_int_hash(PyObjectRef.reference(obj).to_url())
         case FunctionType():

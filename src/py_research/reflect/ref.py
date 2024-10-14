@@ -85,6 +85,7 @@ class PyObjectRef(Generic[T]):
         version: str | None = None,
         pkg_version_strategy: VersionStrategy = "major",
         obj_version_strategy: VersionStrategy = "major",
+        fetch_obj_inv: bool = True,
     ) -> "PyObjectRef[T2]":
         """Create a reference to given object."""
         object_version = None
@@ -158,7 +159,7 @@ class PyObjectRef(Generic[T]):
             if repo is not None:
                 url = repo.remote().url
 
-        if not isinstance(obj, ModuleType):
+        if not isinstance(obj, ModuleType) and fetch_obj_inv:
             obj_inv = get_py_inventory(docs_url) if docs_url is not None else None
             if obj_inv is not None:
                 obj_inv_key = f"{module.__name__}.{qualname}"

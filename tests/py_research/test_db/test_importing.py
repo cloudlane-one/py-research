@@ -126,7 +126,7 @@ def data_source() -> DataSource:
                             "task_assignees": RelMap(
                                 rel=Task.assignees,
                                 push=User.name,
-                                match=User.name,
+                                match_by=User.name,
                             ),
                             "task_status": Task.status,
                         },

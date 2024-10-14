@@ -1214,7 +1214,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         if cls._table_name is not None:
             return cls._table_name
 
-        fqn_parts = PyObjectRef.reference(cls).fqn.split(".")
+        fqn_parts = (cls.__module__ + "." + cls.__name__).split(".")
 
         name = fqn_parts[-1]
         for part in reversed(fqn_parts[:-1]):
@@ -1687,6 +1687,7 @@ class RecSet(
     def _base_table(
         self,
         mode: Literal["read", "replace", "upsert"] = "read",
+        without_auto_fks: bool = False,
     ) -> sqla.Table:
         """Return a SQLAlchemy table object for this schema."""
         orig_table: sqla.Table | None = None
@@ -1716,34 +1717,48 @@ class RecSet(
 
         table_name = self.record_type._get_table_name(self.db._subs)
 
-        if table_name in self.db._metadata.tables:
+        if not without_auto_fks and table_name in self.db._metadata.tables:
             # Return the table object from metadata if it already exists.
             # This is necessary to avoid circular dependencies.
             return self.db._metadata.tables[table_name]
 
-        registry = orm.registry(
-            metadata=self.db._metadata, type_annotation_map=self.record_type._type_map
-        )
         sub = self.db._subs.get(self.record_type)
 
         cols = self._sql_cols
+        if without_auto_fks:
+            cols = {
+                name: col
+                for name, col in cols.items()
+                if name in self.record_type._defined_rel_cols
+                and name not in self.record_type._defined_cols
+            }
 
         # Create a partial SQLAlchemy table object from the class definition
         # without foreign keys to avoid circular dependencies.
         # This adds the table to the metadata.
         sqla.Table(
             table_name,
-            registry.metadata,
+            self.db._metadata,
             *cols.values(),
             schema=(sub.schema if sub is not None else None),
         )
 
         fks = self._foreign_keys
+        if without_auto_fks:
+            fks = [
+                fk
+                for fk in fks
+                if not any(
+                    c.name in self.record_type._defined_rel_cols
+                    and c.name not in self.record_type._defined_cols
+                    for c in fk.columns
+                )
+            ]
 
         # Re-create the table object with foreign keys and return it.
         table = sqla.Table(
             table_name,
-            registry.metadata,
+            self.db._metadata,
             *cols.values(),
             *fks,
             schema=(sub.schema if sub is not None else None),
@@ -1759,6 +1774,36 @@ class RecSet(
                         orig_table.columns.keys(), orig_table.select()
                     )
                 )
+
+        return table
+
+    def _gen_upload_table(
+        self,
+    ) -> sqla.Table:
+        """Return a SQLAlchemy table object for this schema."""
+        metadata = sqla.MetaData()
+        registry = orm.registry(
+            metadata=self.db._metadata, type_annotation_map=self.record_type._type_map
+        )
+
+        cols = {
+            name: sqla.Column(
+                col.name,
+                registry._resolve_type(col.value_type),  # type: ignore
+                primary_key=col.primary_key,
+                autoincrement=False,
+                index=col.index,
+                nullable=has_type(None, col.value_type),
+            )
+            for name, col in self.record_type._cols.items()
+        }
+
+        table_name = self.record_type._default_table_name() + "_" + token_hex(5)
+        table = sqla.Table(
+            table_name,
+            metadata,
+            *cols.values(),
+        )
 
         return table
 
@@ -1829,10 +1874,17 @@ class RecSet(
         recs: list[type[Record]] = [self.record_type, *self.record_type._record_bases]
         with open(path, "rb") as file:
             for rec in recs:
+                table = self.db[rec]._base_table("replace")
+
+                with self.db.engine.connect() as conn:
+                    conn.execute(table.delete())
+
                 pl.read_excel(
                     file, sheet_name=rec._get_table_name(self.db._subs)
                 ).write_database(
-                    str(self.db[rec]._base_table("replace")), str(self.db.engine.url)
+                    str(table),
+                    str(self.db.engine.url),
+                    if_table_exists="append",
                 )
 
     def _save_to_excel(self) -> None:
@@ -2382,26 +2434,45 @@ class RecSet(
 
     @overload
     def get(
-        self: RecSet[RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2]],
+        self: RecSet[RecT2 | None, SingleIdx, Any, DynBackendID, Record[KeyT2] | None],
+        key: None = ...,
+        default: None = ...,
+    ) -> RecT2 | None: ...
+
+    @overload
+    def get(
+        self: RecSet[RecT2 | None, SingleIdx, Any, DynBackendID, Record[KeyT2] | None],
+        *,
+        key: None = ...,
+        default: VarT2,
+    ) -> RecT2 | VarT2: ...
+
+    @overload
+    def get(
+        self: RecSet[
+            RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2] | None
+        ],
         key: KeyT2 | KeyT3,
         default: VarT2,
     ) -> RecT2 | VarT2: ...
 
     @overload
     def get(
-        self: RecSet[RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2]],
+        self: RecSet[
+            RecT2 | None, KeyT3 | Index, Any, DynBackendID, Record[KeyT2] | None
+        ],
         key: KeyT2 | KeyT3,
         default: None = ...,
     ) -> RecT2 | None: ...
 
     def get(
-        self: RecSet[Record | None, KeyT3 | Index, Any, DynBackendID, Record],
-        key: Hashable | KeyT3,
+        self: RecSet[Record | None, KeyT3 | Index, Any, DynBackendID, Record | None],
+        key: Hashable | KeyT3 | None = None,
         default: VarT2 | None = None,
     ) -> Record | VarT2 | None:
         """Get a record by key."""
         try:
-            return list(iter(self[key]))[0]
+            return list(iter(self[key] if key is not None else self))[0]
         except KeyError | IndexError:
             return default
 
@@ -3066,12 +3137,7 @@ class RecSet(
             pks = pks or list(df.index.names)
         pks = pks or []
 
-        rec = type(
-            self.record_type.__name__ + "_" + token_hex(5),
-            (self.record_type,),
-            {"_derivate": True},
-        )
-        value_table = self.db[rec]._base_table()
+        value_table = self._gen_upload_table()
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DuckDBEngineWarning)
@@ -3084,7 +3150,7 @@ class RecSet(
                 )
             else:
                 df.write_database(
-                    str(value_table), self.db.engine, if_table_exists="replace"
+                    str(value_table), self.db.engine, if_table_exists="append"
                 )
 
         return value_table
@@ -3109,7 +3175,7 @@ class RecSet(
         ]
 
         # Transform attribute data into DataFrame.
-        return pl.DataFrame(col_data).sort(by=idx_names)
+        return pl.DataFrame(col_data)
 
     def _mutate(
         self: RecSet[RecT2 | None, Any, RW, DynBackendID, Any, Any],
@@ -3164,10 +3230,10 @@ class RecSet(
                     if not isinstance(rec, Record)
                 }
                 if len(record_ids) > 0:
-                    assert isinstance(
-                        self, RelSet
-                    ), "Can only update relation sets with record ids."
-                    self._mutate_from_rec_ids(record_ids, mode)
+                    if isinstance(self, RelSet):
+                        self._mutate_from_rec_ids(record_ids, mode)
+                    elif mode == "insert":
+                        raise TypeError("Cannot insert record ids into a non-relset.")
             case Iterable():
                 self._mutate_from_records(
                     {
@@ -3203,7 +3269,9 @@ class RecSet(
         db_grouped = {
             db: dict(recs)
             for db, recs in groupby(
-                sorted(records.items(), key=lambda x: x[1]._db.b_id),
+                sorted(
+                    records.items(), key=lambda x: x[1]._connected and x[1]._db.b_id
+                ),
                 lambda x: None if not x[1]._connected else x[1]._db,
             )
         }
@@ -3313,8 +3381,10 @@ class RecSet(
                     ):
                         # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
                         statement = postgresql.Insert(table).from_select(
-                            [a.name for a in cols],
-                            value_table,
+                            [col.name for col in cols],
+                            sqla.select(
+                                *(value_table.c[col.name] for col in cols)
+                            ).select_from(value_table),
                         )
                         statement = statement.on_conflict_do_update(
                             index_elements=[
@@ -3335,7 +3405,9 @@ class RecSet(
                             mysql.Insert(table)
                             .from_select(
                                 [a.name for a in cols],
-                                value_table,
+                                sqla.select(
+                                    *(value_table.c[col.name] for col in cols)
+                                ).select_from(value_table),
                             )
                             .prefix_with("INSERT INTO")
                         )
@@ -4510,7 +4582,7 @@ class DB(RecSet[None, BaseIdx, RwT, BkT, Record, None], Backend[BkT]):
         )
 
         rec = dynamic_record_type(name, props=props_from_data(data, fks))
-        ds = RecSet[DynRecord, BaseIdx, RW, BsT, DynRecord](res_type=rec, db=self.db)
+        ds = RecSet[DynRecord, BaseIdx, RW, BsT, DynRecord](res_type=rec, db=self)
 
         ds &= data
 

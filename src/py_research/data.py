@@ -45,9 +45,12 @@ def copy_and_override(
         _init = get_origin(_init)
         assert _init is not None
 
+    src_fields = set(f.name for f in fields(obj))
     target_fields = set(fields(cast(type, _init)))
     obj_fields = {
-        f: getattr(obj, f.name) for f in fields(obj) if f.init and f in target_fields
+        f: getattr(obj, f.name)
+        for f in target_fields
+        if f.init and f.name in src_fields
     }
 
     obj_args = [
