@@ -115,7 +115,7 @@ BackT = TypeVar(
     "BackT",
     bound="StatBackendID",
     covariant=True,
-    default="LocalStat",
+    default="Static",
 )
 BackT2 = TypeVar(
     "BackT2",
@@ -202,10 +202,10 @@ class LocalBackend(StrEnum):
     dynamic = "local-dyn"
 
 
-type LocalDyn = Literal[LocalBackend.dynamic]
-type LocalStat = Literal[LocalBackend.static]
-type DynBackendID = LiteralString | LocalDyn
-type StatBackendID = DynBackendID | LocalStat
+type Local = Literal[LocalBackend.dynamic]
+type Static = Literal[LocalBackend.static]
+type DynBackendID = LiteralString | Local
+type StatBackendID = DynBackendID | Static
 
 
 type RecInput[
@@ -616,14 +616,14 @@ type DirectLink[Rec: Record] = (
 )
 
 type BackLink[Rec: Record] = (
-    RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Any, Rec] | type[Rec]
+    RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec] | type[Rec]
 )
 
 type BiLink[Rec: Record, Rec2: Record] = (
-    RelSet[Rec, Any, Any, Any, LocalStat, Any, Any, Any, Rec2]
+    RelSet[Rec, Any, Any, Any, Static, Any, Any, Any, Rec2]
     | tuple[
-        RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Any, Rec2],
-        RelSet[Rec, Any, Any, Any, LocalStat, Any, Any, Any, Rec2],
+        RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec2],
+        RelSet[Rec, Any, Any, Any, Static, Any, Any, Any, Rec2],
     ]
     | type[Rec2]
 )
@@ -940,7 +940,7 @@ def prop(
     link_on: None = ...,
     link_from: BackLink[RecT2] | None = ...,
     link_via: BiLink[RecT2, RecT3] | None = ...,
-    map_by: Col[ValT4, Any, LocalStat, RecT2 | RecT3],
+    map_by: Col[ValT4, Any, Static, RecT2 | RecT3],
     getter: None = ...,
     setter: None = ...,
     sql_getter: None = ...,
@@ -1278,18 +1278,18 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
     @classmethod
     def _backrels_to_rels(
         cls, target: type[RecT2]
-    ) -> set[RelSet[Self, Any, Singular, Any, LocalStat, Self, Any, Any, RecT2]]:
+    ) -> set[RelSet[Self, Any, Singular, Any, Static, Self, Any, Any, RecT2]]:
         """Get all direct relations from a target record type to this type."""
-        rels: set[
-            RelSet[Self, Any, Singular, Any, LocalStat, Self, Any, Any, RecT2]
-        ] = set()
+        rels: set[RelSet[Self, Any, Singular, Any, Static, Self, Any, Any, RecT2]] = (
+            set()
+        )
         for rel in cls._rels.values():
             if issubclass(target, rel._fk_record_type):
                 rel = cast(
-                    RelSet[Self, Any, Any, Any, LocalStat, Self, Any, Any, RecT2], rel
+                    RelSet[Self, Any, Any, Any, Static, Self, Any, Any, RecT2], rel
                 )
                 rels.add(
-                    RelSet[Self, Any, Singular, Any, LocalStat, Self, Any, Any, RecT2](
+                    RelSet[Self, Any, Singular, Any, Static, Self, Any, Any, RecT2](
                         on=rel.on,
                         _type=PropType(
                             RelSet[cls, Any, Any, Any, Any, cls, Any, Any, target]
@@ -1301,11 +1301,11 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return rels
 
     @classmethod
-    def _rel(cls, other: type[RecT2]) -> RelSet[RecT2, Any, Full, Any, LocalStat, Self]:
+    def _rel(cls, other: type[RecT2]) -> RelSet[RecT2, Any, Full, Any, Static, Self]:
         """Dynamically define a relation to another record type."""
-        return RelSet[RecT2, Any, Any, Any, LocalStat, Self](
+        return RelSet[RecT2, Any, Any, Any, Static, Self](
             on=other,
-            _type=PropType(RelSet[other, Any, Full, Any, LocalStat, cls]),
+            _type=PropType(RelSet[other, Any, Full, Any, Static, cls]),
             _parent_type=cls,
         )
 
@@ -1576,28 +1576,28 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[RecT2, Any, IdxT2, Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, LocalStat, RecT3],
+        key: Col[ValT3, WriteT3, Static, RecT3],
     ) -> Col[ValT3, WriteT3, BackT, RecT2, IdxT2]: ...
 
     # 3. Top-level attribute selection, base parent
     @overload
     def __getitem__(
         self: RecSet[RecT2, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, LocalStat, RecT3],
+        key: Col[ValT3, WriteT3, Static, RecT3],
     ) -> Col[ValT3, WriteT3, BackT, RecT2, Hashable | BaseIdx]: ...
 
     # 4. Nested attribute selection, rel parent
     @overload
     def __getitem__(
         self: RelSet[Any, Any, IdxT2, Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, LocalStat, Record],
+        key: Col[ValT3, WriteT3, Static, Record],
     ) -> Col[ValT3, WriteT3, BackT, Record, IdxT2]: ...
 
     # 5. Nested attribute selection, base parent
     @overload
     def __getitem__(
         self: RecSet[Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, LocalStat, Record],
+        key: Col[ValT3, WriteT3, Static, Record],
     ) -> Col[ValT3, WriteT3, BackT, Record, Hashable | BaseIdx]: ...
 
     # Overloads: relation selection:
@@ -1611,7 +1611,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1622,7 +1622,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1634,14 +1634,14 @@ class RecSet(
     def __getitem__(
         self: RelSet[RecT2, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
         key: RelSet[
-            RecT3, LnT3, tuple[*KeyTt], WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
+            RecT3, LnT3, tuple[*KeyTt], WriteT3, Static, RecT3, SelT3, FiltT3, RecT2
         ],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1652,15 +1652,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[RecT2, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1676,7 +1674,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1687,7 +1685,7 @@ class RecSet(
         LnT3,
         tuple[*KeyTt, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1698,26 +1696,20 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[RecT2, Any, tuple, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
-        ],
-    ) -> RelSet[
-        RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
-    ]: ...
+        key: RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2]: ...
 
     # 11. Top-level relation selection, rel parent, left tuple, right single key
     @overload
     def __getitem__(
         self: RelSet[RecT2, Any, tuple[*KeyTt], Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[*KeyTt, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1733,7 +1725,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1744,7 +1736,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1756,14 +1748,14 @@ class RecSet(
     def __getitem__(
         self: RelSet[RecT2, Any, KeyT2, Any, Any, Any, Record | None, Any],
         key: RelSet[
-            RecT3, LnT3, tuple[*KeyTt], WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
+            RecT3, LnT3, tuple[*KeyTt], WriteT3, Static, RecT3, SelT3, FiltT3, RecT2
         ],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1774,15 +1766,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[RecT2, Any, KeyT2, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT2
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1798,7 +1788,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1809,7 +1799,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1825,7 +1815,7 @@ class RecSet(
             LnT3,
             tuple[*KeyTt],
             WriteT3,
-            LocalStat,
+            Static,
             RecT3,
             SelT3,
             FiltT3,
@@ -1836,7 +1826,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, Any],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1847,15 +1837,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[Any, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
     ) -> RelSet[
         RecT3,
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1871,7 +1859,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1882,7 +1870,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[Any, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1893,26 +1881,20 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[Any, Any, tuple, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
-    ) -> RelSet[
-        RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-    ]: ...
+        key: RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record]: ...
 
     # 20. Nested relation selection, rel parent, left tuple, right single key
     @overload
     def __getitem__(
         self: RelSet[Any, Any, tuple, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
     ) -> RelSet[
         RecT3,
         LnT3,
         IdxStartEnd[Any, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1928,7 +1910,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -1939,7 +1921,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1950,15 +1932,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[Any, Any, KeyT2, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
+        key: RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
     ) -> RelSet[
         RecT3,
         LnT3,
         IdxStartEnd[KeyT2, Any],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1969,15 +1949,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RelSet[Any, Any, KeyT2, Any, Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
     ) -> RelSet[
         RecT3,
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -1993,7 +1971,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -2004,7 +1982,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2016,14 +1994,14 @@ class RecSet(
     def __getitem__(
         self: RecSet[Record[KeyT2], Any, Any, Record | None, Any],
         key: RelSet[
-            RecT3, LnT3, tuple[*KeyTt], WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT
+            RecT3, LnT3, tuple[*KeyTt], WriteT3, Static, RecT3, SelT3, FiltT3, RecT
         ],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2034,13 +2012,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RecSet[Record[KeyT2], Any, Any, Record | None, Any],
-        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, RecT],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, RecT],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2056,7 +2034,7 @@ class RecSet(
             LnT3,
             BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             Record[KeyT3],
             SelT3,
             FiltT3,
@@ -2067,7 +2045,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2083,7 +2061,7 @@ class RecSet(
             LnT3,
             tuple[*KeyTt],
             WriteT3,
-            LocalStat,
+            Static,
             RecT3,
             SelT3,
             FiltT3,
@@ -2094,7 +2072,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2105,15 +2083,13 @@ class RecSet(
     @overload
     def __getitem__(
         self: RecSet[Record[KeyT2], Any, Any, Record | None, Any],
-        key: RelSet[
-            RecT3, LnT3, KeyT3, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-        ],
+        key: RelSet[RecT3, LnT3, KeyT3, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
     ) -> RelSet[
         RecT3,
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        LocalStat,
+        Static,
         RecT3,
         SelT3,
         FiltT3,
@@ -2129,15 +2105,13 @@ class RecSet(
             LnT3,
             Hashable | BaseIdx,
             WriteT3,
-            LocalStat,
+            Static,
             RecT3,
             SelT3,
             FiltT3,
             Record,
         ],
-    ) -> RelSet[
-        RecT3, LnT3, tuple, WriteT3, LocalStat, RecT3, SelT3, FiltT3, Record
-    ]: ...
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record]: ...
 
     # Index filtering and selection:
 
@@ -2509,13 +2483,37 @@ class RecSet(
 
         return list(df.iter_rows())
 
+    @overload
     def __imatmul__(
-        self: RecSet[Record[KeyT2], RW, Any, Any, Any],
+        self: RelSet[Record[KeyT2], Any, KeyT3, RW, Any, Any, Record | None, Any],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT3, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    @overload
+    def __imatmul__(
+        self: RecSet[Record[KeyT2], RW, Any, Record | None, Any],
         other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    def __imatmul__(
+        self: RecSet[Any, RW, Any, Record | None, Any],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, Any, Any],
     ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]:
         """Aligned assignment."""
         self._mutate(other, mode="update")
         return cast(RecSet[RecT, WriteT, BackT, SelT, FiltT], self)
+
+    @overload
+    def __iand__(
+        self: RelSet[Record[KeyT2], Any, KeyT3, RW, Any, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT3, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    @overload
+    def __iand__(
+        self: RecSet[Record[KeyT2], RW, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
 
     def __iand__(
         self: RecSet[Record[KeyT2], RW, Any, Any, Full],
@@ -2525,6 +2523,18 @@ class RecSet(
         self._mutate(other, mode="replace")
         return cast(RecSet[RecT, WriteT, BackT, SelT, FiltT], self)
 
+    @overload
+    def __ior__(
+        self: RelSet[Record[KeyT2], Any, KeyT3, RW, Any, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT3, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    @overload
+    def __ior__(
+        self: RecSet[Record[KeyT2], RW, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
     def __ior__(
         self: RecSet[Record[KeyT2], RW, Any, Any, Full],
         other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
@@ -2533,6 +2543,18 @@ class RecSet(
         self._mutate(other, mode="upsert")
         return cast(RecSet[RecT, WriteT, BackT, SelT, FiltT], self)
 
+    @overload
+    def __iadd__(
+        self: RelSet[Record[KeyT2], Any, KeyT3, RW, Any, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT3, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    @overload
+    def __iadd__(
+        self: RecSet[Record[KeyT2], RW, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
     def __iadd__(
         self: RecSet[Record[KeyT2], RW, Any, Any, Full],
         other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
@@ -2540,6 +2562,18 @@ class RecSet(
         """Inserting assignment."""
         self._mutate(other, mode="insert")
         return cast(RecSet[RecT, WriteT, BackT, SelT, FiltT], self)
+
+    @overload
+    def __isub__(
+        self: RelSet[Record[KeyT2], Any, KeyT3, RW, Any, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT3, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
+
+    @overload
+    def __isub__(
+        self: RecSet[Record[KeyT2], RW, Any, Record | None, Full],
+        other: RecSet[RecT, Any, Any, Any, Any] | RecInput[RecT, KeyT2, KeyT2],
+    ) -> RecSet[RecT, WriteT, BackT, SelT, FiltT]: ...
 
     def __isub__(
         self: RecSet[Record[KeyT2], RW, Any, Any, Full],
@@ -2868,8 +2902,8 @@ class RecSet(
     def _get_subdag(
         self,
         backlink_records: set[type[Record]] | None = None,
-        _traversed: set[RelSet[Record, Any, Any, Any, LocalStat]] | None = None,
-    ) -> set[RelSet[Record, Any, Any, Any, LocalStat]]:
+        _traversed: set[RelSet[Record, Any, Any, Any, Static]] | None = None,
+    ) -> set[RelSet[Record, Any, Any, Any, Static]]:
         """Find all paths to the target record type."""
         backlink_records = backlink_records or set()
         _traversed = _traversed or set()
@@ -3680,8 +3714,8 @@ class RecSet(
 
 @dataclass(kw_only=True, eq=False)
 class Col(  # type: ignore[reportIncompatibleVariableOverride]
-    Attr[ValTi, WriteT, ParT],
     sqla.ColumnClause[ValTi],
+    Attr[ValTi, WriteT, ParT],
     Generic[ValTi, WriteT, BackT, ParT, IdxT],
 ):
     """Reference an attribute of a record."""
@@ -3721,7 +3755,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
     @overload
     def __get__(
         self, instance: None, owner: type[RecT2]
-    ) -> Col[ValTi, WriteT, LocalStat, RecT2, IdxT]: ...
+    ) -> Col[ValTi, WriteT, Static, RecT2, IdxT]: ...
 
     @overload
     def __get__(
@@ -3849,7 +3883,7 @@ class RelSet(
     primary_key: bool = False
 
     on: DirectLink[Record] | BackLink[Record] | BiLink[Record, Any] | None = None
-    map_by: Col[Any, Any, LocalStat] | None = None
+    map_by: Col[Any, Any, Static] | None = None
 
     @cached_property
     def is_direct_rel(self) -> bool:
@@ -3908,55 +3942,55 @@ class RelSet(
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, RecT2, Any, Full],
+        self: RelSet[Any, Any, Any, Any, Static, RecT2, Any, Full],
         instance: None,
         owner: type[ParT2],
-    ) -> RelSet[RecT2, LnT, IdxT, WriteT, LocalStat, RecT2, SelT, Full, ParT]: ...
+    ) -> RelSet[RecT2, LnT, IdxT, WriteT, Static, RecT2, SelT, Full, ParT2]: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, RecT2, Any, Singular],
+        self: RelSet[Any, Any, Any, Any, Static, RecT2, Any, Singular],
         instance: None,
         owner: type[ParT2],
-    ) -> RelSet[RecT2, LnT, IdxT, WriteT, LocalStat, RecT2, SelT, Singular, ParT]: ...
+    ) -> RelSet[RecT2, LnT, IdxT, WriteT, Static, RecT2, SelT, Singular, ParT2]: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, RecT2 | None, Any, Singular],
+        self: RelSet[Any, Any, Any, Any, Static, RecT2 | None, Any, Singular],
         instance: None,
         owner: type[ParT2],
-    ) -> RelSet[RecT2, LnT, IdxT, WriteT, LocalStat, RecT2, SelT, Nullable, ParT]: ...
+    ) -> RelSet[RecT2, LnT, IdxT, WriteT, Static, RecT2, SelT, Nullable, ParT2]: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Singular],
+        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Singular],
         instance: ParT2,
         owner: type[ParT2],
     ) -> RecT: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Nullable],
+        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Nullable],
         instance: ParT2,
         owner: type[ParT2],
     ) -> RecT | None: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Any],
+        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Any],
         instance: ParT2,
         owner: type[ParT2],
-    ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, ParT]: ...
+    ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, ParT2]: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any],
+        self: RelSet[Any, Any, Any, Any, Static, Any, Any],
         instance: object | None,
         owner: type,
     ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, SelT, FiltT, ParT]: ...
 
     def __get__(  # noqa: D105
-        self: RelSet[Any, Any, Any, Any, LocalStat, Any, Any, Any],
+        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Any],
         instance: object | None,
         owner: type | type[RecT2],
     ) -> RelSet[Any, Any, Any, Any, Any, Any, Any, Any] | Record | None:
@@ -3966,7 +4000,7 @@ class RelSet(
         if has_type(instance, Record[Hashable]):
             if self._direct_rel is True:
                 single_self = cast(
-                    RelSet[Record, Any, Singular, Any, LocalStat, Any, Any], self
+                    RelSet[Record, Any, Singular, Any, Static, Any, Any], self
                 )
                 return instance._db[type(instance)][single_self].get(instance._index)
 
@@ -3978,14 +4012,14 @@ class RelSet(
         elif issubclass(owner, Record):
             return copy_and_override(
                 self,
-                RelSet[RecT, LnT, IdxT, WriteT, LocalStat, RecT, SelT, Any, RecT2],
+                RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, Any, RecT2],
                 _parent_type=cast(type[RecT2], owner),
             )
 
         return self
 
     def __set__(  # noqa: D105
-        self: RelSet[Record[KeyT2], Any, KeyT3 | Any, RW, LocalStat, ParT2, RecT2],
+        self: RelSet[Record[KeyT2], Any, KeyT3 | Any, RW, Static, ParT2, RecT2],
         instance: ParT2,
         value: (
             RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2]
@@ -4353,10 +4387,10 @@ class RelSet(
 
     def _to_static(
         self,
-    ) -> RelSet[RecT, LnT, IdxT, WriteT, LocalStat, RecT, SelT, FiltT, ParT]:
+    ) -> RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, FiltT, ParT]:
         """Return backend-less version of this RelSet."""
         tmpl = cast(
-            RelSet[RecT, LnT, IdxT, WriteT, LocalStat, RecT, SelT, FiltT, ParT],
+            RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, FiltT, ParT],
             self,
         )
         return copy_and_override(
@@ -4887,7 +4921,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
 
 
 class Rel(
-    RelSet[Record, None, BaseIdx, WriteT, LocalStat, RelT, None, Singular],
+    RelSet[Record, None, BaseIdx, WriteT, Static, RelT, None, Singular],
     Generic[RelT, WriteT],
 ):
     """Singular relation."""

@@ -26,7 +26,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DB, Col, LocalStat, Record, RelSet, State
+from .base import DB, Col, Record, RelSet, State, Static
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -146,8 +146,8 @@ type NodeSelector = str | int | TreePath | type[All]
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
 type PushMap[Rec: Record] = _PushMapping[Rec] | Col[
-    Any, Any, Any, LocalStat, Rec
-] | RelMap | Iterable[Col[Any, Any, Any, LocalStat, Rec] | RelMap]
+    Any, Any, Static, Rec, Any
+] | RelMap | Iterable[Col[Any, Any, Static, Rec, Any] | RelMap]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -187,18 +187,20 @@ class DataSelect:
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    Col[Any, Any, Any, LocalStat, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
+    Col[Any, Any, Static, Rec, Any]
+    | RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec],
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
-    Col[Any, Any, Any, LocalStat, Rec] | RelSet[Any, Any, Any, Any, Any, Rec],
+    Col[Any, Any, Static, Rec, Any]
+    | RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec],
     DataSelect,
 ]
 
 type RecMatchBy[Rec: Record] = (
     Literal["index", "all"]
-    | Col[Any, Any, Any, LocalStat, Rec]
-    | list[Col[Any, Any, Any, LocalStat, Rec]]
+    | Col[Any, Any, Static, Rec, Any]
+    | list[Col[Any, Any, Static, Rec, Any]]
 )
 
 
@@ -316,7 +318,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec, Any, Any, Any, LocalStat, Rec2, Rec]
+    rel: RelSet[Rec, Any, Any, Any, Static, Rec2, Rec]
     """Relation to use for mapping."""
 
     index: DataSelect | tuple[DataSelect, ...] | None = None
@@ -510,13 +512,13 @@ def _gen_match_expr(
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
 ) -> RecMatchExpr:
-    if match_by == "index":
+    if isinstance(match_by, str) and match_by == "index":
         assert rec_idx is not None
         return [rec_idx]
     else:
         match_cols = (
             list(rec_type._cols.values())
-            if match_by == "all"
+            if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Col) else match_by
         )
         return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))

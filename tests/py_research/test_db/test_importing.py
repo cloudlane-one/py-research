@@ -37,9 +37,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: RelSet[Project, SearchResult, int] = prop(
-        order_by={SearchResult.score: -1},
-    )
+    results: RelSet[Project, SearchResult]
 
 
 Assignment = Link["User", "Task"]
@@ -108,7 +106,7 @@ def nested_db_dict() -> dict:
 def data_source() -> DataSource:
     """Return root table mapping for import testing."""
     return DataSource(
-        rec=Search,
+        target=Search,
         push={
             "resultCount": Search.result_count,
             "search": Search.term,
