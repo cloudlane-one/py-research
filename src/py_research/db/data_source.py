@@ -669,8 +669,8 @@ async def _load_rels(
     rest_tree_data: RestTreeData = {}
 
     for rel, target_map in rels.items():
-        if (direction == "out" and rel.direct_rel is True) or (
-            direction == "in" and rel.direct_rel is not True
+        if (direction == "out" and rel._direct_rel is True) or (
+            direction == "in" and rel._direct_rel is not True
         ):
             for (parent_idx, path_idx), dat in tree_data.items():
                 sub_data = target_map.select(dat, path_idx)
