@@ -27,12 +27,12 @@ from py_research.hashing import gen_str_hash
 from py_research.types import DataclassInstance
 
 Params = ParamSpec("Params")
-DC = TypeVar("DC", bound="DataclassInstance")
+DC = TypeVar("DC", bound=DataclassInstance)
 
 
 def copy_and_override(
-    obj: DC,
-    _init: Callable[Params, DC] | None = None,
+    _init: Callable[Params, DC],
+    _obj: DataclassInstance,
     *args: Params.args,
     **kwargs: Params.kwargs,
 ) -> DC:
@@ -42,13 +42,14 @@ def copy_and_override(
         Does not work for kw_only dataclasses and InitVars (yet).
     """
     if not isinstance(_init, type):
-        _init = get_origin(_init)
-        assert _init is not None
+        orig_init = get_origin(_init)
+        assert orig_init is not None
+        _init = orig_init
 
-    src_fields = set(f.name for f in fields(obj))
+    src_fields = set(f.name for f in fields(_obj))
     target_fields = set(fields(cast(type, _init)))
     obj_fields = {
-        f: getattr(obj, f.name)
+        f: getattr(_obj, f.name)
         for f in target_fields
         if f.init and f.name in src_fields
     }
@@ -69,7 +70,8 @@ def copy_and_override(
         if v2 is not MISSING
     ]
     new_kwargs = {**obj_kwargs, **kwargs}
-    constr_func = _init or type(obj)
+
+    constr_func = _init or type(_obj)
     return constr_func(*new_args, **new_kwargs)  # type: ignore
 
 

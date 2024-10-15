@@ -13,9 +13,8 @@ from collections.abc import (
     Mapping,
     Sequence,
 )
-from dataclasses import Field, dataclass, field
+from dataclasses import MISSING, Field, dataclass, field
 from datetime import date, datetime, time
-from enum import Enum, auto
 from functools import cached_property, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
@@ -36,6 +35,7 @@ from typing import (
     TypeVarTuple,
     cast,
     dataclass_transform,
+    final,
     get_args,
     get_origin,
     overload,
@@ -155,30 +155,43 @@ type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], K
 type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec] | None
 
 
-class State(Enum):
-    """Demark load status."""
+@final
+class Undef:
+    """Demark undefined status."""
 
-    undef = auto()
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
 
+@final
+class Keep:
+    """Demark unchanged status."""
+
+    __hash__: ClassVar[None]  # type: ignore[assignment]
+
+
+@final
 class BaseIdx:
     """Singleton to mark dataset as having the record type's base index."""
 
     __hash__: ClassVar[None]  # type: ignore[assignment]
 
 
+@final
 class Full:
     """Singleton to mark dataset as having full index."""
 
 
+@final
 class Filtered:
     """Singleton to mark dataset index as filtered."""
 
 
+@final
 class Singular:
     """Singleton to mark dataset index as a single value."""
 
 
+@final
 class Nullable:
     """Singleton to mark dataset index as a single or no value."""
 
@@ -187,11 +200,13 @@ class R:
     """Base class for writability flags."""
 
 
+@final
 class RO(R):
     """Read-only flag."""
 
 
-class RW(RO):
+@final
+class RW(R):
     """Read-write flag."""
 
 
@@ -505,7 +520,7 @@ class Prop[V, Rw: R, Rec: Record](ABC):
     _parent_type: type[Rec] | None = None
 
     alias: str | None = None
-    default: V | State = State.undef
+    default: V | type[Undef] = Undef
     default_factory: Callable[[], V] | None = None
     init: bool = True
 
@@ -567,16 +582,16 @@ class Attr[V, Rw: R, Rec: Record](Prop[V, Rw, Rec]):
             if self.getter is not None:
                 value = self.getter(instance)
             else:
-                value = instance.__dict__.get(self.name, State.undef)
+                value = instance.__dict__.get(self.name, Undef)
 
-            if value is State.undef:
+            if value is Undef:
                 if self.default_factory is not None:
                     value = self.default_factory()
                 else:
                     value = self.default
 
                 assert (
-                    value is not State.undef
+                    value is not Undef
                 ), f"Property value for `{self.name}` could not be fetched."
                 instance.__dict__[self.name] = value
 
@@ -586,29 +601,25 @@ class Attr[V, Rw: R, Rec: Record](Prop[V, Rw, Rec]):
             return cast(
                 Attr[V, Rw, RecT2],
                 copy_and_override(
-                    self,
                     type(self),
+                    self,
                     _parent_type=rec_type,  # type: ignore
                 ),
             )
 
         return self
 
-    def __set__(self: Prop[V, RW, Any], instance: Record, value: V | State) -> None:
+    def __set__(
+        self: Prop[V, RW, Any], instance: Record, value: V | type[Keep]
+    ) -> None:
         """Set the value of the column."""
-        if value is State.undef:
-            if self.name in instance.__dict__:
-                value = instance.__dict__[self.name]
-            elif self.default_factory is not None:
-                value = self.default_factory()
-            else:
-                value = self.default
+        if value is Keep:
+            return
 
-        if value is not State.undef:
-            if self.setter is not None:
-                self.setter(instance, cast(V, value))
-            else:
-                instance.__dict__[self.name] = value
+        if self.setter is not None:
+            self.setter(instance, cast(V, value))
+        else:
+            instance.__dict__[self.name] = value
 
 
 type DirectLink[Rec: Record] = (
@@ -1084,23 +1095,23 @@ class RecordMeta(type):
                     if prop_name not in cls.__dict__:
                         if isinstance(prop_set, Col):
                             prop_set = copy_and_override(
-                                prop_set,
                                 type(prop_set),
+                                prop_set,
                                 _type=copy_and_override(
-                                    prop_set._type,
                                     type(prop_set._type),
+                                    prop_set._type,
                                     typevar_map=typevar_map,
                                     ctx=cls._src_mod,
                                 ),
                             )
                         else:
                             prop_set = copy_and_override(
-                                prop_set,
                                 type(prop_set),
+                                prop_set,
                                 _parent_type=prop_set.parent_type,
                                 _type=copy_and_override(
-                                    prop_set._type,
                                     type(prop_set._type),
+                                    prop_set._type,
                                     typevar_map=typevar_map,
                                     ctx=cls._src_mod,
                                 ),
@@ -1178,7 +1189,7 @@ class RecordMeta(type):
         return reduce(
             lambda x, y: {**x, **y},
             (c._cols for c in cls._record_bases),
-            cls._defined_cols,
+            cls._defined_cols | cls._defined_rel_cols,
         )
 
     @property
@@ -1315,28 +1326,18 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return sqla.table(cls._default_table_name())
 
     @classmethod  # type: ignore[reportArgumentType]
-    def _copy(
+    def _from_existing(
         cls: Callable[Params, RecT2],
         rec: Record[KeyT],
-        idx: KeyT,
         *args: Params.args,
         **kwargs: Params.kwargs,
     ) -> RecT2:
-        rec_type = type(rec)
-        target_props = rec_type._props
-
-        rec_props = {p: getattr(rec, p.name) for p in target_props.values() if p.init}
-        rec_kwargs = {p.name: v for p, v in rec_props.items()}
-
-        if len(rec_type._primary_keys) > 1:
-            assert isinstance(idx, Iterable)
-            new_idx = dict(zip(rec_type._primary_keys, idx))
-        else:
-            new_idx = {next(iter(rec_type._primary_keys)): idx}
-
-        new_kwargs = {**rec_kwargs, **kwargs, **new_idx}
-
-        return cls(*args, **new_kwargs)
+        return copy_and_override(
+            cls,
+            rec,
+            *(arg if arg is not Keep else MISSING for arg in args),
+            **{k: v if v is not Keep else MISSING for k, v in kwargs.items()},
+        )  # type: ignore[call-arg]
 
     def _get_db(self) -> DB[RW, DynBackendID]:
         if "__db" not in self.__dict__:
@@ -1414,9 +1415,9 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         """Check if dict data contains all required info for record type."""
         data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
         return not any(
-            data.get(p.name, State.undef) is State.undef
+            data.get(p.name, Undef) is Undef
             and p.getter is None
-            and p.default is State.undef
+            and p.default is Undef
             and p.default_factory is None
             for p in cls._cols.values()
         )
@@ -2206,7 +2207,7 @@ class RecSet(
                     key,
                     self.record_type,
                 )
-                return copy_and_override(self, RecSet[key], record_type=key)
+                return copy_and_override(RecSet[key], self, record_type=key)
             case Col():
                 if isinstance(key.record_set, RelSet) and (
                     not isinstance(self, RelSet)
@@ -2222,13 +2223,13 @@ class RecSet(
                 return self._suffix(key)
             case RelTree():
                 return copy_and_override(
-                    self, type(self), merges=self.merges * key.prefix(self)
+                    type(self), self, merges=self.merges * key.prefix(self)
                 )
             case sqla.ColumnElement():
                 filt, filt_merges = self._parse_filters([key])
                 return copy_and_override(
-                    self,
                     type(self),
+                    self,
                     filters=[*self.filters, filt[0]],
                     merges=self.merges * filt_merges,
                 )
@@ -2241,7 +2242,7 @@ class RecSet(
                     ), "Cannot select multiple single record keys"
 
                 key_set = copy_and_override(
-                    self, type(self), sel_keys=[*self.sel_keys, key]
+                    type(self), self, sel_keys=[*self.sel_keys, key]
                 )
 
                 if not is_subtype(self.sel_type, Record):
@@ -2682,7 +2683,7 @@ class RecSet(
         self: RecSet[Record, Any, Any, Any, Any],
         aggs: Mapping[RelSet, Agg] | None = ...,
         to_backend: None = ...,
-        overlay_with_schema: bool = ...,
+        overlay_type: OverlayType = ...,
     ) -> DB[RW, BackT]: ...
 
     @overload
@@ -2691,7 +2692,7 @@ class RecSet(
         self: RecSet[Record, Any, Any, Any, Any],
         aggs: Mapping[RelSet, Agg] | None = ...,
         to_backend: Backend[BackT2],
-        overlay_with_schema: bool = ...,
+        overlay_type: OverlayType = ...,
     ) -> DB[RW, BackT2]: ...
 
     def extract(
@@ -2704,7 +2705,7 @@ class RecSet(
         ],
         aggs: Mapping[RelSet, Agg] | None = None,
         to_backend: Backend[BackT2] | None = None,
-        overlay_with_schema: bool = False,
+        overlay_type: OverlayType = "name_prefix",
     ) -> DB[RW, BackT | BackT2]:
         """Extract a new database instance from the current selection."""
         # Get all rec types in the schema.
@@ -2769,10 +2770,10 @@ class RecSet(
 
         # Create a new database overlay for the results.
         overlay_db = copy_and_override(
+            DB[RW, BackT],
             self.db,
-            DB,
             write_to_overlay=f"temp_{token_hex(10)}",
-            overlay_with_schema=overlay_with_schema,
+            overlay_type=overlay_type,
             schema=None,
             types=rec_types,
             _def_types={},
@@ -2790,8 +2791,8 @@ class RecSet(
         # Transfer table to the new database.
         if to_backend is not None:
             other_db = copy_and_override(
+                DB[RW, BackT2],
                 overlay_db,
-                DB,
                 b_id=to_backend.b_id,
                 url=to_backend.url,
                 _def_types={},
@@ -2981,8 +2982,8 @@ class RecSet(
         return cast(
             RS,
             copy_and_override(
-                rel,
                 RelSet[Any, Any, Any, Any, Any, Any, Any, Any],
+                rel,
                 _parent_type=self.rec,
                 db=self.db,
                 sel_keys=[*self.sel_keys, *rel.sel_keys],
@@ -3170,11 +3171,13 @@ class RecSet(
                         + "_"
                         + self.record_type._default_table_name()
                     )
-                    if not self.db.overlay_with_schema
+                    if self.db.overlay_type == "name_prefix"
                     else self.record_type._default_table_name()
                 ),
                 schema=(
-                    self.db.write_to_overlay if self.db.overlay_with_schema else None
+                    self.db.write_to_overlay
+                    if self.db.overlay_type == "db_schema"
+                    else None
                 ),
             )
 
@@ -3789,7 +3792,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
     ) -> Col[Any, Any, Any, Any, Any]:
         return copy_and_override(
-            self, Col, _record_set=self.record_set[cast(slice, key)]
+            Col, self, _record_set=self.record_set[cast(slice, key)]
         )
 
     def __setitem__(
@@ -3896,15 +3899,15 @@ class RelSet(
         if self._parent_rel is not None:
             tmpl = cast(RelSet[ParT, Any, Any, WriteT, BackT, ParT, Any, Any], self)
             return copy_and_override(
-                tmpl,
                 type(tmpl),
+                tmpl,
                 _parent_type=self._parent_rel.parent_type,
                 on=self._parent_rel.on,
                 map_by=self._parent_rel.map_by,
             )
 
         tmpl = cast(RecSet[ParT, WriteT, BackT], self)
-        return copy_and_override(tmpl, type(tmpl), record_type=self.parent_type)
+        return copy_and_override(type(tmpl), tmpl, record_type=self.parent_type)
 
     @property
     def link_type(self) -> type[LnT]:
@@ -4005,14 +4008,14 @@ class RelSet(
                 return instance._db[type(instance)][single_self].get(instance._index)
 
             return copy_and_override(
-                instance._db[type(instance)][instance._index][self],
                 RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, RecT2],
+                instance._db[type(instance)][instance._index][self],
                 sel_type=Record,
             )
         elif issubclass(owner, Record):
             return copy_and_override(
-                self,
                 RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, Any, RecT2],
+                self,
                 _parent_type=cast(type[RecT2], owner),
             )
 
@@ -4024,12 +4027,13 @@ class RelSet(
         value: (
             RelSet[RecT2, LnT, IdxT, Any, Any, ParT2, RecT2]
             | RecInput[RecT2, KeyT2 | KeyT2, KeyT2]
-            | State
+            | type[Keep]
         ),
     ) -> None:
-        if value is not State.undef:
-            rec = cast(Record[Hashable], instance)
-            instance._db[type(rec)][rec._index][self]._mutate(value)
+        if value is Keep:
+            return
+        rec = cast(Record[Hashable], instance)
+        instance._db[type(rec)][rec._index][self]._mutate(value)
 
     @staticmethod
     def _get_tag(rec_type: type[Record]) -> RelSet | None:
@@ -4394,8 +4398,8 @@ class RelSet(
             self,
         )
         return copy_and_override(
-            tmpl,
             type(tmpl),
+            tmpl,
             db=DB(b_id=LocalBackend.static, types={self.record_type}),
             merges=RelTree(),
         )
@@ -4484,6 +4488,9 @@ class Backend(Generic[BackT]):
     """Connection URL or path."""
 
 
+type OverlayType = Literal["name_prefix", "db_schema"]
+
+
 @dataclass(kw_only=True, eq=False)
 class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
     """Database."""
@@ -4508,7 +4515,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
     ) = None
 
     write_to_overlay: str | None = None
-    overlay_with_schema: bool = True
+    overlay_type: OverlayType = "name_prefix"
 
     validate_on_init: bool = False
     remove_cross_fks: bool = False
@@ -4578,7 +4585,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
         if self.validate_on_init:
             self.validate()
 
-        if self.write_to_overlay is not None and self.overlay_with_schema:
+        if self.write_to_overlay is not None and self.overlay_type == "db_schema":
             self._ensure_schema_exists(self.write_to_overlay)
 
         if self.backend_type == "excel-file":
@@ -4792,7 +4799,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
         self: DB[RW, Any],
         data: pd.DataFrame | pl.DataFrame | sqla.Select,
         fks: Mapping[str, Col] | None = None,
-    ) -> RecSet[DynRecord, RO, BackT]:
+    ) -> RecSet[DynRecord, R, BackT]:
         """Create a temporary dataset instance from a DataFrame or SQL query."""
         name = (
             f"temp_df_{gen_str_hash(data, 10)}"

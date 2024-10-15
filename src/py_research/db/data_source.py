@@ -26,7 +26,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DB, Col, Record, RelSet, State, Static
+from .base import DB, Col, Record, RelSet, Static, Undef
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -379,7 +379,7 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
                 if isinstance(target, RelMap) and target.rel is not None
                 else getattr(rec, _get_selector_name(sel))
             ): (
-                cast(SubMap, copy_and_override(target, SubMap, sel=sel))
+                copy_and_override(SubMap, target, sel=sel)
                 if isinstance(target, RelMap)
                 else DataSelect.parse(sel)
             )
@@ -532,7 +532,7 @@ def _get_record[
     path_idx: DirectPath,
     node: TreeNode,
 ) -> (
-    Hashable | Rec | Literal[State.undef]
+    Hashable | Rec | type[Undef]
 ):
     attrs = {
         a.name: (a, *list(sel.select(node, path_idx).items())[0])
@@ -556,7 +556,7 @@ def _get_record[
     if len(recs_keys) == 1:
         return recs_keys[0]
 
-    return rec if rec is not None else State.undef
+    return rec if rec is not None else Undef
 
 
 type RestTreeData = dict[RecMap, MapTreeData[TreeData]]
@@ -592,7 +592,7 @@ async def _load_records(
     for (parent_idx, path_idx), node in tree_data.items():
         rec_res = _get_record(db, rec_map, path_idx, node)
 
-        if rec_res is State.undef:
+        if rec_res is Undef:
             rest_tree_data[rec_map][(parent_idx, path_idx)] = node
             continue
 
@@ -682,7 +682,7 @@ async def _load_rels(
                 }
                 rest_tree_data |= await _load_records(
                     db,
-                    copy_and_override(target_map, RelMap, rel=rel),
+                    copy_and_override(RelMap, target_map, rel=rel),
                     rel_data,
                 )
 
