@@ -1551,13 +1551,19 @@ class RecSet(
 ):
     """Record dataset."""
 
-    record_type: type[RecT] = Record
     db: DB[WriteT, BackT] = field(default_factory=lambda: DB[WriteT, BackT]())
 
     sel_keys: Sequence[slice | list[Hashable] | Hashable] = field(default_factory=list)
     filters: list[sqla.ColumnElement[bool]] = field(default_factory=list)
     merges: RelTree = field(default_factory=RelTree)
     sel_type: type[SelT] = NoneType
+
+    _record_type: type[RecT] = Record
+
+    @cached_property
+    def record_type(self) -> type[RecT]:
+        """Reference the target record type."""
+        return self._record_type
 
     @cached_property
     def rec(self) -> type[RecT]:
@@ -2232,7 +2238,7 @@ class RecSet(
                     key,
                     self.record_type,
                 )
-                return copy_and_override(RecSet[key], self, record_type=key)
+                return copy_and_override(RecSet[key], self, _record_type=key)
             case Col():
                 if isinstance(key.record_set, RelSet) and (
                     not isinstance(self, RelSet)
@@ -3968,6 +3974,11 @@ class RelSet(
     map_by: Col[Any, Any, Static] | None = None
 
     @cached_property
+    def record_type(self) -> type[RecT]:
+        """Get the record type."""
+        return cast(type[RecT], self._type.record_type())
+
+    @cached_property
     def is_direct_rel(self) -> bool:
         """Check if relation is direct."""
         return self._direct_rel is True
@@ -3986,7 +3997,7 @@ class RelSet(
             )
 
         tmpl = cast(RecSet[ParT, WriteT, BackT], self)
-        return copy_and_override(type(tmpl), tmpl, record_type=self.parent_type)
+        return copy_and_override(type(tmpl), tmpl, _record_type=self.parent_type)
 
     @property
     def link_type(self) -> type[LnT]:
@@ -4017,10 +4028,6 @@ class RelSet(
     def __hash__(self) -> int:
         """Hash the RelSet."""
         return gen_int_hash((RecSet.__hash__(self), Prop.__hash__(self)))
-
-    def __post_init__(self) -> None:
-        """Record type of the set."""
-        self.record_type = cast(type[RecT], self._type.record_type())
 
     @overload
     def __get__(
@@ -4634,7 +4641,9 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
                 },
             )
 
-        self.record_type = get_lowest_common_base(self._def_types.keys())
+        self._record_type = self._record_type or get_lowest_common_base(
+            self._def_types.keys()
+        )
 
         if self.validate_on_init:
             self.validate()
@@ -4809,7 +4818,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
         )
 
         rec = dynamic_record_type(name, props=props_from_data(data, fks))
-        ds = RecSet[DynRecord, RW, BackT](record_type=rec, db=self)
+        ds = RecSet[DynRecord, RW, BackT](_record_type=rec, db=self)
 
         ds &= data
 
