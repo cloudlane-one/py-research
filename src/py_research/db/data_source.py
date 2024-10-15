@@ -26,7 +26,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DB, Col, Record, RelSet, Static, Undef
+from .base import DB, Col, Record, RecSet, RelSet, Static, Undef
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -404,7 +404,7 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
     return pull_map
 
 
-async def sliding_batch_map[
+async def _sliding_batch_map[
     H: Hashable, T
 ](
     data: Iterable[H],
@@ -480,7 +480,7 @@ async def _load_tree_data[
         async for rel_idx, dat in tqdm(
             azip(
                 id_set,
-                sliding_batch_map(
+                _sliding_batch_map(
                     id_set,
                     cast(Callable[[Any], Coroutine[Any, Any, TreeNode]], loader),
                 ),
@@ -527,13 +527,11 @@ def _gen_match_expr(
 def _get_record[
     Rec: Record
 ](
-    db: DB,
+    rec_set: RecSet[Rec],
     rec_map: RecMap[Rec, TreeNode],
     path_idx: DirectPath,
     node: TreeNode,
-) -> (
-    Hashable | Rec | type[Undef]
-):
+) -> (Hashable | Rec | type[Undef]):
     attrs = {
         a.name: (a, *list(sel.select(node, path_idx).items())[0])
         for a, sel in rec_map.full_map.items()
@@ -552,7 +550,7 @@ def _get_record[
         rec_map.match_by,
     )
 
-    recs_keys = db[rec_map.rec_type][match_expr].keys()
+    recs_keys = rec_set[match_expr].keys()
     if len(recs_keys) == 1:
         return recs_keys[0]
 
@@ -566,7 +564,7 @@ async def _load_records(
     db: DB,
     rec_map: RecMap,
     input_data: MapTreeData[TreeNode],
-) -> RestTreeData:
+) -> tuple[set[Hashable], RestTreeData]:
     rest_tree_data: RestTreeData = {}
     if rec_map not in rest_tree_data:
         rest_tree_data[rec_map] = {}
@@ -575,9 +573,9 @@ async def _load_records(
         type[Record],
         rec_map.rec_type,
     )
+    rec_set = db[rec_type]
 
     tree_data: MapTreeData[TreeNode]
-
     if rec_map.loader is not None and has_type(input_data, MapTreeData[Hashable]):
         tree_data = await _load_tree_data(
             rec_type, rec_map.loader, rec_map.async_loader, input_data, db
@@ -585,12 +583,34 @@ async def _load_records(
     else:
         tree_data = input_data
 
-    rest_tree_data |= await _load_rels(db, rec_map, tree_data, "out")
+    rels = {
+        cast(RelSet[Any, Any, Any, Any, Any, Record], rel): sel
+        for rel, sel in rec_map.full_map.items()
+        if isinstance(rel, RelSet) and isinstance(sel, SubMap)
+    }
+
+    # Descend into outgoing relations prior to loading the main records
+    loaded_direct_rels = set()
+    for rel, target_map in rels.items():
+        if rel.is_direct_rel:
+            for (parent_idx, path_idx), dat in tree_data.items():
+                sub_data = target_map.select(dat, path_idx)
+                rel_data = {
+                    (parent_idx, (path_idx + item_path)): item_data
+                    for item_path, item_data in sub_data.items()
+                }
+                new_direct_rels, new_rest_data = await _load_records(
+                    db,
+                    copy_and_override(RelMap, target_map, rel=rel),
+                    rel_data,
+                )
+                loaded_direct_rels |= new_direct_rels
+                rest_tree_data |= new_rest_data
 
     records: dict[Hashable, Record | Hashable] = {}
 
     for (parent_idx, path_idx), node in tree_data.items():
-        rec_res = _get_record(db, rec_map, path_idx, node)
+        rec_res = _get_record(rec_set, rec_map, path_idx, node)
 
         if rec_res is Undef:
             rest_tree_data[rec_map][(parent_idx, path_idx)] = node
@@ -602,7 +622,7 @@ async def _load_records(
         if isinstance(rec_map, RelMap):
             link_res = None
             if rec_map.link is not None and issubclass(rec_map.rel.link_type, Record):
-                link_res = _get_record(db, rec_map.link, path_idx, node)
+                link_res = _get_record(rec_set, rec_map.link, path_idx, node)
 
             if isinstance(rec_map.index, DataSelect):
                 rel_idx = list(
@@ -651,42 +671,27 @@ async def _load_records(
     target_set = db[rec_map.rel] if isinstance(rec_map, RelMap) else db[rec_type]
     target_set |= records
 
-    rest_tree_data |= await _load_rels(db, rec_map, tree_data, "in")
-
-    return rest_tree_data
-
-
-async def _load_rels(
-    db: DB,
-    rec_map: RecMap[Record, TreeNode],
-    tree_data: MapTreeData[TreeNode],
-    direction: Literal["out", "in"],
-) -> RestTreeData:
-    rels = {
-        cast(RelSet[Any, Any, Any, Any, Any, Record], rel): sel
-        for rel, sel in rec_map.full_map.items()
-        if isinstance(rel, RelSet) and isinstance(sel, SubMap)
+    loaded_ids = {
+        rec._index if isinstance(rec, Record) else rec for rec in records.values()
     }
 
-    rest_tree_data: RestTreeData = {}
-
+    # Descend into incoming relations after to loading the main records
     for rel, target_map in rels.items():
-        if (direction == "out" and rel._direct_rel is True) or (
-            direction == "in" and rel._direct_rel is not True
-        ):
+        if not rel.is_direct_rel:
             for (parent_idx, path_idx), dat in tree_data.items():
                 sub_data = target_map.select(dat, path_idx)
                 rel_data = {
                     (parent_idx, (path_idx + item_path)): item_data
                     for item_path, item_data in sub_data.items()
                 }
-                rest_tree_data |= await _load_records(
+                _, new_rest_data = await _load_records(
                     db,
                     copy_and_override(RelMap, target_map, rel=rel),
                     rel_data,
                 )
+                rest_tree_data |= new_rest_data
 
-    return rest_tree_data
+    return loaded_ids, rest_tree_data
 
 
 @dataclass(kw_only=True, eq=False)
@@ -703,7 +708,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
         return {}
 
-    async def load(self, data: Iterable[Dat], db: DB | None = None) -> None:
+    async def load(self, data: Iterable[Dat], db: DB | None = None) -> set[Hashable]:
         """Parse recursive data from a data source.
 
         Args:
@@ -719,8 +724,12 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
         """
         db = db if db is not None else DB()
         in_data: MapTreeData[TreeNode] = {(None, ()): dat for dat in data}
-        rest_data = await _load_records(db, self, in_data)
+        loaded, rest_data = await _load_records(db, self, in_data)
 
+        # Perform second pass to load remaining data
         for rec_map, tree_data in rest_data.items():
-            rest_rest = await _load_records(db, rec_map, tree_data)
+            new_loaded, rest_rest = await _load_records(db, rec_map, tree_data)
+            loaded |= new_loaded
             assert all(len(v) == 0 for v in rest_rest.values())
+
+        return loaded

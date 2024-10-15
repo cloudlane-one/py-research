@@ -4,15 +4,7 @@ from __future__ import annotations
 
 import warnings
 from abc import ABC
-from collections.abc import (
-    Callable,
-    Generator,
-    Hashable,
-    Iterable,
-    Iterator,
-    Mapping,
-    Sequence,
-)
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, dataclass, field
 from datetime import date, datetime, time
 from functools import cached_property, partial, reduce
@@ -146,15 +138,6 @@ DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
 Params = ParamSpec("Params")
 
 
-type Index = Hashable | Full | Singular | Filtered
-type ColIdx = Hashable | Singular
-type MutateIdx = Hashable | Full
-
-type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
-
-type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec] | None
-
-
 @final
 class Undef:
     """Demark undefined status."""
@@ -167,33 +150,6 @@ class Keep:
     """Demark unchanged status."""
 
     __hash__: ClassVar[None]  # type: ignore[assignment]
-
-
-@final
-class BaseIdx:
-    """Singleton to mark dataset as having the record type's base index."""
-
-    __hash__: ClassVar[None]  # type: ignore[assignment]
-
-
-@final
-class Full:
-    """Singleton to mark dataset as having full index."""
-
-
-@final
-class Filtered:
-    """Singleton to mark dataset index as filtered."""
-
-
-@final
-class Singular:
-    """Singleton to mark dataset index as a single value."""
-
-
-@final
-class Nullable:
-    """Singleton to mark dataset index as a single or no value."""
 
 
 class R:
@@ -223,8 +179,11 @@ type DynBackendID = LiteralString | Local
 type StatBackendID = DynBackendID | Static
 
 
+type RecordValue[Rec: Record] = Rec | Iterable[Rec] | Mapping[Any, Rec] | None
+
+
 type RecInput[
-    Rec: Record, Key: MutateIdx, RKey: Hashable
+    Rec: Record, Key: Hashable, RKey: Hashable
 ] = pd.DataFrame | pl.DataFrame | Iterable[Rec | RKey] | Mapping[
     Key, Rec | RKey
 ] | sqla.Select | Rec | RKey
@@ -233,6 +192,37 @@ type RecInput[
 type ValInput[Val, Key: Hashable] = pd.Series | pl.Series | Mapping[
     Key, Val
 ] | sqla.Select[tuple[Val] | tuple[Key, Val]] | Val
+
+
+@final
+class BaseIdx:
+    """Singleton to mark dataset as having the record type's base index."""
+
+    __hash__: ClassVar[None]  # type: ignore[assignment]
+
+
+@final
+class Full:
+    """Singleton to mark dataset as having full index."""
+
+
+@final
+class Filtered:
+    """Singleton to mark dataset index as filtered."""
+
+
+@final
+class Singular:
+    """Singleton to mark dataset index as a single value."""
+
+
+@final
+class Nullable:
+    """Singleton to mark dataset index as a single or no value."""
+
+
+type Index = Hashable | Full | Singular | Filtered
+type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
 
 
 def _map_df_dtype(c: pd.Series | pl.Series) -> type | None:
@@ -289,7 +279,7 @@ def _gen_prop(
     data: pd.Series | pl.Series | sqla.ColumnElement,
     pk: bool = False,
     fks: Mapping[str, Col] = {},
-) -> Prop[Any, Any, Any]:
+) -> Prop[Any, Any]:
     is_rel = name in fks
     value_type = (
         _map_df_dtype(data)
@@ -370,7 +360,7 @@ def _remove_cross_fk(table: sqla.Table):
 class PropType(Generic[ValT]):
     """Reference to a type."""
 
-    hint: str | type[Prop[ValT, Any, Any]] | None = None
+    hint: str | type[Prop[ValT, Any]] | None = None
     ctx: ModuleType | None = None
     typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
 
@@ -512,22 +502,15 @@ class PropType(Generic[ValT]):
 
 
 @dataclass(eq=False)
-class Prop[V, Rw: R, Rec: Record](ABC):
-    """Reference a property of a record."""
-
-    _type: PropType[V] = field(default_factory=PropType[V])
-    _name: str | None = None
-    _parent_type: type[Rec] | None = None
+class Prop[V, Rec: Record](ABC):
+    """Record property."""
 
     alias: str | None = None
-    default: V | type[Undef] = Undef
-    default_factory: Callable[[], V] | None = None
     init: bool = True
 
-    getter: Callable[[Record], V] | None = None
-    setter: Callable[[Record, V], None] | None = None
-
-    local: bool = False
+    _name: str | None = None
+    _type: PropType[V] = field(default_factory=PropType[V])
+    _parent_type: type[Rec] | None = None
 
     @property
     def name(self) -> str:
@@ -554,7 +537,36 @@ class Prop[V, Rw: R, Rec: Record](ABC):
         else:
             assert name == self._name
 
-    def __hash__(self: Prop[Any, Any, Any]) -> int:
+    @overload
+    def __get__(self, instance: None, owner: type[RecT2]) -> Prop[V, RecT2]: ...
+
+    @overload
+    def __get__(self, instance: RecT2, owner: type[RecT2]) -> V: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[RecT2] | None
+    ) -> Prop[Any, Any] | V | Self:
+        if owner is not None and issubclass(owner, Record):
+            if isinstance(instance, Record):
+                return instance.__dict__[self.name]
+
+            if instance is None:
+                rec_type = cast(type[RecT2], owner)
+                return cast(
+                    Prop[V, RecT2],
+                    copy_and_override(
+                        type(self),
+                        self,
+                        _parent_type=cast(type[Rec], rec_type),
+                    ),
+                )
+
+        return self
+
+    def __hash__(self: Prop[Any, Any]) -> int:
         """Hash the Prop."""
         return gen_int_hash((self.parent_type, self.name))
 
@@ -563,8 +575,15 @@ class Prop[V, Rw: R, Rec: Record](ABC):
         return hash(self) == hash(other)
 
 
-class Attr[V, Rw: R, Rec: Record](Prop[V, Rw, Rec]):
+@dataclass(eq=False)
+class Attr[V, Rw: R, Rec: Record](Prop[V, Rec]):
     """Record attribute."""
+
+    default: V | type[Undef] = Undef
+    default_factory: Callable[[], V] | None = None
+
+    getter: Callable[[Record], V] | None = None
+    setter: Callable[[Record, V], None] | None = None
 
     @overload
     def __get__(self, instance: None, owner: type[RecT2]) -> Attr[V, Rw, RecT2]: ...
@@ -578,39 +597,36 @@ class Attr[V, Rw: R, Rec: Record](Prop[V, Rw, Rec]):
     def __get__(  # noqa: D105
         self, instance: object | None, owner: type | type[RecT2] | None
     ) -> Attr[Any, Any, Any] | V | Self:
-        if isinstance(instance, Record):
-            if self.getter is not None:
-                value = self.getter(instance)
-            else:
-                value = instance.__dict__.get(self.name, Undef)
-
-            if value is Undef:
-                if self.default_factory is not None:
-                    value = self.default_factory()
+        if owner is not None and issubclass(owner, Record):
+            if isinstance(instance, Record):
+                if self.getter is not None:
+                    value = self.getter(instance)
                 else:
-                    value = self.default
+                    value = super().__get__(instance, owner)
 
-                assert (
-                    value is not Undef
-                ), f"Property value for `{self.name}` could not be fetched."
-                instance.__dict__[self.name] = value
+                if value is Undef:
+                    if self.default_factory is not None:
+                        value = self.default_factory()
+                    else:
+                        value = self.default
 
-            return value
-        elif owner is not None and issubclass(owner, Record):
-            rec_type = cast(type[RecT2], owner)
-            return cast(
-                Attr[V, Rw, RecT2],
-                copy_and_override(
-                    type(self),
-                    self,
-                    _parent_type=rec_type,  # type: ignore
-                ),
-            )
+                    assert (
+                        value is not Undef
+                    ), f"Property value for `{self.name}` could not be fetched."
+                    instance.__dict__[self.name] = value
+
+                return value
+
+            if instance is None:
+                return cast(
+                    Attr[V, Rw, RecT2],
+                    super().__get__(instance, owner),
+                )
 
         return self
 
     def __set__(
-        self: Prop[V, RW, Any], instance: Record, value: V | type[Keep]
+        self: Attr[V, RW, Any], instance: Record, value: V | type[Keep]
     ) -> None:
         """Set the value of the column."""
         if value is Keep:
@@ -797,7 +813,7 @@ def prop(
     sql_getter: None = ...,
     local: bool = ...,
     init: bool = ...,
-) -> Prop[ValT2, RO, Any]: ...
+) -> Attr[ValT2, RO, Any]: ...
 
 
 @overload
@@ -817,7 +833,7 @@ def prop(
     sql_getter: None = ...,
     local: bool = ...,
     init: bool = ...,
-) -> Prop[ValT2, RW, Any]: ...
+) -> Attr[ValT2, RW, Any]: ...
 
 
 @overload
@@ -987,15 +1003,12 @@ def prop(
             getter=getter,
             setter=setter,
             _type=PropType(Attr[object, Any, Any]),
-            local=local,
         )
 
     if any(a is not None for a in (link_on, link_from, link_via, map_by)) or any(
         a == "fk" for a in (index, primary_key)
     ):
         return RelSet(
-            default=default,
-            default_factory=default_factory,
             alias=alias,
             init=init,
             index=index == "fk",
@@ -1020,7 +1033,6 @@ def prop(
         setter=setter,
         sql_getter=sql_getter,
         _type=PropType(Col[object]),
-        local=local,
     )
 
 
@@ -1033,9 +1045,10 @@ class RecordMeta(type):
         dict[Col[Hashable], Col[Hashable]],
     ]
 
-    _defined_props: dict[str, Col | RelSet]
-    _defined_cols: dict[str, Col]
-    _defined_rels: dict[str, RelSet]
+    _defined_props: dict[str, Prop[Any, Any]]
+    _defined_attrs: dict[str, Attr[Any, Any, Any]]
+    _defined_cols: dict[str, Col[Any, Any, Static, Any, Any]]
+    _defined_rels: dict[str, RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Any]]
 
     _is_record: bool = False
     _template: bool = False
@@ -1140,9 +1153,15 @@ class RecordMeta(type):
 
         cls._defined_props = {name: getattr(cls, name) for name in prop_defs.keys()}
 
+        cls._defined_attrs = {
+            name: attr
+            for name, attr in cls._defined_props.items()
+            if isinstance(attr, Attr)
+        }
+
         cls._defined_cols = {
             name: col
-            for name, col in cls._defined_props.items()
+            for name, col in cls._defined_attrs.items()
             if isinstance(col, Col)
         }
 
@@ -1157,7 +1176,7 @@ class RecordMeta(type):
         return {
             a.name: a
             for rel in cls._defined_rels.values()
-            if rel._direct_rel is True
+            if rel.is_direct_rel
             for a in rel._fk_map.keys()
         }
 
@@ -1177,7 +1196,7 @@ class RecordMeta(type):
         return {**base_pk_cols, **defined_pks}
 
     @property
-    def _props(cls) -> dict[str, Col | RelSet]:
+    def _props(cls) -> dict[str, Prop[Any, Any]]:
         return reduce(
             lambda x, y: {**x, **y},
             (c._props for c in cls._record_bases),
@@ -1185,7 +1204,7 @@ class RecordMeta(type):
         )
 
     @property
-    def _cols(cls) -> dict[str, Col]:
+    def _cols(cls) -> dict[str, Col[Any, Any, Static, Any, Any]]:
         return reduce(
             lambda x, y: {**x, **y},
             (c._cols for c in cls._record_bases),
@@ -1193,7 +1212,7 @@ class RecordMeta(type):
         )
 
     @property
-    def _rels(cls) -> dict[str, RelSet]:
+    def _rels(cls) -> dict[str, RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Any]]:
         return reduce(
             lambda x, y: {**x, **y},
             (c._rels for c in cls._record_bases),
@@ -1232,8 +1251,8 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
                     p.default,
                     p.default_factory,  # type: ignore[reportArgumentType]
                     p.init,
-                    repr=True,
                     hash=p.primary_key,
+                    repr=True,
                     metadata={},
                     compare=True,
                     kw_only=True,
@@ -1242,8 +1261,8 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             },
             **{
                 name: Field(
-                    p.default,
-                    p.default_factory,  # type: ignore[reportArgumentType]
+                    MISSING,
+                    lambda: MISSING,
                     p.init,
                     repr=True,
                     hash=False,
@@ -1339,7 +1358,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             **{k: v if v is not Keep else MISSING for k, v in kwargs.items()},
         )  # type: ignore[call-arg]
 
-    def _get_db(self) -> DB[RW, DynBackendID]:
+    def _get_db(self) -> DB[RW, Any]:
         if "__db" not in self.__dict__:
             rec_type = type(self)
             db = DB(b_id=LocalBackend.dynamic, types={rec_type})
@@ -1350,12 +1369,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
         return self.__dict__["__db"]
 
-    def _set_db(self, value: DB[RW, DynBackendID]) -> None:
+    def _set_db(self, value: DB[RW, Any]) -> None:
         self.__dict__["__db"] = value
         self._connected = True
         self._root = False
 
-    _db: DB[RW, DynBackendID] = prop(local=True, getter=_get_db, setter=_set_db)
+    _db: DB[RW, Any] = prop(local=True, getter=_get_db, setter=_set_db)
     _connected: bool = prop(local=True, default=False)
     _root: bool = prop(local=True, default=True)
 
@@ -1421,6 +1440,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             and p.default_factory is None
             for p in cls._cols.values()
         )
+
+    def _update_dict(self) -> None:
+        rec_set = self._db[type(self)][self._index]
+        df = rec_set.to_df()
+        rec_dict = list(df.iter_rows(named=True))[0]
+        self.__dict__.update(rec_dict)
 
 
 RecT = TypeVar("RecT", bound="Record", covariant=True, default="Record")
@@ -2307,7 +2332,7 @@ class RecSet(
     ) -> Record | ValT2 | None:
         """Get a record by key."""
         try:
-            return list(iter(self[key] if key is not None else self))[0]
+            return (self[key] if key is not None else self).values()[0]
         except KeyError | IndexError:
             return default
 
@@ -2428,43 +2453,6 @@ class RecSet(
         return main_df, *extra_dfs
 
     @overload
-    def __iter__(self: RecSet[Any, Any, Any, Record | None, Any]) -> Iterator[RecT]: ...
-
-    @overload
-    def __iter__(
-        self: RecSet[Any, Any, Any, tuple[*RecTt], Any]
-    ) -> Iterator[tuple[RecT, *tuple[Record, ...]]]: ...
-
-    def __iter__(  # noqa: D105
-        self: RecSet[Any, Any, Any, Any, Any],
-    ) -> Iterator[RecT2 | tuple[RecT2, *tuple[Record, ...]]]:
-        dfs = self.to_df()
-        if isinstance(dfs, pl.DataFrame):
-            dfs = (dfs,)
-
-        rec_types: tuple[type[Record], ...] = (self.record_type, *self.merges.types)
-
-        for rt in rec_types:
-            if rt not in self.db._instance_map:
-                self.db._instance_map[rt] = {}
-
-        def iterator() -> Generator[RecT2 | tuple[RecT2, *tuple[Record, ...]]]:
-            for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
-                rows = cast(tuple[dict[str, Any], ...], rows)
-
-                rec_list = []
-                for rec_type, row in zip(rec_types, rows):
-                    new_rec = self.record_type(**row)
-                    rec = self.db._instance_map[rec_type].get(new_rec._index) or new_rec
-                    rec._db = self.db
-
-                    rec_list.append(rec)
-
-                yield tuple(rec_list) if len(rec_list) > 1 else rec_list[0]
-
-        return iterator()
-
-    @overload
     def keys(
         self: RelSet[Any, Any, KeyT3, Any, Any, Any, Any, Any],
     ) -> Sequence[KeyT3]: ...
@@ -2483,6 +2471,63 @@ class RecSet(
             return [tup[0] for tup in df.iter_rows()]
 
         return list(df.iter_rows())
+
+    @overload
+    def values(self: RecSet[Record, Any, Any, Record | None, Any]) -> list[RecT]: ...
+
+    @overload
+    def values(
+        self: RecSet[Record, Any, Any, tuple[*RecTt], Any]
+    ) -> list[tuple[RecT, *tuple[Record, ...]]]: ...
+
+    def values(  # noqa: D102
+        self: RecSet[Record, Any, Any, Any, Any],
+    ) -> list[RecT2] | list[tuple[RecT2, *tuple[Record, ...]]]:
+        dfs = self.to_df()
+        if isinstance(dfs, pl.DataFrame):
+            dfs = (dfs,)
+
+        rec_types: list[type[Record]] = [self.record_type, *self.merges.types]
+
+        valid_caches = {rt: self.db._get_valid_cache_set(rt) for rt in rec_types}
+        instance_maps = {rt: self.db._get_instance_map(rt) for rt in rec_types}
+
+        recs = []
+        for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
+            rows = cast(tuple[dict[str, Any], ...], rows)
+
+            rec_list = []
+            for rec_type, row in zip(rec_types, rows):
+                new_rec = self.record_type(**row)
+
+                if new_rec._index in valid_caches[rec_type]:
+                    rec = instance_maps[rec_type][new_rec._index]
+                else:
+                    rec = new_rec
+                    rec._db = self.db
+                    valid_caches[rec_type].add(rec._index)
+                    instance_maps[rec_type][rec._index] = rec
+
+                rec_list.append(rec)
+
+            recs.append(tuple(rec_list) if len(rec_list) > 1 else rec_list[0])
+
+        return recs
+
+    @overload
+    def __iter__(
+        self: RecSet[RecT2, Any, Any, Record | None, Any]
+    ) -> Iterator[RecT2]: ...
+
+    @overload
+    def __iter__(
+        self: RecSet[RecT2, Any, Any, tuple[*RecTt], Any]
+    ) -> Iterator[tuple[RecT2, *tuple[Record, ...]]]: ...
+
+    def __iter__(  # noqa: D105
+        self: RecSet[RecT2, Any, Any, Any, Any],
+    ) -> Iterator[RecT2] | Iterator[tuple[RecT2, *tuple[Record, ...]]]:
+        return iter(self.values())
 
     @overload
     def __imatmul__(
@@ -3400,11 +3445,14 @@ class RecSet(
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         record_ids: dict[Hashable, Hashable] | None = None
+        valid_caches = self.db._get_valid_cache_set(self.record_type)
 
         match value:
             case sqla.Select():
                 self._mutate_from_sql(value.subquery(), mode)
+                valid_caches.clear()
             case RecSet():
+                value = cast(RecSet[RecT2, Any, Any, Any, Any], value)
                 if value.db != self.db:
                     remote_db = value if isinstance(value, DB) else value.extract()
                     for s in remote_db._def_types:
@@ -3422,6 +3470,7 @@ class RecSet(
                             value_table.drop(self.db.engine)
 
                 self._mutate_from_sql(value.select().subquery(), mode)
+                valid_caches -= set(value.keys())
             case pd.DataFrame() | pl.DataFrame():
                 value_table = self._df_to_table(
                     value, pks=[c.key for c in self._sql_idx_cols]
@@ -3431,47 +3480,62 @@ class RecSet(
                     mode,
                 )
                 value_table.drop(self.db.engine)
+
+                base_idx_cols = [
+                    c.name for c in self.record_type._primary_keys.values()
+                ]
+                base_idx_keys = set(
+                    value[base_idx_cols].iter_rows()
+                    if isinstance(value, pl.DataFrame)
+                    else value[base_idx_cols].itertuples(index=False)
+                )
+
+                valid_caches -= base_idx_keys
             case Record():
                 self._mutate_from_records({value._index: value}, mode)
-            case Mapping():
-                self._mutate_from_records(
-                    {idx: rec for idx, rec in value.items() if isinstance(rec, Record)},
-                    mode,
-                )
-                record_ids = {
-                    idx: rec
-                    for idx, rec in value.items()
-                    if not isinstance(rec, Record)
-                }
-                if len(record_ids) > 0:
-                    if isinstance(self, RelSet):
-                        self._mutate_from_rec_ids(record_ids, mode)
-                    elif mode == "insert":
-                        raise TypeError("Cannot insert record ids into a non-relset.")
+                valid_caches -= {value._index}
             case Iterable():
-                self._mutate_from_records(
-                    {
+                if isinstance(value, Mapping):
+                    records = {
+                        idx: rec
+                        for idx, rec in value.items()
+                        if isinstance(rec, Record)
+                    }
+                    record_ids = {
+                        idx: rec
+                        for idx, rec in value.items()
+                        if not isinstance(rec, Record)
+                    }
+                else:
+                    records = {
                         idx: rec
                         for idx, rec in enumerate(value)
                         if isinstance(rec, Record)
-                    },
+                    }
+                    record_ids = {
+                        idx: rec
+                        for idx, rec in enumerate(value)
+                        if not isinstance(rec, Record)
+                    }
+
+                self._mutate_from_records(
+                    records,
                     mode,
                 )
-                record_ids = {
-                    idx: rec
-                    for idx, rec in enumerate(value)
-                    if not isinstance(rec, Record)
-                }
+                valid_caches -= {rec._index for rec in records.values()}
+
                 if len(record_ids) > 0:
-                    assert isinstance(
-                        self, RelSet
-                    ), "Can only update relation sets with record ids."
-                    self._mutate_from_rec_ids(record_ids, mode)
+                    if isinstance(self, RelSet):
+                        self._mutate_from_rec_ids(record_ids, mode)
+                        valid_caches -= set(record_ids.values())
+                    elif mode == "insert":
+                        raise TypeError("Cannot insert record ids into a non-relset.")
             case Hashable():
                 assert isinstance(
                     self, RelSet
                 ), "Can only update relation sets with record ids."
                 self._mutate_from_rec_ids({value: value}, mode)
+                valid_caches -= {value}
 
         return
 
@@ -3646,16 +3710,12 @@ class RecSet(
             # Construct the update statements.
 
             # Derive current select statement and join with value table, if exists.
-            value_join_on = (
-                sqla.text("TRUE")
-                if self._single_key is not None
-                else reduce(
-                    sqla.and_,
-                    (
-                        self.query.c[idx_col.name] == idx_col
-                        for idx_col in value_table.primary_key
-                    ),
-                )
+            value_join_on = reduce(
+                sqla.and_,
+                (
+                    self.query.c[idx_col.name] == idx_col
+                    for idx_col in value_table.primary_key
+                ),
             )
             select = self.query.join(
                 value_table,
@@ -3762,7 +3822,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
 
     @overload
     def __get__(
-        self: Prop[Any, Any, Any], instance: RecT2, owner: type[RecT2]
+        self: Attr[Any, Any, Any], instance: RecT2, owner: type[RecT2]
     ) -> ValTi: ...
 
     @overload
@@ -3771,7 +3831,21 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
     def __get__(  # noqa: D105
         self, instance: object | None, owner: type | type[RecT2] | None
     ) -> Col[Any, Any, Any, Any, Any] | ValTi | Self:
-        return super().__get__(instance, owner)
+        if owner is not None and issubclass(owner, Record):
+            if isinstance(instance, Record):
+                valid_caches = instance._db._get_valid_cache_set(owner)
+                if instance._index not in valid_caches:
+                    instance._update_dict()
+
+                return super().__get__(instance, owner)
+
+            if instance is None:
+                return cast(
+                    Col[Any, Any, Any, Any, Any],
+                    super().__get__(instance, owner),
+                )
+
+        return self
 
     @overload
     def __getitem__(
@@ -3854,16 +3928,21 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
         self.record_set._mutate(df)
         return self
 
-    def __iter__(  # noqa: D105
-        self,
-    ) -> Iterator[ValTi]:
-        return iter(self.to_series())
-
     def keys(
         self: Col,
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
         return self.record_set.keys()
+
+    def values(  # noqa: D102
+        self,
+    ) -> list[ValTi]:
+        return self.to_series().to_list()
+
+    def __iter__(  # noqa: D105
+        self,
+    ) -> Iterator[ValTi]:
+        return iter(self.values())
 
     def __len__(self) -> int:
         """Return the number of records in the dataset."""
@@ -3877,7 +3956,7 @@ class Col(  # type: ignore[reportIncompatibleVariableOverride]
 @dataclass(kw_only=True, eq=False)
 class RelSet(
     RecSet[RecT, WriteT, BackT, SelT, FiltT],
-    Prop[RelT | Iterable[RelT], WriteT, ParT],
+    Prop[RelT | Iterable[RelT] | None, ParT],
     Generic[RecT, LnT, IdxT, WriteT, BackT, RelT, SelT, FiltT, ParT],
 ):
     """Relational record set."""
@@ -3945,13 +4024,6 @@ class RelSet(
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, Static, RecT2, Any, Full],
-        instance: None,
-        owner: type[ParT2],
-    ) -> RelSet[RecT2, LnT, IdxT, WriteT, Static, RecT2, SelT, Full, ParT2]: ...
-
-    @overload
-    def __get__(
         self: RelSet[Any, Any, Any, Any, Static, RecT2, Any, Singular],
         instance: None,
         owner: type[ParT2],
@@ -3980,44 +4052,47 @@ class RelSet(
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Any],
-        instance: ParT2,
+        self,
+        instance: None,
         owner: type[ParT2],
-    ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, ParT2]: ...
+    ) -> RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, FiltT, ParT2]: ...
 
     @overload
     def __get__(
-        self: RelSet[Any, Any, Any, Any, Static, Any, Any],
-        instance: object | None,
-        owner: type,
-    ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, SelT, FiltT, ParT]: ...
+        self,
+        instance: ParT2,
+        owner: type[ParT2],
+    ) -> RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, ParT]: ...
 
-    def __get__(  # noqa: D105
-        self: RelSet[Any, Any, Any, Any, Static, Any, Any, Any],
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105 # type: ignore[reportIncompatibleMethodOverride]
+        self: RelSet[Any, Any, Any, Any, Any, Any, Any, Any, Any],
         instance: object | None,
         owner: type | type[RecT2],
-    ) -> RelSet[Any, Any, Any, Any, Any, Any, Any, Any] | Record | None:
-        # TODO: Implement support for default values of relations.
-        # TODO: Implement getters + setters for relations.
+    ) -> RelSet[Any, Any, Any, Any, Any, Any, Any, Any, Any] | Record | None:
+        if owner is not None and issubclass(owner, Record):
+            if isinstance(instance, Record):
+                if self.is_direct_rel:
+                    single_self = cast(
+                        RelSet[Record, Any, Singular, Any, Static, Any, Any], self
+                    )
+                    return instance._db[type(instance)][single_self].get(
+                        instance._index
+                    )
 
-        if has_type(instance, Record[Hashable]):
-            if self._direct_rel is True:
-                single_self = cast(
-                    RelSet[Record, Any, Singular, Any, Static, Any, Any], self
+                return copy_and_override(
+                    RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, RecT2],
+                    instance._db[type(instance)][instance._index][self],
+                    sel_type=Record,
                 )
-                return instance._db[type(instance)][single_self].get(instance._index)
 
-            return copy_and_override(
-                RelSet[RecT, LnT, IdxT, WriteT, BackT, RecT, Record, FiltT, RecT2],
-                instance._db[type(instance)][instance._index][self],
-                sel_type=Record,
-            )
-        elif issubclass(owner, Record):
-            return copy_and_override(
-                RelSet[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, Any, RecT2],
-                self,
-                _parent_type=cast(type[RecT2], owner),
-            )
+            if instance is None:
+                return cast(
+                    RelSet[Any, Any, Any, Any, Any, Any, Any, Any, RecT2],
+                    super().__get__(instance, owner),
+                )
 
         return self
 
@@ -4058,26 +4133,9 @@ class RelSet(
             case type() | RelSet() | tuple():
                 return bidict()
             case dict():
-                return bidict(
-                    {
-                        Col[Hashable](
-                            _name=fk.name,
-                            _type=PropType(Col[cast(type[Hashable], fk.value_type)]),
-                            _parent_type=self.record_type,
-                        ): cast(Col[Hashable], pk)
-                        for fk, pk in on.items()
-                    }
-                )
+                return bidict(on)
             case Col() | Iterable():
-                cols = on if isinstance(on, Iterable) else [on]
-                source_cols = [
-                    Col[Hashable](
-                        _name=col.name,
-                        _type=PropType(Col[cast(type[Hashable], col.value_type)]),
-                        _parent_type=self.record_type,
-                    )
-                    for col in cols
-                ]
+                source_cols = on if isinstance(on, Iterable) else [on]
                 target_cols = target._primary_keys.values()
                 fk_map = dict(zip(source_cols, target_cols))
 
@@ -4098,6 +4156,7 @@ class RelSet(
                             _name=f"{self.name}_{target_col.name}",
                             _type=PropType(Col[target_col.value_type, Any, Any]),
                             _parent_type=self.record_type,
+                            init=False,
                         ): cast(Col[Hashable], target_col)
                         for target_col in target._primary_keys.values()
                     }
@@ -4134,8 +4193,7 @@ class RelSet(
                 rels = [
                     r
                     for r in on._rels.values()
-                    if issubclass(self.parent_type, r.record_type)
-                    and r._direct_rel is True
+                    if issubclass(self.parent_type, r.record_type) and r.is_direct_rel
                 ]
                 assert len(rels) == 1, "Direct relation must be unique."
                 return cast(
@@ -4442,37 +4500,32 @@ class RelSet(
             RecSet._mutate_from_sql(self, value_table, mode)
 
         # Update relations with parent records.
-        if self._direct_rel is not True:
-            if issubclass(self._fk_record_type, self.parent_type):
-                # Case: parent links directly to child (n -> 1)
-                self.parents._mutate_from_sql(
-                    value_table.select()
-                    .with_only_columns(
-                        *(
-                            value_table.c[pk.name].label(fk.name)
-                            for fk, pk in self._direct_rel._fk_map.items()
-                        )
-                    )
-                    .subquery(),
-                    "update",
-                )
-            else:
-                # Case: parent and child are linked via assoc table (n <--> m)
-                # Update link table with new child indexes.
-                assert issubclass(self.link_type, Record)
-                link_cols = [
-                    *(
-                        value_table.c[pk.name].label(fk.name)
-                        for fk, pk in self._direct_rel._fk_map.items()
-                    ),
-                    *(value_table.c[col.key] for col in self._sql_idx_cols),
-                ]
-                self.links._mutate_from_sql(
-                    value_table.select().with_only_columns(*link_cols).subquery(), mode
-                )
-
-        # Note that the (1 <- n) case is already covered by updating
-        # the child record directly, which includes all its foreign keys.
+        if self.is_direct_rel:
+            # Case: parent links directly to child (n -> 1)
+            fk_cols = [
+                value_table.c[pk.name].label(fk.name) for fk, pk in self._fk_map.items()
+            ]
+            self.parents._mutate_from_sql(
+                sqla.select(*fk_cols).select_from(value_table).subquery(),
+                "update",
+            )
+        elif issubclass(self.link_type, self._fk_record_type):
+            # Case: parent and child are linked via assoc table (n <--> m)
+            # Update link table with new child indexes.
+            link_cols = [
+                *(
+                    value_table.c[pk.name].label(fk.name)
+                    for fk, pk in self._fk_map.items()
+                ),
+                *(value_table.c[col.key] for col in self._sql_idx_cols),
+            ]
+            self.links._mutate_from_sql(
+                sqla.select(*link_cols).select_from(value_table).subquery(), mode
+            )
+        else:
+            # The (1 <- n) case is already covered by updating
+            # the child record directly, which includes all its foreign keys.
+            pass
 
         return
 
@@ -4526,6 +4579,7 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
     _subs: dict[type[Record], sqla.TableClause] = field(default_factory=dict)
 
     _metadata: sqla.MetaData = field(default_factory=sqla.MetaData)
+    _valid_caches: dict[type[Record], set[Hashable]] = field(default_factory=dict)
     _instance_map: dict[type[Record], dict[Hashable, Record]] = field(
         default_factory=dict
     )
@@ -4592,31 +4646,6 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
             for rec in self._def_types:
                 self[rec]._load_from_excel()
 
-    def __hash__(self) -> int:
-        """Hash the DB."""
-        return gen_int_hash(
-            (
-                self.b_id,
-                self.url,
-                self._subs,
-            )
-        )
-
-    @cached_property
-    def _schema_types(
-        self,
-    ) -> Mapping[type[Record], Literal[True] | Require | str | sqla.TableClause]:
-        """Set of all schema types in this DB."""
-        types = dict(self._def_types).copy()
-
-        for rec in types:
-            types = {
-                **{r: True for r in rec._rel_types},
-                **types,
-            }
-
-        return types
-
     @cached_property
     def backend_type(
         self,
@@ -4659,34 +4688,6 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
             )
             else (sqla.create_engine(f"duckdb:///:memory:{self.b_id}"))
         )
-
-    @cached_property
-    def assoc_types(self) -> set[type[Record]]:
-        """Set of all association tables in this DB."""
-        assoc_types = set()
-        for rec in self._def_types:
-            pks = set([col.name for col in rec._primary_keys.values()])
-            fks = set(
-                [col.name for rel in rec._rels.values() for col in rel._fk_map.keys()]
-            )
-            if pks == fks:
-                assoc_types.add(rec)
-
-        return assoc_types
-
-    @cached_property
-    def relation_map(self) -> dict[type[Record], set[RelSet]]:
-        """Maps all tables in this DB to their outgoing or incoming relations."""
-        rels: dict[type[Record], set[RelSet]] = {
-            table: set() for table in self._def_types
-        }
-
-        for rec in self._def_types:
-            for rel in rec._rels.values():
-                rels[rec].add(rel)
-                rels[rel.record_type].add(rel)
-
-        return rels
 
     def describe(self) -> dict[str, str | dict[str, str] | None]:
         """Return a description of this database."""
@@ -4838,13 +4839,13 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
             .rename(columns={"index": "node_id"})
         )
 
-        directed_edges = reduce(set.union, (self.relation_map[n] for n in nodes))
+        directed_edges = reduce(set.union, (self._relation_map[n] for n in nodes))
 
         undirected_edges: dict[type[Record], set[tuple[RelSet, ...]]] = {
             t: set() for t in nodes
         }
         for n in nodes:
-            for at in self.assoc_types:
+            for at in self._assoc_types:
                 if len(at._rels) == 2:
                     left, right = (r for r in at._rels.values())
                     assert left is not None and right is not None
@@ -4918,6 +4919,73 @@ class DB(RecSet[Record, WriteT, BackT, None, Full], Backend[BackT]):
 
         return node_df, edge_df
 
+    def __hash__(self) -> int:
+        """Hash the DB."""
+        return gen_int_hash(
+            (
+                self.b_id,
+                self.url,
+                self._subs,
+            )
+        )
+
+    @cached_property
+    def _schema_types(
+        self,
+    ) -> Mapping[type[Record], Literal[True] | Require | str | sqla.TableClause]:
+        """Set of all schema types in this DB."""
+        types = dict(self._def_types).copy()
+
+        for rec in types:
+            types = {
+                **{r: True for r in rec._rel_types},
+                **types,
+            }
+
+        return types
+
+    @cached_property
+    def _assoc_types(self) -> set[type[Record]]:
+        """Set of all association tables in this DB."""
+        assoc_types = set()
+        for rec in self._def_types:
+            pks = set([col.name for col in rec._primary_keys.values()])
+            fks = set(
+                [col.name for rel in rec._rels.values() for col in rel._fk_map.keys()]
+            )
+            if pks == fks:
+                assoc_types.add(rec)
+
+        return assoc_types
+
+    @cached_property
+    def _relation_map(self) -> dict[type[Record], set[RelSet]]:
+        """Maps all tables in this DB to their outgoing or incoming relations."""
+        rels: dict[type[Record], set[RelSet]] = {
+            table: set() for table in self._def_types
+        }
+
+        for rec in self._def_types:
+            for rel in rec._rels.values():
+                rels[rec].add(rel)
+                rels[rel.record_type].add(rel)
+
+        return rels
+
+    def _get_valid_cache_set(self, rec: type[Record]) -> set[Hashable]:
+        """Get the valid cache set for a record type."""
+        if rec not in self._valid_caches:
+            self._valid_caches[rec] = set()
+
+        return self._valid_caches[rec]
+
+    def _get_instance_map(self, rec: type[Record]) -> dict[Hashable, Record]:
+        """Get the instance map for a record type."""
+        if rec not in self._instance_map:
+            self._instance_map[rec] = {}
+
+        return self._instance_map[rec]
+
     def _ensure_schema_exists(self, schema_name: str) -> str:
         """Ensure that the table exists in the database, then return it."""
         if not sqla.inspect(self.engine).has_schema(schema_name):
@@ -4988,7 +5056,7 @@ a = DynRecord
 
 
 def dynamic_record_type(
-    name: str, props: Iterable[Prop[Any, Any, Any]] = []
+    name: str, props: Iterable[Prop[Any, Any]] = []
 ) -> type[DynRecord]:
     """Create a dynamically defined record type."""
     return type(
