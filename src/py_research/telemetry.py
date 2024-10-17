@@ -11,10 +11,9 @@ from logging import StreamHandler
 from typing import IO, Literal, TypeVar, cast, overload
 
 import structlog
-from stqdm import stqdm
 from tqdm import tqdm as base_tqdm
 from tqdm.asyncio import tqdm_asyncio as aiotqdm
-from tqdm.autonotebook import tqdm as atqdm
+from tqdm.auto import tqdm as autotqdm
 
 
 class TqdmHandler(StreamHandler):
@@ -33,20 +32,6 @@ class TqdmHandler(StreamHandler):
                 self.tqdm.set_postfix_str(f"{msg[:50]}..." if len(msg) > 50 else msg)
         except Exception:  # pylint: disable=broad-except
             self.handleError(record)
-
-
-def _check_streamlit():
-    """Check whether python code is run within streamlit."""
-    try:
-        from streamlit.runtime.scriptrunner import get_script_run_ctx
-
-        if not get_script_run_ctx():
-            use_streamlit = False
-        else:
-            use_streamlit = True
-    except ModuleNotFoundError:
-        use_streamlit = False
-    return use_streamlit
 
 
 T = TypeVar("T")
@@ -180,7 +165,7 @@ def tqdm(
         **other_kwargs,
     )
 
-    res_tqdm = aiotqdm(**kwargs) if isinstance(iterable, AsyncIterable) else stqdm(**kwargs) if _check_streamlit() else atqdm(**kwargs)  # type: ignore  # noqa: E501
+    res_tqdm = aiotqdm(**kwargs) if isinstance(iterable, AsyncIterable) else autotqdm(**kwargs)  # type: ignore  # noqa: E501
     TqdmHandler.tqdm = res_tqdm
     return cast(Iterable[T], res_tqdm)
 
