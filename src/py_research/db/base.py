@@ -245,6 +245,21 @@ type Index = Hashable | Full | Singular | Filtered
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
 
 
+_pl_type_map: dict[type, pl.DataType | type] = {
+    UUID: pl.String,
+}
+
+
+def _get_pl_schema(cols: Iterable[Col[Any, Any, Any, Any]]) -> pl.Schema:
+    """Return the schema of the dataset."""
+    return pl.Schema(
+        {
+            col.name: _pl_type_map.get(col.value_origin_type, col.value_origin_type)
+            for col in cols
+        }
+    )
+
+
 def _pd_to_py_dtype(c: pd.Series | pl.Series) -> type | None:
     """Map pandas dtype to Python type."""
     if isinstance(c, pd.Series):
@@ -718,6 +733,7 @@ def prop(
             ),  # type: ignore[reportArgumentType]
             map_by=map_by,
             _type=PropType(RelSet[Record]),
+            db=DB(b_id=Local.static),
         )
 
     return Col(
@@ -1022,7 +1038,7 @@ class RecordMeta(type):
     ]
     _class_props: dict[str, Prop[Any, Any, Any]]
 
-    _is_record: bool = False
+    _is_root_class: bool = False
     _template: bool = False
     _src_mod: ModuleType | None = None
     _derivate: bool = False
@@ -1071,7 +1087,7 @@ class RecordMeta(type):
             else:
                 typevar_map = {}
 
-            if not isinstance(orig, RecordMeta) or orig._is_record:
+            if not isinstance(orig, RecordMeta) or orig._is_root_class:
                 continue
 
             if orig._template or cls._derivate:
@@ -1119,13 +1135,13 @@ class RecordMeta(type):
                 }
                 for base in cls._record_superclasses
             }
-            if not cls._is_record
+            if not cls._is_root_class
             else {}
         )
 
         cls._class_props = (
             {name: getattr(cls, name) for name in prop_defs.keys()}
-            if not cls._is_record
+            if not cls._is_root_class
             else {}
         )
 
@@ -1253,7 +1269,6 @@ class RecordMeta(type):
 class Record(Generic[KeyT], metaclass=RecordMeta):
     """Schema for a record in a database."""
 
-    _template: ClassVar[bool]
     _table_name: ClassVar[str] | None = None
     _type_map: ClassVar[dict[type, sqla.types.TypeEngine]] = {
         str: sqla.types.String().with_variant(
@@ -1261,14 +1276,17 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         ),  # Avoid oracle error when VARCHAR has no size parameter
         UUID: UUIDType(binary=False),
     }
-    _is_record: ClassVar[bool] = True
+
+    _template: ClassVar[bool]
     _derivate: ClassVar[bool] = False
+
+    _is_root_class: ClassVar[bool] = True
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Initialize a new record subclass."""
         super().__init_subclass__(**kwargs)
-        cls._is_record = False
+        cls._is_root_class = False
 
         cls.__dataclass_fields__ = {
             **{
@@ -1610,7 +1628,11 @@ class RecSet(
             type(
                 self.target_type.__name__ + "_" + token_hex(5),
                 (self.target_type,),
-                {"_rel": self, "_derivate": True},
+                {
+                    "_rel": self,
+                    "_derivate": True,
+                    "_src_mod": getmodule(self.target_type),
+                },
             ),
         )
 
@@ -1691,7 +1713,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1710,7 +1732,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1727,7 +1749,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1754,7 +1776,7 @@ class RecSet(
         LnT3,
         tuple[*KeyTt, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1766,7 +1788,7 @@ class RecSet(
     def __getitem__(
         self: RelSet[RecT2, Any, tuple, Any, Any, Any, Record | None, Any],
         key: RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
-    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2]: ...
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, RecT2]: ...
 
     # 11. Top-level relation selection, rel parent, left tuple, right single key
     @overload
@@ -1778,7 +1800,7 @@ class RecSet(
         LnT3,
         tuple[*KeyTt, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1805,7 +1827,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1824,7 +1846,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1841,7 +1863,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1868,7 +1890,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1895,7 +1917,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, Any],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1912,7 +1934,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1939,7 +1961,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[Any, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1951,7 +1973,7 @@ class RecSet(
     def __getitem__(
         self: RelSet[Any, Any, tuple, Any, Any, Any, Record | None, Any],
         key: RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record],
-    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record]: ...
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, Record]: ...
 
     # 20. Nested relation selection, rel parent, left tuple, right single key
     @overload
@@ -1963,7 +1985,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[Any, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -1990,7 +2012,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2007,7 +2029,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, Any],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2024,7 +2046,7 @@ class RecSet(
         LnT3,
         IdxStartEnd[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2051,7 +2073,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2070,7 +2092,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2087,7 +2109,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2114,7 +2136,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2141,7 +2163,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, *KeyTt],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2158,7 +2180,7 @@ class RecSet(
         LnT3,
         tuple[KeyT2, KeyT3],
         WriteT3,
-        Static,
+        BackT,
         RecT3,
         SelT3,
         FiltT3,
@@ -2180,7 +2202,7 @@ class RecSet(
             FiltT3,
             Record,
         ],
-    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, Record]: ...
+    ) -> RelSet[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, Record]: ...
 
     # Index filtering and selection:
 
@@ -3504,8 +3526,12 @@ class RecSet(
             for idx, rec in records.items()
         ]
 
+        rec_types = {type(rec) for rec in records.values()}
+        cols = set(c for c, _ in self._sql_idx_cols.values()) | reduce(
+            set.union, (set(rec._cols.values()) for rec in rec_types)
+        )
         # Transform attribute data into DataFrame.
-        return pl.DataFrame(col_data)
+        return pl.DataFrame(col_data, schema=_get_pl_schema(cols))
 
     def _mutate(
         self: RecSet[RecT2, RW, Any, Any, Any],
@@ -4102,11 +4128,12 @@ class RelSet(
 
     @property
     def links(
-        self: RelSet[Any, RecT2, Any, Any, Any, Any, Any],
+        self: RelSet[Any, RecT2, Any, WriteT, BackT, Any, Any, Any],
     ) -> RecSet[RecT2, WriteT, BackT, Any, Any, RecT2]:
         """Get the link set."""
-        r = self.parent_type._rel(self.link_type)
-        return cast(RecSet[RecT2, WriteT, BackT, Any, Any, RecT2], self.parents[r])
+        link_to_parent_rel = self._backrel
+        parent_to_link_rel = link_to_parent_rel._backrel
+        return self.parents[parent_to_link_rel]
 
     @cached_property
     def ln(self: RelSet[Any, RecT2, Any, Any, Any, Any]) -> type[RecT2]:
@@ -4291,9 +4318,9 @@ class RelSet(
                 return self.parent_type
 
     @cached_property
-    def _direct_rel(
+    def _backrel(
         self,
-    ) -> RelSet[ParT, LnT, Singular, WriteT, BackT, Record]:
+    ) -> RelSet[ParT, None, Any, WriteT, Static, Record]:
         """Direct rel."""
         on = self.on
         if on is None and issubclass(self.link_type, Record):
@@ -4308,20 +4335,26 @@ class RelSet(
                 ]
                 assert len(rels) == 1, "Direct relation must be unique."
                 return cast(
-                    RelSet[ParT, LnT, Singular, WriteT, BackT, Record],
+                    RelSet[ParT, None, Any, WriteT, Static, Record],
                     rels[0],
                 )
             case RelSet():
                 return cast(
-                    RelSet[ParT, LnT, Singular, WriteT, BackT, Record],
+                    RelSet[ParT, None, Any, WriteT, Static, Record],
                     on,
                 )
             case tuple():
                 link = on[0]
                 assert isinstance(link, RelSet)
-                return cast(RelSet[ParT, LnT, Singular, WriteT, BackT, Record], link)
+                return cast(RelSet[ParT, None, Any, WriteT, Static, Record], link)
             case dict() | Col() | list() | None:
-                return cast(RelSet[ParT, LnT, Singular, WriteT, BackT, Record], self)
+                return RelSet[ParT, None, Any, WriteT, Static, Record](
+                    _name=token_hex(4),
+                    _type=PropType(RelSet[self.parent_type]),
+                    _parent_type=self.target_type,
+                    on=self._to_static(),
+                    db=DB(b_id=Local.static),
+                )
 
     @cached_property
     def _inter_joins(
@@ -4594,13 +4627,11 @@ class RelSet(
             for idx, base_idx in indexes.items()
         ]
 
-        idx_cols = list(col for col, _ in self._sql_idx_cols.values()) + list(
+        idx_cols = set(col for col, _ in self._sql_idx_cols.values()) | set(
             self.target_type._pk_cols.values()
         )
         # Transform attribute data into DataFrame.
-        return pl.DataFrame(
-            col_data, schema={col.name: col.value_origin_type for col in idx_cols}
-        ).sort(by=list(self._sql_idx_cols.keys()))
+        return pl.DataFrame(col_data, schema=_get_pl_schema(idx_cols))
 
     def _mutate_from_rec_ids(  # noqa: C901
         self: RelSet[RecT2, Any, Any, RW, BackT, Any, Any, Any],

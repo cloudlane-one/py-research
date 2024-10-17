@@ -36,11 +36,13 @@
       "members": [
         {
           "name": "John",
-          "role": "baker"
+          "role": "baker",
+          "age": 30
         },
         {
           "name": "John",
-          "role": "manager"
+          "role": "manager",
+          "age": 40
         }
       ]
     },
@@ -71,11 +73,13 @@
       "members": [
         {
           "name": "John",
-          "role": "cleaner"
+          "role": "cleaner",
+          "age": 25
         },
         {
           "name": "Jane",
-          "role": "manager"
+          "role": "manager",
+          "age": 35
         }
       ]
     },
@@ -99,15 +103,18 @@
       "members": [
         {
           "name": "John",
-          "role": "mechanic"
+          "role": "mechanic",
+          "age": 45
         },
         {
           "name": "Jane",
-          "role": "manager"
+          "role": "manager",
+          "age": 55
         },
         {
           "name": "Jack",
-          "role": "manager"
+          "role": "manager",
+          "age": 65
         }
       ]
     }

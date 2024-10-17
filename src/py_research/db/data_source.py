@@ -467,18 +467,15 @@ async def _sliding_batch_map[
     return
 
 
-type MapTreeData[Dat: TreeNode] = dict[DirectPath, Dat]
-
-
 async def _load_tree_data[
     Rec: Record
 ](
     rec_type: type[Rec],
     loader: Callable[[Any], TreeNode | Coroutine[Any, Any, TreeNode]],
     async_loader: bool,
-    data_input: MapTreeData[Hashable],
+    data_input: dict[DirectPath, Hashable],
     db: DB,
-) -> MapTreeData[TreeNode]:
+) -> dict[DirectPath, TreeNode]:
     id_set = set(data_input.values())
 
     recs = db[rec_type][list(id_set)]
@@ -505,7 +502,7 @@ async def _load_tree_data[
             for idx in tqdm(id_set, desc=f"Loading `{rec_type.__name__}`")
         }
 
-    tree_output: MapTreeData[TreeNode] = {
+    tree_output: dict[DirectPath, TreeNode] = {
         path_idx: data[idx] for path_idx, idx in data_input.items()
     }
 
@@ -533,7 +530,7 @@ def _gen_match_expr(
         return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))
 
 
-type RestTreeData = dict[RecMap, MapTreeData[TreeData]]
+type RestTreeData = dict[RecMap, dict[DirectPath, TreeNode]]
 
 
 async def _load_record[
@@ -604,7 +601,7 @@ async def _load_record[
 async def _load_records(
     db: DB,
     rec_map: RecMap,
-    input_data: MapTreeData[TreeNode],
+    input_data: dict[DirectPath, TreeNode],
     rest_tree_data: RestTreeData,
     rel_to_parent: tuple[RelSet, Hashable] | None = None,
 ) -> dict[Hashable, Record | Hashable]:
@@ -617,15 +614,15 @@ async def _load_records(
     )
     rec_set = db[rec_type]
 
-    tree_data: MapTreeData[TreeNode]
-    if rec_map.loader is not None and has_type(input_data, MapTreeData[Hashable]):
+    tree_data: dict[DirectPath, TreeNode]
+    if rec_map.loader is not None and has_type(input_data, dict[DirectPath, Hashable]):
         tree_data = await _load_tree_data(
             rec_type, rec_map.loader, rec_map.async_loader, input_data, db
         )
     else:
         tree_data = input_data
 
-    parent_indexes: MapTreeData[Hashable] = {}
+    parent_indexes: dict[DirectPath, Hashable] = {}
     records: dict[Hashable, Record | Hashable] = {}
 
     for path_idx, node in tree_data.items():
@@ -711,7 +708,7 @@ async def _load_records(
                     rel_data,
                     rest_tree_data,
                     (
-                        (rel._direct_rel, parent_idx)
+                        (rel._backrel, parent_idx)
                         if issubclass(rel.target_type, rel._fk_record_type)
                         else None
                     ),
@@ -754,7 +751,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
             A Record instance
         """
         db = db if db is not None else DB()
-        in_data: MapTreeData[TreeNode] = {(): dat for dat in data}
+        in_data: dict[DirectPath, TreeNode] = {(): dat for dat in data}
         rest_data: RestTreeData = {}
         loaded = await _load_records(db, self, in_data, rest_data)
 
