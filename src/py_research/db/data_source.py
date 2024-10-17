@@ -711,7 +711,7 @@ async def _load_records(
                     rel_data,
                     rest_tree_data,
                     (
-                        (rel._counter_rel, parent_idx)
+                        (rel._direct_rel, parent_idx)
                         if issubclass(rel.target_type, rel._fk_record_type)
                         else None
                     ),

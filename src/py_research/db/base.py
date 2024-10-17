@@ -186,15 +186,15 @@ class RW(R):
     """Read-write flag."""
 
 
-class LocalBackend(StrEnum):
+class Local(StrEnum):
     """Local backend."""
 
     static = "local-stat"
     dynamic = "local-dyn"
 
 
-type Local = Literal[LocalBackend.dynamic]
-type Static = Literal[LocalBackend.static]
+type Dynamic = Literal[Local.dynamic]
+type Static = Literal[Local.static]
 type DynBackendID = LiteralString | Local
 type StatBackendID = DynBackendID | Static
 
@@ -1163,7 +1163,11 @@ class RecordMeta(type):
         super_pk_cols = {
             v.name: v for vs in cls._superclass_pks.values() for v in vs.keys()
         }
-        own_pks = {name: a for name, a in cls._base_cols.items() if a.primary_key}
+        own_pks = {
+            name: c
+            for name, c in cls._static_props.items()
+            if isinstance(c, Col) and c.primary_key
+        }
 
         if len(super_pk_cols) > 0 and len(own_pks) > 0:
             assert set(own_pks.keys()).issubset(
@@ -1242,7 +1246,7 @@ class RecordMeta(type):
 
     @property
     def _stat_db(cls) -> DB[RO, Any]:
-        return DB[RO, Any](types={cls}, b_id=LocalBackend.static)
+        return DB[RO, Any](types={cls}, b_id=Local.static)
 
 
 @dataclass_transform(kw_only_default=True, field_specifiers=(prop,), eq_default=False)
@@ -1255,7 +1259,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         str: sqla.types.String().with_variant(
             sqla.types.String(50), "oracle"
         ),  # Avoid oracle error when VARCHAR has no size parameter
-        UUID: sqla.types.String(),
+        UUID: UUIDType(binary=False),
     }
     _is_record: ClassVar[bool] = True
     _derivate: ClassVar[bool] = False
@@ -1374,7 +1378,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         )  # type: ignore[call-arg]
 
     _db: Attr[DB[RW, Any]] = prop(
-        local=True, default_factory=lambda: DB(b_id=LocalBackend.dynamic)
+        local=True, default_factory=lambda: DB(b_id=Local.dynamic)
     )
     _connected: Attr[bool] = prop(local=True, default=False)
     _root: Attr[bool] = prop(local=True, default=True)
@@ -2382,7 +2386,7 @@ class RecSet(
     ) -> sqla.Select:
         """Return select statement for this dataset."""
         select = sqla.select(
-            *(col for col, _ in self._sql_idx_cols.values()),
+            *(col for _, col in self._sql_idx_cols.values()),
             *(
                 col
                 for col_name, col in self._table.columns.items()
@@ -3378,27 +3382,30 @@ class RecSet(
         self,
     ) -> sqla.FromClause:
         """Recursively join all bases of this record to get the full data."""
-        table = self._base_table("read")
+        base_table = self._base_table("read")
 
-        base_joins = [
-            (self.db[base]._table, pk_map)
-            for base, pk_map in self.target_type._superclass_pks.items()
-        ]
-        for target_table, pk_map in base_joins:
+        table = base_table
+        cols = {col.name: col for col in base_table.columns}
+        for superclass, pk_map in self.target_type._superclass_pks.items():
+            superclass_table = self.db[superclass]._table
+            cols |= {col.name: col for col in superclass_table.columns}
+
             table = table.join(
-                target_table,
+                superclass_table,
                 reduce(
                     sqla.and_,
                     (
-                        table.c[pk.name] == target_table.c[target_pk.name]
+                        base_table.c[pk.name] == superclass_table.c[target_pk.name]
                         for pk, target_pk in pk_map.items()
                     ),
                 ),
             )
 
-        # TODO: Rename columns to their original names
-
-        return table
+        return (
+            sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
+            .select_from(table)
+            .subquery()
+        )
 
     def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
         """Create SQL-side table from Table class."""
@@ -4060,7 +4067,11 @@ class RelSet(
     @cached_property
     def is_direct_rel(self) -> bool:
         """Check if relation is direct."""
-        return self._direct_rel is True
+        on = self.on
+        if on is None and issubclass(self.link_type, Record):
+            on = self.link_type
+
+        return isinstance(on, dict | Col | list | None)
 
     @cached_property
     def parents(self) -> RecSet[ParT, WriteT, BackT, Any, Any, ParT]:
@@ -4124,6 +4135,13 @@ class RelSet(
         instance: None,
         owner: type[ParT2],
     ) -> RelSet[RecT2, LnT, IdxT, WriteT, Static, RecT2, SelT, Nullable, ParT2]: ...
+
+    @overload
+    def __get__(
+        self: RelSet[RecT2, Any, Any, Any, Static, Any, Any, Any],
+        instance: None,
+        owner: type[ParT2],
+    ) -> RelSet[RecT2, LnT, BaseIdx, WriteT, Static, RecT2, SelT, Full, ParT2]: ...
 
     @overload
     def __get__(
@@ -4275,7 +4293,7 @@ class RelSet(
     @cached_property
     def _direct_rel(
         self,
-    ) -> RelSet[ParT, LnT, Singular, WriteT, BackT, Record] | Literal[True]:
+    ) -> RelSet[ParT, LnT, Singular, WriteT, BackT, Record]:
         """Direct rel."""
         on = self.on
         if on is None and issubclass(self.link_type, Record):
@@ -4303,22 +4321,7 @@ class RelSet(
                 assert isinstance(link, RelSet)
                 return cast(RelSet[ParT, LnT, Singular, WriteT, BackT, Record], link)
             case dict() | Col() | list() | None:
-                return True
-
-    @cached_property
-    def _counter_rel(
-        self: RelSet[RecT2, LnT, Any, WriteT, BackT, ParT]
-    ) -> RelSet[ParT, LnT, Any, WriteT, BackT, RecT2]:
-        """Counter rel."""
-        if self._direct_rel is not True and issubclass(
-            self._direct_rel.parent_type, self.target_type
-        ):
-            return cast(RelSet[ParT, LnT, Any, WriteT, BackT, RecT2], self._direct_rel)
-
-        return cast(
-            RelSet[ParT, LnT, Any, WriteT, BackT, RecT2],
-            self.target_type._rel(self.parent_type),
-        )
+                return cast(RelSet[ParT, LnT, Singular, WriteT, BackT, Record], self)
 
     @cached_property
     def _inter_joins(
@@ -4569,7 +4572,7 @@ class RelSet(
         return copy_and_override(
             type(tmpl),
             tmpl,
-            db=DB(b_id=LocalBackend.static, types={self.target_type}),
+            db=DB(b_id=Local.static, types={self.target_type}),
             merges=RelTree(),
         )
 
@@ -4656,7 +4659,7 @@ class RelSet(
 class Backend(Generic[BackT]):
     """Data backend."""
 
-    b_id: BackT = LocalBackend.dynamic
+    b_id: BackT = Local.dynamic
     """Unique name to identify this database's backend by."""
 
     url: sqla.URL | CloudPath | HttpFile | Path | None = None
