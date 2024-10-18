@@ -1,0 +1,31 @@
+classDiagram
+    DB --|> Value
+    DB <|-- Table
+    Table --* "*" Record
+    Prop <|-- Attr
+    Attr <|-- Col
+    Record <|-- Struct
+    Value <|-- Struct
+    Value "1" *-- Attr
+    Value "*" *-- Col
+    DB --* "*" Table
+    Table <|-- Rel
+    Prop <|-- Rel
+    Rel <|-- Ref
+    Rel <|-- BackRef
+    Table --* "1..*" Prop
+    Record --* "1..*" Prop
+    Rel --> "1..*" Ref
+    BackRef --> "1" Ref
+    Col "1..*" <-- Ref
+    class Prop{
+        str name
+        type value_type
+    }
+    class Value{
+        from_json()
+        to_json()
+    }
+    class DB{
+        str url
+    }

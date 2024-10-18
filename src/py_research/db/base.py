@@ -1524,6 +1524,10 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         self.__dict__.update(rec_dict)
 
 
+type RelDict = dict[RelSet, RelDict]
+type Join = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
+
+
 @dataclass
 class RelTree(Generic[*RecTt]):
     """Tree of relations starting from the same root."""
@@ -1544,9 +1548,9 @@ class RelTree(Generic[*RecTt]):
         return list(self.rels)[-1]._root_set
 
     @cached_property
-    def dict(self) -> DataDict:
+    def dict(self) -> RelDict:
         """Tree representation of the relation set."""
-        tree: DataDict = {}
+        tree: RelDict = {}
 
         for rel in self.rels:
             subtree = tree
@@ -1595,9 +1599,6 @@ class Agg(Generic[RecT]):
 
     target: type[RecT]
     map: AggMap[RecT]
-
-
-type Join = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
 
 
 @dataclass(kw_only=True, eq=False)
@@ -2953,7 +2954,7 @@ class RecSet(
         assert isinstance(idx, tuple) and len(idx) == len(idx_names)
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, idx)}
 
-    def _joins(self, _subtree: DataDict | None = None) -> list[Join]:
+    def _joins(self, _subtree: RelDict | None = None) -> list[Join]:
         """Extract join operations from the relation tree."""
         joins = []
         _subtree = _subtree or self.merges.dict
@@ -3088,17 +3089,14 @@ class RecSet(
     ](self: RecSet[Any, Any, Any, Any, Any], rel: RS) -> RS:
         rel_filt, rel_filt_merges = self._parse_filters(rel.filters)
 
-        return cast(
-            RS,
-            copy_and_override(
-                RelSet[Any, Any, Any, Any, Any, Any, Any, Any],
-                rel,
-                _parent_type=self.rec,
-                db=self.db,
-                sel_keys=[*self.sel_keys, *rel.sel_keys],
-                filters=[*self.filters, *rel_filt],
-                merges=self.merges * rel.merges.prefix(self) * rel_filt_merges,
-            ),
+        return copy_and_override(
+            type(rel),
+            rel,
+            _parent_type=self.rec,
+            db=self.db,
+            sel_keys=[*self.sel_keys, *rel.sel_keys],
+            filters=[*self.filters, *rel_filt],
+            merges=self.merges * rel.merges.prefix(self) * rel_filt_merges,
         )
 
     def _suffix(
@@ -5254,6 +5252,3 @@ class Require:
     """Mark schema or record type as required."""
 
     present: bool = True
-
-
-type DataDict = dict[RelSet, DataDict]
