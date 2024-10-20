@@ -1166,7 +1166,7 @@ class RecordMeta(type):
             {
                 a.name: a
                 for rel in cls._base_rels.values()
-                if rel.is_direct_rel
+                if rel.is_direct_ref
                 for a in rel._fk_map.keys()
             },
         )
@@ -1412,12 +1412,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         direct_rels = {
             name: val
             for name, val in kwargs.items()
-            if name in cls._rels and cls._rels[name].is_direct_rel
+            if name in cls._rels and cls._rels[name].is_direct_ref
         }
         indirect_rels = {
             name: val
             for name, val in kwargs.items()
-            if name in cls._rels and not cls._rels[name].is_direct_rel
+            if name in cls._rels and not cls._rels[name].is_direct_ref
         }
 
         # First set all attributes.
@@ -1514,7 +1514,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         ) and all(
             r.name in data or all(fk.name in data for fk in r._fk_map.keys())
             for r in cls._rels.values()
-            if r.is_direct_rel
+            if r.is_direct_ref
         )
 
     def _update_dict(self) -> None:
@@ -4089,7 +4089,7 @@ class RelSet(
         return cast(type[RecT], self._type.record_type())
 
     @cached_property
-    def is_direct_rel(self) -> bool:
+    def is_direct_ref(self) -> bool:
         """Check if relation is direct."""
         on = self.on
         if on is None and issubclass(self.link_type, Record):
@@ -4206,7 +4206,7 @@ class RelSet(
     ) -> RelSet[Any, Any, Any, Any, Any, Any, Any, Any, Any] | Record | None:
         if owner is not None and issubclass(owner, Record):
             if isinstance(instance, Record):
-                if self.is_direct_rel:
+                if self.is_direct_ref:
                     single_self = cast(
                         RelSet[RecT, Any, Singular, Any, Static, RecT, Any], self
                     )
@@ -4240,7 +4240,7 @@ class RelSet(
         if value is Keep:
             return
 
-        if self.is_direct_rel:
+        if self.is_direct_ref:
             instance._db[self.target_type]._mutate(value)
             for fk, pk in self._fk_map.items():
                 setattr(instance, fk.name, getattr(value, pk.name))
@@ -4329,7 +4329,7 @@ class RelSet(
                 rels = [
                     r
                     for r in on._rels.values()
-                    if issubclass(self.parent_type, r.target_type) and r.is_direct_rel
+                    if issubclass(self.parent_type, r.target_type) and r.is_direct_ref
                 ]
                 assert len(rels) == 1, "Direct relation must be unique."
                 return cast(
@@ -4526,7 +4526,7 @@ class RelSet(
                     if self.map_by is not None
                     else (
                         self.target_type._pk_cols.values()
-                        if not self.is_direct_rel
+                        if not self.is_direct_ref
                         else []
                     )
                 )
@@ -4654,7 +4654,7 @@ class RelSet(
             RecSet._mutate_from_sql(self, value_table, mode)
 
         # Update relations with parent records.
-        if self.is_direct_rel:
+        if self.is_direct_ref:
             # Case: parent links directly to child (n -> 1)
             fk_cols = [
                 value_table.c[pk.name].label(fk.name) for fk, pk in self._fk_map.items()
