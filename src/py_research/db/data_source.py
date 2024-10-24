@@ -26,7 +26,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DB, Col, Record, RecSet, RelSet, Static
+from .base import DB, Col, Record, RelTable, Static, Table
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -196,13 +196,13 @@ class Index:
 
 type PullMap[Rec: Record] = SupportsItems[
     Col[Any, Any, Static, Rec, Any]
-    | RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
+    | RelTable[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
     | Index,
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
     Col[Any, Any, Static, Rec, Any]
-    | RelSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
+    | RelTable[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
     | Index,
     DataSelect,
 ]
@@ -254,12 +254,12 @@ class RecMap[Rec: Record, Dat]:
         }
 
     @cached_property
-    def rels(self) -> dict[RelSet, SubMap]:
+    def rels(self) -> dict[RelTable, SubMap]:
         """Get all relation mappings."""
         return {
-            cast(RelSet[Any, Any, Any, Any, Any, Record], rel): sel
+            cast(RelTable[Any, Any, Any, Any, Any, Record], rel): sel
             for rel, sel in self.full_map.items()
-            if isinstance(rel, RelSet) and isinstance(sel, SubMap)
+            if isinstance(rel, RelTable) and isinstance(sel, SubMap)
         }
 
     def __hash__(self) -> int:  # noqa: D105
@@ -337,7 +337,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelSet[Rec, Any, Any, Any, Static, Rec2, Rec]
+    rel: RelTable[Rec, Any, Any, Any, Static, Rec2, Rec]
     """Relation to use for mapping."""
 
     link: RecMap | None = None
@@ -511,7 +511,7 @@ type RestData = list[tuple[RecMap, InData]]
 async def _load_record[
     Rec: Record
 ](
-    rec_set: RecSet[Rec, Any, Static, Any, Any],
+    rec_set: Table[Rec, Any, Static, Any, Any],
     rel_data: RelData,
     rec_map: RecMap[Rec, TreeNode],
     parent_idx: Hashable | None,

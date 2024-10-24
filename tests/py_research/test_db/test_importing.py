@@ -14,12 +14,12 @@ from py_research.db import (
     Link,
     RecMap,
     Record,
-    RecSet,
     RecUUID,
     Rel,
     RelMap,
-    RelSet,
+    RelTable,
     SubMap,
+    Table,
     prop,
 )
 
@@ -37,7 +37,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: RelSet[Project, SearchResult]
+    results: RelTable[Project, SearchResult]
 
 
 Assignment = Link["User", "Task"]
@@ -48,7 +48,7 @@ class Task(RecUUID):
 
     name: Col[str]
     project: Rel[Project]
-    assignees: RelSet[User, Assignment]
+    assignees: RelTable[User, Assignment]
     status: Col[Literal["todo", "done"]]
 
 
@@ -57,7 +57,7 @@ class User(RecUUID):
 
     name: Col[str]
     age: Col[int]
-    tasks: RelSet[Task, Assignment]
+    tasks: RelTable[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -82,8 +82,8 @@ class Project(Record[int]):
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
     org: Rel[Organization | None]
-    tasks: RelSet[Task] = prop(link_from=Task.project)
-    members: RelSet[User] = prop(link_via=Membership)
+    tasks: RelTable[Task] = prop(link_from=Task.project)
+    members: RelTable[User] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -92,7 +92,7 @@ class Organization(RecUUID):
     name: Col[str]
     address: Col[str]
     city: Col[str]
-    projects: RelSet[Project] = prop(link_from=Project.org)
+    projects: RelTable[Project] = prop(link_from=Project.org)
 
 
 @pytest.fixture
@@ -159,7 +159,7 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
-    assert isinstance(db, RecSet)
+    assert isinstance(db, Table)
 
     assert len(db[Search]) == 1
     assert len(db[Project]) == 3
