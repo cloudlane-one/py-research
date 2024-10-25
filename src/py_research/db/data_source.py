@@ -344,15 +344,15 @@ class RelMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Mapping to optional attributes of the link record."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        self.rec_type = self.rel.target_type
+        self.rec_type = self.rel.target
         if self.link is not None:
-            self.link.rec_type = self.rel.link_type
+            self.link.rec_type = self.rel.link
 
     @cached_property
     def link_map(self) -> RelMap | None:
         """Get the link map."""
-        if issubclass(self.rel.link_type, Record) and self.link is not None:
-            return copy_and_override(RelMap, self.link, rel=self.rel.links)
+        if issubclass(self.rel.link, Record) and self.link is not None:
+            return copy_and_override(RelMap, self.link, rel=self.rel.link_table)
 
         return None
 
@@ -556,7 +556,7 @@ async def _load_record[
         if isinstance(idx, Index)
     }
     if len(indexes) > 0:
-        rec_pks = list(rec_set.target_type._pk_cols.values())
+        rec_pks = list(rec_set.target._pk_cols.values())
         idx_maps = [
             dict(
                 zip(
@@ -606,7 +606,7 @@ async def _load_record[
     rec: Record | None = None
     is_new: bool = True
     if rec_map.rec_type._is_complete_dict(rec_dict):
-        rec = rec_map.rec_type(_db=rec_set.db, **rec_dict)
+        rec = rec_map.rec_type(_db=rec_set._db, **rec_dict)
 
     match_expr = _gen_match_expr(
         rec_map.rec_type,

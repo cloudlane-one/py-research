@@ -39,7 +39,6 @@ import sqlalchemy as sqla
 import sqlalchemy.dialects.mysql as mysql
 import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.orm as orm
-import sqlalchemy.sql.elements as sqla_elements
 import sqlalchemy.sql.type_api as sqla_types
 import sqlalchemy.sql.visitors as sqla_visitors
 import yarl
@@ -153,6 +152,8 @@ FiltT = TypeVar(
 FiltT2 = TypeVar("FiltT2", bound="Full | Filtered | Singular | Nullable")
 FiltT3 = TypeVar("FiltT3", bound="Full | Filtered | Singular | Nullable")
 
+SingleT2 = TypeVar("SingleT2", bound="Singular | Nullable")
+
 
 RefT = TypeVar("RefT", bound="Singular | Nullable", covariant=True, default="Singular")
 
@@ -169,14 +170,14 @@ Params = ParamSpec("Params")
 class Undef:
     """Demark undefined status."""
 
-    __hash__: ClassVar[None]  # type: ignore[assignment]
+    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
 @final
 class Keep:
     """Demark unchanged status."""
 
-    __hash__: ClassVar[None]  # type: ignore[assignment]
+    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
 class R:
@@ -225,7 +226,7 @@ type ValInput[Val, Key: Hashable] = pd.Series | pl.Series | Mapping[
 class BaseIdx:
     """Singleton to mark dataset as having the record type's base index."""
 
-    __hash__: ClassVar[None]  # type: ignore[assignment]
+    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
 @final
@@ -257,7 +258,7 @@ _pl_type_map: dict[type, pl.DataType | type] = {
 }
 
 
-def _get_pl_schema(cols: Iterable[Col[Any, Any, Any, Any]]) -> pl.Schema:
+def _get_pl_schema(cols: Iterable[Col[Any, Any, Any, Any, Any, Any]]) -> pl.Schema:
     """Return the schema of the dataset."""
     return pl.Schema(
         {
@@ -376,7 +377,7 @@ def _remove_cross_fk(table: sqla.Table):
             if fk.constraint and fk.constraint.referred_table.schema == table.schema
         )
 
-    table.foreign_keys = set(  # type: ignore[reportAttributeAccessIssue]
+    table.foreign_keys = set(  # pyright: ignore[reportAttributeAccessIssue]
         fk
         for fk in table.foreign_keys
         if fk.constraint and fk.constraint.referred_table.schema == table.schema
@@ -665,8 +666,8 @@ class Attr(Prop[ValT, WriteT], Generic[ValT, WriteT, PubT]):
 
             if instance is None and self.pub_status is Public:
                 return Col(
-                    table=owner._stat_table,
-                    attr=cast(Attr[ValT, WriteT, Public], self),
+                    _table=owner._stat_table,
+                    _attr=cast(Attr[ValT, WriteT, Public], self),
                 )
 
         return self
@@ -686,6 +687,77 @@ class Attr(Prop[ValT, WriteT], Generic[ValT, WriteT, PubT]):
         if self.pub_status is Public and instance._connected:
             instance._set._mutate(instance)
 
+        return
+
+
+@dataclass(eq=False)
+class AttrSet(Prop[ValT, WriteT], Generic[ValT, IdxT, WriteT]):
+    """Record attribute set."""
+
+    @overload
+    def __get__(
+        self, instance: None, owner: type[ParT2]
+    ) -> Col[ValT, WriteT, Static, ParT2, IdxT, Full]: ...
+
+    @overload
+    def __get__(
+        self, instance: ParT2, owner: type[ParT2]
+    ) -> Col[ValT, WriteT, DynBackendID, ParT2, IdxT, Full]: ...
+
+    @overload
+    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
+
+    def __get__(  # noqa: D105
+        self, instance: object | None, owner: type | type[ParT2] | None
+    ) -> Col[ValT, WriteT, Any, ParT2, IdxT, Full] | ValT | Self:
+        if owner is not None and issubclass(owner, Record):
+            rel_to_owner = Rel(_name="record", _type=owner)
+            rec_type = dynamic_record_type(
+                owner._default_table_name() + "_" + self.name, [rel_to_owner]
+            )
+
+            if isinstance(instance, Record):
+                rel_table = RelTable[
+                    Any, None, IdxT, WriteT, DynBackendID, Any, Any, Full, ParT2
+                ](
+                    _db=instance._db,
+                    _parent_type=cast(type[ParT2], owner),
+                    _rel_prop=BackRel(to=getattr(rec_type, "record")),
+                )
+                return Col[ValT, WriteT, DynBackendID, ParT2, IdxT, Full](
+                    _table=rel_table,
+                    _attr=self,
+                )
+
+            if instance is None:
+                rel_table = RelTable[
+                    Any, None, IdxT, WriteT, Static, Any, Any, Full, ParT2
+                ](
+                    _db=owner._stat_db,
+                    _parent_type=cast(type[ParT2], owner),
+                    _rel_prop=BackRel(to=getattr(rec_type, "record")),
+                )
+                return Col[ValT, WriteT, Static, ParT2, IdxT, Full](
+                    _table=rel_table,
+                    _attr=self,
+                )
+
+        return self
+
+    def __set__(
+        self: AttrSet[ValT2, Any, RW],
+        instance: Record,
+        value: ValInput[ValT2, Any] | Col[ValT2, Any, Any, Any, Any] | type[Keep],
+    ) -> None:
+        """Set the value of the column."""
+        if value is Keep:
+            return
+
+        instance._set._mutate(instance)
+        stat_col: Col[ValT2, RW, Static, Record, IdxT, Full] = getattr(
+            type(instance), self.name
+        )
+        instance._set[stat_col] @= value
         return
 
 
@@ -724,8 +796,8 @@ class Rel(
                         copy_and_override(
                             type(fk),
                             fk,
-                            table=fk.table,
-                            attr=copy_and_override(
+                            _table=fk._table,
+                            _attr=copy_and_override(
                                 type(fk.attr),
                                 fk.attr,
                                 index=fk.index or self.index,
@@ -741,8 +813,8 @@ class Rel(
                     copy_and_override(
                         type(fk),
                         fk,
-                        table=fk.table,
-                        attr=copy_and_override(
+                        _table=fk._table,
+                        _attr=copy_and_override(
                             type(fk.attr),
                             fk.attr,
                             index=fk.index or self.index,
@@ -821,10 +893,9 @@ class Rel(
 
             if instance is None:
                 return RelTable(
-                    db=owner._stat_db,
-                    target_type=self.target_type,
-                    parent_type=owner,
-                    rel=self,
+                    _db=owner._stat_db,
+                    _parent_type=owner,
+                    _rel_prop=self,
                 )
 
         return self
@@ -842,9 +913,12 @@ class Rel(
         if value is Keep:
             return
 
-        instance._db[self.target_type]._mutate(value)
-        for fk, pk in self.fk_map.items():
-            setattr(instance, fk.name, getattr(value, pk.name))
+        owner = type(instance)
+        stat_rel: RelTable[
+            RecT2, None, BaseIdx, RW, Static, RecT2, None, Singular, ParT2
+        ] = getattr(owner, self.name)
+        instance._set[stat_rel]._mutate(value)
+        instance._update_dict()
 
 
 @dataclass(kw_only=True)
@@ -886,7 +960,7 @@ class RelSet(
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
 
-    def __get__(  # noqa: D105 # type: ignore[reportIncompatibleMethodOverride]
+    def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         instance: object | None,
         owner: type | type[ParT2] | None,
@@ -901,18 +975,16 @@ class RelSet(
                 return RelTable[
                     RecT, LnT, IdxT, WriteT, Any, RecT, Record | None, Full, ParT2
                 ](
-                    db=instance._db,
-                    target_type=self.target_type,
-                    parent_type=cast(type[ParT2], owner),
-                    rel=self,
+                    _db=instance._db,
+                    _parent_type=cast(type[ParT2], owner),
+                    _rel_prop=self,
                 )
 
             if instance is None:
                 return RelTable(
-                    db=owner._stat_db,
-                    target_type=self.target_type,
-                    parent_type=owner,
-                    rel=self,
+                    _db=owner._stat_db,
+                    _parent_type=owner,
+                    _rel_prop=self,
                 )
 
         return self
@@ -929,7 +1001,10 @@ class RelSet(
         if value is Keep:
             return
 
-        instance._set._mutate(value)
+        stat_rel: RelTable[RecT, LnT, IdxT, RW, Static, RecT, None, Full, ParT2] = (
+            getattr(type(instance), self.name)
+        )
+        instance._set[stat_rel]._mutate(value)
 
 
 type BackLink[P: Record, T: Record] = (
@@ -1145,14 +1220,26 @@ class RecordMeta(type):
         return {k: c for k, c in cls._props.items() if isinstance(c, Attr)}
 
     @property
+    def _attr_sets(
+        cls: type[RecT2],  # type: ignore
+    ) -> dict[str, AttrSet[Any, Any, Any]]:
+        return {k: c for k, c in cls._props.items() if isinstance(c, AttrSet)}
+
+    @property
     def _cols(
         cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Any, Any, Static, RecT2]]:
+    ) -> dict[str, Col[Any, Any, Static, RecT2, BaseIdx, Singular | Nullable]]:
         return {
             k: getattr(cls, a.name)
             for k, a in cls._attrs.items()
             if a.pub_status is Public
         }
+
+    @property
+    def _rel_cols(
+        cls: type[RecT2],  # type: ignore
+    ) -> dict[str, Col[Any, Any, Static, RecT2, Any, Full]]:
+        return {k: getattr(cls, a.name) for k, a in cls._attr_sets.items()}
 
     @property
     def _rels(
@@ -1165,14 +1252,14 @@ class RecordMeta(type):
         }
 
     @property
-    def _data_attrs(
+    def _data_cols(
         cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Any, Any, Static, RecT2]]:
+    ) -> dict[str, Col[Any, Any, Static, RecT2, BaseIdx, Singular | Nullable]]:
         return {k: c for k, c in cls._cols.items() if k not in cls._fk_cols}
 
     @property
     def _rel_types(cls: type[RecT2]) -> set[type[Record]]:  # type: ignore
-        return {rel.target_type for rel in cls._rels.values()}
+        return {rel.target for rel in cls._rels.values()}
 
     @property
     def _stat_db(cls) -> DB[Any, Static]:
@@ -1214,7 +1301,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             **{
                 name: Field(
                     p.default,
-                    p.default_factory,  # type: ignore[reportArgumentType]
+                    p.default_factory,  # pyright: ignore[reportArgumentType]
                     p.init,
                     hash=isinstance(p, Col) and p.primary_key,
                     repr=True,
@@ -1223,6 +1310,19 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
                     kw_only=True,
                 )
                 for name, p in cls._attrs.items()
+            },
+            **{
+                name: Field(
+                    MISSING,
+                    lambda: MISSING,
+                    init=True,
+                    repr=True,
+                    hash=False,
+                    metadata={},
+                    compare=True,
+                    kw_only=True,
+                )
+                for name, p in cls._attr_sets.items()
             },
             **{
                 name: Field(
@@ -1273,10 +1373,11 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             set()
         )
         for rel in cls._rels.values():
-            if isinstance(rel.rel, BackRel):
+            if isinstance(rel.rel_prop, BackRel):
                 rels.add(
                     RelTable[Self, Any, Singular, Any, Static, Self, Any, Any, RecT2](
-                        parent_type=target, rel=cast(Rel[Self], rel.rel.to.rel)
+                        _parent_type=target,
+                        _rel_prop=cast(Rel[Self], rel.rel_prop.to.rel_prop),
                     )
                 )
 
@@ -1287,7 +1388,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         assert cls._default_table_name() is not None
         return sqla.table(cls._default_table_name())
 
-    @classmethod  # type: ignore[reportArgumentType]
+    @classmethod  # pyright: ignore[reportArgumentType]
     def _from_existing(
         cls: Callable[Params, RecT2],
         rec: Record[KeyT],
@@ -1299,7 +1400,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             rec,
             *(arg if arg is not Keep else MISSING for arg in args),
             **{k: v if v is not Keep else MISSING for k, v in kwargs.items()},
-        )  # type: ignore[call-arg]
+        )  # pyright: ignore[reportCallIssue]
 
     _db: Attr[DB[RW, Any], RW, Private] = Attr(
         pub_status=Private, default_factory=lambda: DB(b_id=Local.dynamic)
@@ -1318,12 +1419,15 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         direct_rels = {
             name: val
             for name, val in kwargs.items()
-            if name in cls._rels and isinstance(cls._rels[name].rel, Rel)
+            if name in cls._rels and isinstance(cls._rels[name].rel_prop, Rel)
+        }
+        attr_sets = {
+            name: val for name, val in kwargs.items() if name in cls._attr_sets
         }
         indirect_rels = {
             name: val
             for name, val in kwargs.items()
-            if name in cls._rels and not isinstance(cls._rels[name].rel, Rel)
+            if name in cls._rels and isinstance(cls._rels[name].rel_prop, RelSet)
         }
 
         # First set all attributes.
@@ -1332,6 +1436,10 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
         # Then set all direct relations.
         for name, value in direct_rels.items():
+            setattr(self, name, value)
+
+        # Then all attribute sets.
+        for name, value in attr_sets.items():
             setattr(self, name, value)
 
         # Finally set all indirect relations.
@@ -1415,12 +1523,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             or a.getter is None
             or a.default is Undef
             or a.default_factory is None
-            for a in cls._data_attrs.values()
+            for a in cls._data_cols.values()
             if a.init is not False
         ) and all(
-            r.rel.name in data or all(fk.name in data for fk in r._fk_map.keys())
+            r.rel_prop.name in data or all(fk.name in data for fk in r._fk_map.keys())
             for r in cls._rels.values()
-            if isinstance(r.rel, Rel)
+            if isinstance(r.rel_prop, Rel)
         )
 
     def _update_dict(self) -> None:
@@ -1428,10 +1536,6 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         df = table.to_df()
         rec_dict = list(df.iter_rows(named=True))[0]
         self.__dict__.update(rec_dict)
-
-
-type JoinDict = dict[Rel[Any, Any] | BackRel[Any, Any, Any], JoinDict]
-type Join = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
 
 
 @dataclass(frozen=True)
@@ -1490,7 +1594,7 @@ class RelTree(Generic[*RecTt]):
     @property
     def types(self) -> tuple[*RecTt]:
         """Return the record types in the relation tree."""
-        return cast(tuple[*RecTt], tuple(r.target_type for r in self.rels))
+        return cast(tuple[*RecTt], tuple(r.target for r in self.rels))
 
 
 type AggMap[Rec: Record] = dict[Col[Rec, Any], Col | sqla.Function]
@@ -1504,14 +1608,20 @@ class Agg(Generic[RecT]):
     map: AggMap[RecT]
 
 
+type JoinDict = dict[RelTable[Any, None, Any, Any, Any, Any, Any, Any, Any], JoinDict]
+type SqlJoin = tuple[sqla.FromClause, sqla.ColumnElement[bool]]
+
+
 @dataclass(kw_only=True, eq=False)
 class Table(
     Generic[RecT, WriteT, BackT, SelT, FiltT, RelT],
 ):
     """Record dataset."""
 
-    db: DB[WriteT | RW, BackT] = field(default_factory=lambda: DB[WriteT, BackT]())
-    target_type: type[RecT] = Record
+    @cached_property
+    def target(self) -> type[RecT]:
+        """Traget record type."""
+        return self._target_type
 
     @cached_property
     def rec(self) -> type[RecT]:
@@ -1519,12 +1629,12 @@ class Table(
         return cast(
             type[RecT],
             type(
-                self.target_type.__name__ + "_" + token_hex(5),
-                (self.target_type,),
+                self.target.__name__ + "_" + token_hex(5),
+                (self.target,),
                 {
                     "_rel": self,
                     "_derivate": True,
-                    "_src_mod": getmodule(self.target_type),
+                    "_src_mod": getmodule(self.target),
                 },
             ),
         )
@@ -1537,7 +1647,7 @@ class Table(
     ) -> sqla.Result[tuple[*T]]:
         """Execute a SQL statement in this database's context."""
         stmt = self._parse_expr(stmt)
-        with self.db.engine.begin() as conn:
+        with self._db.engine.begin() as conn:
             return conn.execute(self._parse_expr(stmt))
 
     # Overloads: attribute selection:
@@ -1545,41 +1655,153 @@ class Table(
     # 1. DB-level type selection
     @overload
     def __getitem__(
-        self: Table[Any, Any, Any, Any, Any],
+        self: Table[Any, Any, Any, Any, Any, Any],
         key: type[RecT3],
     ) -> Table[RecT3, WriteT, BackT, SelT, FiltT, RecT3]: ...
 
-    # 2. Top-level attribute selection, rel parent
+    # 2. Top-level attribute selection, rel parent, base-idx col
     @overload
     def __getitem__(
-        self: RelTable[RecT2, Any, IdxT2, Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, Static, RecT3],
-    ) -> Col[ValT3, WriteT3, BackT, RecT2, IdxT2]: ...
+        self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, RecT2, BaseIdx, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, KeyT2, FiltT2]: ...
 
-    # 3. Top-level attribute selection, base parent
+    # 3. Top-level attribute selection, rel parent, plural col, both tuples
     @overload
     def __getitem__(
-        self: Table[RecT2, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, Static, RecT3],
-    ) -> Col[ValT3, WriteT3, BackT, RecT2, Hashable | BaseIdx]: ...
+        self: RelTable[RecT2, Any, tuple, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, RecT2, tuple, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple, FiltT2]: ...
 
-    # 4. Nested attribute selection, rel parent
+    # 4. Top-level attribute selection, rel parent, plural col, left tuple
     @overload
     def __getitem__(
-        self: RelTable[Any, Any, IdxT2, Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, Static, Record],
-    ) -> Col[ValT3, WriteT3, BackT, Record, IdxT2]: ...
+        self: RelTable[RecT2, Any, tuple[*KeyTt], Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, RecT2, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[*KeyTt, KeyT3], FiltT2]: ...
 
-    # 5. Nested attribute selection, base parent
+    # 5. Top-level attribute selection, rel parent, plural col, right tuple
     @overload
     def __getitem__(
-        self: Table[Any, Any, Any, Record | None, Any],
-        key: Col[ValT3, WriteT3, Static, Record],
-    ) -> Col[ValT3, WriteT3, BackT, Record, Hashable | BaseIdx]: ...
+        self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, RecT2, tuple[*KeyTt], FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[KeyT2, *KeyTt], FiltT2]: ...
+
+    # 6. Top-level attribute selection, rel parent, plural col, no tuple
+    @overload
+    def __getitem__(
+        self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, RecT2, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[KeyT2, KeyT3], FiltT2]: ...
+
+    # 7. Top-level attribute selection, base parent, singular col
+    @overload
+    def __getitem__(
+        self: Table[RecT2, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, RecT2, Any, SingleT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, BaseIdx, SingleT2]: ...
+
+    # 8. Top-level attribute selection, base parent, plural col, both tuples
+    @overload
+    def __getitem__(
+        self: Table[RecT2, Any, Any, Any, Any, Record[tuple]],
+        key: Col[ValT3, WriteT3, Static, RecT2, tuple, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple, FiltT2]: ...
+
+    # 9. Top-level attribute selection, base parent, plural col, left tuple
+    @overload
+    def __getitem__(
+        self: Table[RecT2, Any, Any, Any, Any, Record[tuple[*KeyTt]]],
+        key: Col[ValT3, WriteT3, Static, RecT2, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[*KeyTt, KeyT3], FiltT2]: ...
+
+    # 10. Top-level attribute selection, base parent, plural col, right tuple
+    @overload
+    def __getitem__(
+        self: Table[RecT2, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, RecT2, tuple[*KeyTt], FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[KeyT2, *KeyTt], FiltT2]: ...
+
+    # 11. Top-level attribute selection, base parent, plural col, no tuple
+    @overload
+    def __getitem__(
+        self: Table[RecT2, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, RecT2, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, RecT2, tuple[KeyT2, KeyT3], FiltT2]: ...
+
+    # 12. Nested attribute selection, rel parent, plural col, both tuples or base
+    @overload
+    def __getitem__(
+        self: RelTable[Any, Any, tuple, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, Any, tuple | BaseIdx, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, tuple, FiltT2]: ...
+
+    # 13. Nested attribute selection, rel parent, plural col, left tuple
+    @overload
+    def __getitem__(
+        self: RelTable[Any, Any, tuple, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, Any, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, IdxStartEnd[Any, KeyT3], FiltT2]: ...
+
+    # 14. Nested attribute selection, rel parent, plural col, right base or tuple
+    @overload
+    def __getitem__(
+        self: RelTable[Any, Any, KeyT2, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, Any, tuple | BaseIdx, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, KeyT2 | IdxStartEnd[KeyT2, Any], FiltT2]: ...
+
+    # 15. Nested attribute selection, rel parent, plural col, no tuple
+    @overload
+    def __getitem__(
+        self: RelTable[Any, Any, KeyT2, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, Any, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, IdxStartEnd[KeyT2, KeyT3], FiltT2]: ...
+
+    # 16. Nested attribute selection, base parent, singular col
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, Any, Any, SingleT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, BaseIdx, SingleT2]: ...
+
+    # 17. Nested attribute selection, base parent, plural col, both tuples
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Record[tuple]],
+        key: Col[ValT3, WriteT3, Static, Any, tuple, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, tuple, FiltT2]: ...
+
+    # 18. Nested attribute selection, base parent, plural col, left tuple
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Record[tuple]],
+        key: Col[ValT3, WriteT3, Static, Any, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, IdxStartEnd[Any, KeyT3], FiltT2]: ...
+
+    # 19. Nested attribute selection, base parent, plural col, right tuple
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, Any, tuple, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, IdxStartEnd[KeyT2, Any], FiltT2]: ...
+
+    # 20. Nested attribute selection, base parent, plural col, no tuple
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Record[KeyT2]],
+        key: Col[ValT3, WriteT3, Static, Any, KeyT3, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, IdxStartEnd[KeyT2, KeyT3], FiltT2]: ...
+
+    # 21. Default attribute selection
+    @overload
+    def __getitem__(
+        self: Table[Any, Any, Any, Any, Any, Any],
+        key: Col[ValT3, WriteT3, Static, Any, Any, FiltT2],
+    ) -> Col[ValT3, WriteT3, BackT, Any, Any, FiltT2]: ...
 
     # Overloads: relation selection:
 
-    # 6. Top-level relation selection, rel parent, left base key, right base key
+    # 22. Top-level relation selection, rel parent, left base key, right base key
     @overload
     def __getitem__(
         self: RelTable[
@@ -1608,7 +1830,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 7. Top-level relation selection, rel parent, left base key, right tuple
+    # 23. Top-level relation selection, rel parent, left base key, right tuple
     @overload
     def __getitem__(
         self: RelTable[
@@ -1629,7 +1851,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 8. Top-level relation selection, rel parent, left base key, right single key
+    # 24. Top-level relation selection, rel parent, left base key, right single key
     @overload
     def __getitem__(
         self: RelTable[
@@ -1648,7 +1870,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 9. Top-level relation selection, rel parent, left tuple, right base key
+    # 25. Top-level relation selection, rel parent, left tuple, right base key
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, tuple[*KeyTt], Any, Any, Any, Record | None, Any],
@@ -1675,14 +1897,14 @@ class Table(
         RecT2,
     ]: ...
 
-    # 10. Top-level relation selection, rel parent, left tuple, right tuple
+    # 26. Top-level relation selection, rel parent, left tuple, right tuple
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, tuple, Any, Any, Any, Record | None, Any],
         key: RelTable[RecT3, LnT3, tuple, WriteT3, Static, RecT3, SelT3, FiltT3, RecT2],
     ) -> RelTable[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, RecT2]: ...
 
-    # 11. Top-level relation selection, rel parent, left tuple, right single key
+    # 27. Top-level relation selection, rel parent, left tuple, right single key
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, tuple[*KeyTt], Any, Any, Any, Record | None, Any],
@@ -1699,7 +1921,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 12. Top-level relation selection, rel parent, left single key, right base key
+    # 28. Top-level relation selection, rel parent, left single key, right base key
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1726,7 +1948,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 13. Top-level relation selection, rel parent, left single key, right tuple
+    # 29. Top-level relation selection, rel parent, left single key, right tuple
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1745,7 +1967,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 14. Top-level relation selection, rel parent, left single key, right single key
+    # 30. Top-level relation selection, rel parent, left single key, right single key
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1762,7 +1984,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 15. Nested relation selection, rel parent, left base key, right base key
+    # 31. Nested relation selection, rel parent, left base key, right base key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
@@ -1789,7 +2011,7 @@ class Table(
         Record,
     ]: ...
 
-    # 16. Nested relation selection, rel parent, left base key, right tuple
+    # 32. Nested relation selection, rel parent, left base key, right tuple
     @overload
     def __getitem__(
         self: RelTable[Any, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
@@ -1816,7 +2038,7 @@ class Table(
         Record,
     ]: ...
 
-    # 17. Nested relation selection, rel parent, left base key, right single key
+    # 33. Nested relation selection, rel parent, left base key, right single key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, BaseIdx, Any, Any, Record[KeyT2], Record | None, Any],
@@ -1835,7 +2057,7 @@ class Table(
         Record,
     ]: ...
 
-    # 18. Nested relation selection, rel parent, left tuple, right base key
+    # 34. Nested relation selection, rel parent, left tuple, right base key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, tuple, Any, Any, Any, Record | None, Any],
@@ -1862,7 +2084,7 @@ class Table(
         Record,
     ]: ...
 
-    # 19. Nested relation selection, rel parent, left tuple, right tuple
+    # 35. Nested relation selection, rel parent, left tuple, right tuple
     @overload
     def __getitem__(
         self: RelTable[Any, Any, tuple, Any, Any, Any, Record | None, Any],
@@ -1871,7 +2093,7 @@ class Table(
         ],
     ) -> RelTable[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, Record]: ...
 
-    # 20. Nested relation selection, rel parent, left tuple, right single key
+    # 36. Nested relation selection, rel parent, left tuple, right single key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, tuple, Any, Any, Any, Record | None, Any],
@@ -1890,7 +2112,7 @@ class Table(
         Record,
     ]: ...
 
-    # 21. Nested relation selection, rel parent, left single key, right base key
+    # 37. Nested relation selection, rel parent, left single key, right base key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1917,7 +2139,7 @@ class Table(
         Record,
     ]: ...
 
-    # 22. Nested relation selection, rel parent, left single key, right tuple
+    # 38. Nested relation selection, rel parent, left single key, right tuple
     @overload
     def __getitem__(
         self: RelTable[Any, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1936,7 +2158,7 @@ class Table(
         Record,
     ]: ...
 
-    # 23. Nested relation selection, rel parent, left single key, right single key
+    # 39. Nested relation selection, rel parent, left single key, right single key
     @overload
     def __getitem__(
         self: RelTable[Any, Any, KeyT2, Any, Any, Any, Record | None, Any],
@@ -1955,7 +2177,7 @@ class Table(
         Record,
     ]: ...
 
-    # 24. Top-level relation selection, base parent, right base key
+    # 40. Top-level relation selection, base parent, right base key
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, RecT2],
@@ -1982,7 +2204,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 25. Top-level relation selection, base parent, right tuple
+    # 41. Top-level relation selection, base parent, right tuple
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, RecT2],
@@ -2001,7 +2223,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 26. Top-level relation selection, base parent, right single key
+    # 42. Top-level relation selection, base parent, right single key
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, RecT2],
@@ -2018,7 +2240,7 @@ class Table(
         RecT2,
     ]: ...
 
-    # 27. Nested relation selection, base parent, right base key
+    # 43. Nested relation selection, base parent, right base key
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, Any],
@@ -2045,7 +2267,7 @@ class Table(
         Any,
     ]: ...
 
-    # 28. Nested relation selection, base parent, right tuple
+    # 44. Nested relation selection, base parent, right tuple
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, Any],
@@ -2072,7 +2294,7 @@ class Table(
         Any,
     ]: ...
 
-    # 29. Nested relation selection, base parent, right single key
+    # 45. Nested relation selection, base parent, right single key
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record | None, Any, Any],
@@ -2089,26 +2311,26 @@ class Table(
         Any,
     ]: ...
 
-    # 30. Default relation selection
+    # 46. Default relation selection
     @overload
     def __getitem__(
-        self: Table[Any, Any, Any, Record | None, Any],
+        self: Table[Any, Any, Any, Any, Any, Any],
         key: RelTable[
             RecT3,
             LnT3,
-            Hashable | BaseIdx,
+            Any,
             WriteT3,
             Static,
             RecT3,
             SelT3,
             FiltT3,
-            Record,
+            Any,
         ],
     ) -> RelTable[RecT3, LnT3, tuple, WriteT3, BackT, RecT3, SelT3, FiltT3, Record]: ...
 
     # Index filtering and selection:
 
-    # 31. RelSet: Merge selection
+    # 47. RelSet: Merge selection
     @overload
     def __getitem__(
         self: RelTable[RecT2, Any, KeyT2, Any, Any, Any, Record | None],
@@ -2117,7 +2339,7 @@ class Table(
         RecT2, LnT, IdxT, WriteT, BackT, RecT2, tuple[RecT2, *RecTt], FiltT, ParT
     ]: ...
 
-    # 32. RelSet: Expression / key list / slice filtering
+    # 48. RelSet: Expression / key list / slice filtering
     @overload
     def __getitem__(
         self: RelTable[
@@ -2131,7 +2353,7 @@ class Table(
         ),
     ) -> RelTable[RecT, LnT, IdxT, WriteT, BackT, RecT, SelT, Filtered, ParT]: ...
 
-    # 33. RelSet: Index value selection, no record loading
+    # 49. RelSet: Index value selection, no record loading
     @overload
     def __getitem__(
         self: RelTable[
@@ -2140,7 +2362,7 @@ class Table(
         key: KeyT2 | KeyT3,
     ) -> RelTable[RecT, LnT, IdxT, WriteT, BackT, RecT, SelT, Singular, ParT]: ...
 
-    # 34. RelSet: Index value selection, record loading
+    # 50. RelSet: Index value selection, record loading
     @overload
     def __getitem__(
         self: RelTable[
@@ -2149,28 +2371,28 @@ class Table(
         key: KeyT2 | KeyT3,
     ) -> RecT: ...
 
-    # 35. Merge selection
+    # 51. Merge selection
     @overload
     def __getitem__(
         self: Table[RecT2, Any, Any, Record | None, Any],
         key: RelTree[RecT2, *RecTt],
     ) -> Table[RecT2, WriteT, BackT, tuple[RecT2, *RecTt], FiltT, RecT2]: ...
 
-    # 36. Expression / key list / slice filtering
+    # 52. Expression / key list / slice filtering
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Any, Full | Filtered],
         key: sqla.ColumnElement[bool] | Iterable[KeyT2] | slice | tuple[slice, ...],
     ) -> Table[RecT, WriteT, BackT, SelT, Filtered, RecT]: ...
 
-    # 37. Index value selection, no record loading
+    # 53. Index value selection, no record loading
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, None, Full | Filtered],
         key: KeyT2,
     ) -> Table[RecT, WriteT, BackT, SelT, Singular, RecT]: ...
 
-    # 38. Index value selection, record loading
+    # 54. Index value selection, record loading
     @overload
     def __getitem__(
         self: Table[Record[KeyT2], Any, Any, Record, Full | Filtered],
@@ -2180,11 +2402,11 @@ class Table(
     # Implementation:
 
     def __getitem__(  # noqa: D105
-        self: Table[Record, Any, Any, Any, Any],
+        self: Table[Record, Any, Any, Any, Any, Any],
         key: (
             type[Record]
-            | Col
-            | Table
+            | Col[Any, Any, Static, Any, Any, Any]
+            | RelTable[Any, Any, Any, Any, Static, Any, Any, Any, Any]
             | RelTree
             | sqla.ColumnElement[bool]
             | list[Hashable]
@@ -2192,32 +2414,40 @@ class Table(
             | tuple[slice, ...]
             | Hashable
         ),
-    ) -> Col[Any, Any, Any, Any, Any] | Table[Record, Any, Any, Any, Any] | Record:
+    ) -> (
+        Col[Any, Any, Any, Any, Any, Any]
+        | Table[Record, Any, Any, Any, Any, Any]
+        | Record
+    ):
         match key:
             case type():
                 assert issubclass(
                     key,
-                    self.target_type,
+                    self.target,
                 )
-                return copy_and_override(Table[key], self, target_type=key)
+                return copy_and_override(Table[key], self, _target_type=key)
             case Col():
-                if isinstance(key.table, RelTable) and (
+                if isinstance(key._table, RelTable) and (
                     not isinstance(self, RelTable)
-                    or (key.table._to_static() != self._to_static())
+                    or (key.db_table._to_static() != self._to_static())
                 ):
-                    return self._suffix(key.table)[key]
+                    return self._suffix(key._table)[key]
 
-                return Col(table=self, attr=key.attr)
+                return Col(_table=self, _attr=key.attr)
             case RelTable():
                 return self._suffix(key)
             case RelTree():
                 return copy_and_override(
-                    type(self), self, _sel_merge=self._sel_merge * key.prefix(self)
+                    type(self),
+                    self,
+                    _target_type=self.target,
+                    _sel_merge=self._sel_merge * key.prefix(self),
                 )
             case sqla.ColumnElement():
                 return copy_and_override(
                     type(self),
                     self,
+                    _target_type=self.target,
                     _sql_filt=[*self._sql_filt, key],
                 )
             case list() | slice() | tuple() | Hashable():
@@ -2229,7 +2459,10 @@ class Table(
                     ), "Cannot select multiple single record keys"
 
                 key_set = copy_and_override(
-                    type(self), self, _key_filt=[*self._key_filt, key]
+                    type(self),
+                    self,
+                    _target_type=self.target,
+                    _key_filt=[*self._key_filt, key],
                 )
 
                 if not is_subtype(self._sel_type, Record):
@@ -2304,22 +2537,13 @@ class Table(
         index_only: bool = False,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
-        select = sqla.select(
-            *(col for _, col in self._sql_idx_cols.values()),
-            *(
-                col
-                for col_name, col in self._table.columns.items()
-                if not index_only and col_name not in self._sql_idx_cols
-            ),
-        ).select_from(self._table)
-
-        for join in self._gen_joins():
-            select = select.join(*join)
-
-        for filt in self._rendered_filters:
-            select = select.where(filt)
-
-        return select
+        return (
+            sqla.select(self._sql_query)
+            if not index_only
+            else sqla.select(*(col for col in self._idx_cols.values())).select_from(
+                self._sql_query
+            )
+        )
 
     @overload
     def to_df(
@@ -2364,22 +2588,22 @@ class Table(
         """Download selection."""
         select = self.select(index_only=index_only)
 
-        idx_cols = list(self._sql_idx_cols.keys())
+        idx_cols = list(self._idx_cols.keys())
 
         merged_df = None
         if kind is pd.DataFrame:
-            with self.db.engine.connect() as con:
+            with self._db.engine.connect() as con:
                 merged_df = pd.read_sql(select, con)
                 merged_df = merged_df.set_index(idx_cols)
         else:
             merged_df = pl.read_database(
-                str(select.compile(self.db.engine)), self.db.engine
+                str(select.compile(self._db.engine)), self._db.engine
             )
 
         if index_only:
             return cast(DfT, merged_df)
 
-        main_prefix = self.target_type._default_table_name() + "."
+        main_prefix = self.target._default_table_name() + "."
         main_cols = {
             col: col[len(main_prefix) :]
             for col in select.columns.keys()
@@ -2423,7 +2647,7 @@ class Table(
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
         df = self.to_df(index_only=True)
-        if len(self._sql_idx_cols) == 1:
+        if len(self._idx_cols) == 1:
             return [tup[0] for tup in df.iter_rows()]
 
         return list(df.iter_rows())
@@ -2443,10 +2667,10 @@ class Table(
         if isinstance(dfs, pl.DataFrame):
             dfs = (dfs,)
 
-        rec_types: list[type[Record]] = [self.target_type, *self._sel_merge.types]
+        rec_types: list[type[Record]] = [self.target, *self._sel_merge.types]
 
-        valid_caches = {rt: self.db._get_valid_cache_set(rt) for rt in rec_types}
-        instance_maps = {rt: self.db._get_instance_map(rt) for rt in rec_types}
+        valid_caches = {rt: self._db._get_valid_cache_set(rt) for rt in rec_types}
+        instance_maps = {rt: self._db._get_instance_map(rt) for rt in rec_types}
 
         recs = []
         for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
@@ -2454,13 +2678,13 @@ class Table(
 
             rec_list = []
             for rec_type, row in zip(rec_types, rows):
-                new_rec = self.target_type(**row)
+                new_rec = self.target(**row)
 
                 if new_rec._index in valid_caches[rec_type]:
                     rec = instance_maps[rec_type][new_rec._index]
                 else:
                     rec = new_rec
-                    rec._db = self.db
+                    rec._db = self._db
                     valid_caches[rec_type].add(rec._index)
                     instance_maps[rec_type][rec._index] = rec
 
@@ -2636,18 +2860,16 @@ class Table(
         if not isinstance(key, slice) or key != slice(None):
             del self[key][:]
 
-        select = self.select()
-
         tables = {
-            self.db[rec]._base_table(mode="upsert")
-            for rec in self.target_type._record_superclasses
+            self._db[rec]._get_sql_base_table(mode="upsert")
+            for rec in self.target._record_superclasses
         }
 
         statements = []
 
         for table in tables:
             # Prepare delete statement.
-            if self.db.engine.dialect.name in (
+            if self._db.engine.dialect.name in (
                 "postgres",
                 "postgresql",
                 "duckdb",
@@ -2660,7 +2882,7 @@ class Table(
                         reduce(
                             sqla.and_,
                             (
-                                table.c[col.name] == select.c[col.name]
+                                col == self[self.target._pk_cols[col.name]]
                                 for col in table.primary_key.columns
                             ),
                         )
@@ -2671,11 +2893,11 @@ class Table(
                 raise NotImplementedError("Correlated update not supported yet.")
 
         # Execute delete statements.
-        with self.db.engine.begin() as con:
+        with self._db.engine.begin() as con:
             for statement in statements:
                 con.execute(statement)
 
-        if self.db.backend_type == "excel-file":
+        if self._db.backend_type == "excel-file":
             self._save_to_excel()
 
     @overload
@@ -2710,13 +2932,11 @@ class Table(
     ) -> DB[RW, BackT | BackT2]:
         """Extract a new database instance from the current selection."""
         # Get all rec types in the schema.
-        rec_types = {self.target_type, *self.target_type._rel_types}
+        rec_types = {self.target, *self.target._rel_types}
 
         # Get the entire subdag of this target type.
         all_paths_rels = {
-            r
-            for rel in self.target_type._rels.values()
-            for r in rel._get_subdag(rec_types)
+            r for rel in self.target._rels.values() for r in rel._get_subdag(rec_types)
         }
 
         # Extract rel paths, which contain an aggregated rel.
@@ -2725,8 +2945,8 @@ class Table(
             for rel, agg in aggs.items():
                 for path_rel in all_paths_rels:
                     if path_rel._is_ancestor(rel):
-                        aggs_per_type[rel.parent_type] = [
-                            *aggs_per_type.get(rel.parent_type, []),
+                        aggs_per_type[rel.parent] = [
+                            *aggs_per_type.get(rel.parent, []),
                             (rel, agg),
                         ]
                         all_paths_rels.remove(path_rel)
@@ -2737,7 +2957,7 @@ class Table(
             selects = [
                 self[rel].select()
                 for rel in all_paths_rels
-                if issubclass(rec, rel.target_type)
+                if issubclass(rec, rel.target)
             ]
             replacements[rec] = sqla.union(*selects).select()
 
@@ -2745,18 +2965,17 @@ class Table(
         for rec, rec_aggs in aggs_per_type.items():
             selects = []
             for rel, agg in rec_aggs:
-                src_select = self[rel].select()
                 selects.append(
                     sqla.select(
                         *[
                             (
-                                src_select.c[sa.name]
+                                self[sa]
                                 if isinstance(sa, Col)
                                 else sqla_visitors.replacement_traverse(
                                     sa,
                                     {},
                                     replace=lambda element, **kw: (
-                                        src_select.c[element.name]
+                                        self[element]
                                         if isinstance(element, Col)
                                         else None
                                     ),
@@ -2772,7 +2991,7 @@ class Table(
         # Create a new database overlay for the results.
         overlay_db = copy_and_override(
             DB[RW, BackT],
-            self.db,
+            self._db,
             write_to_overlay=f"temp_{token_hex(10)}",
             overlay_type=overlay_type,
             schema=None,
@@ -2810,7 +3029,7 @@ class Table(
 
     def __len__(self) -> int:
         """Return the number of records in the dataset."""
-        with self.db.engine.connect() as conn:
+        with self._db.engine.connect() as conn:
             res = conn.execute(
                 sqla.select(sqla.func.count()).select_from(self.select().subquery())
             ).scalar()
@@ -2825,17 +3044,20 @@ class Table(
 
     def __clause_element__(self) -> sqla.Subquery:
         """Return subquery for the current selection to be used inside SQL clauses."""
-        return self._query
+        return self._sql_query
 
     def __hash__(self: Table[Any, Any, Any, Any, Any]) -> int:
         """Hash the RecSet."""
         return gen_int_hash(
-            (self.db, self.target_type, self._key_filt, self._filters, self._sel_merge)
+            (self._db, self.target, self._key_filt, self._filters, self._sel_merge)
         )
 
     def __eq__(self, other: object) -> bool:
         """Hash the Prop."""
         return hash(self) == hash(other)
+
+    _target_type: type[RecT]
+    _db: DB[WriteT | RW, BackT] = field(default_factory=lambda: DB[WriteT, BackT]())
 
     _key_filt: Sequence[slice | tuple[slice, ...] | list[Hashable] | Hashable] = field(
         default_factory=list
@@ -2844,6 +3066,19 @@ class Table(
 
     _sel_merge: RelTree = field(default_factory=RelTree)
     _sel_type: type[SelT] = NoneType
+
+    @cached_property
+    def _single_key(self) -> Hashable | None:
+        """Return the single selected key, if it exists."""
+        single_keys = [
+            k
+            for k in self._key_filt
+            if not isinstance(k, list | slice) and not has_type(k, tuple[slice, ...])
+        ]
+        if len(single_keys) > 0:
+            return single_keys[0]
+
+        return None
 
     @cached_property
     def _filter_merge(self) -> tuple[list[sqla.ColumnElement[bool]], RelTree]:
@@ -2859,7 +3094,7 @@ class Table(
                         else idx == val
                     )
                 )
-                for (idx, _), val in zip(self._sql_idx_cols.values(), self._key_filt)
+                for idx, val in zip(self._idx_cols.values(), self._key_filt)
             ]
             if len(self._key_filt) > 0
             else []
@@ -2875,7 +3110,11 @@ class Table(
     @cached_property
     def _rel_tree(self) -> RelTree:
         """Get the relation merges for this table."""
-        return self._filter_merge[1] | self._sel_merge
+        return (
+            self._filter_merge[1]
+            | self._sel_merge
+            | RelTree([col.rel_table for col in self.target._rel_cols.values()])
+        )
 
     @cached_property
     def _filters(self) -> list[sqla.ColumnElement[bool]]:
@@ -2900,10 +3139,133 @@ class Table(
         return tree
 
     @cached_property
-    def _query(self) -> sqla.Subquery:
+    def _sql_base_cols(self) -> dict[str, sqla.Column]:
+        """Columns of this record type's table."""
+        registry = orm.registry(
+            metadata=self._db._metadata, type_annotation_map=self.target._type_map
+        )
+
+        return {
+            name: sqla.Column(
+                col.name,
+                registry._resolve_type(col.value_type),  # type: ignore
+                primary_key=col.primary_key,
+                autoincrement=False,
+                index=col.index,
+                nullable=has_type(None, col.value_type),
+            )
+            for name, col in self.target._base_cols.items()
+        }
+
+    @cached_property
+    def _sql_base_fks(self) -> list[sqla.ForeignKeyConstraint]:
+        fks: list[sqla.ForeignKeyConstraint] = []
+
+        for rt in self.target._base_rels.values():
+            if isinstance(rt.rel_prop, Rel):
+                rel_table = rt._get_sql_base_table()
+                fks.append(
+                    sqla.ForeignKeyConstraint(
+                        [col.name for col in rt._fk_map.keys()],
+                        [rel_table.c[col.name] for col in rt._fk_map.values()],
+                        name=f"{self.target._get_table_name(self._db._subs)}_{rt.rel_prop.name}_fk",
+                    )
+                )
+
+        for base, pks in self.target._superclass_pks.items():
+            base_table = self._db[base]._get_sql_base_table()
+
+            fks.append(
+                sqla.ForeignKeyConstraint(
+                    [col.name for col in pks.keys()],
+                    [base_table.c[col.name] for col in pks.values()],
+                    name=(
+                        self.target._get_table_name(self._db._subs)
+                        + "_base_fk_"
+                        + gen_str_hash(base._get_table_name(self._db._subs), 5)
+                    ),
+                )
+            )
+
+        return fks
+
+    @cached_property
+    def _cols(
+        self,
+    ) -> Mapping[str, Col[Any, Any, BackT, Any, BaseIdx, Singular | Nullable]]:
+        """Return the index cols."""
+        return {
+            self._gen_col_fqn(col_name): self[col]
+            for col_name, col in self.target._cols.items()
+        } | {
+            label: col
+            for rel in self._rel_tree.all_rels
+            for label, col in rel._cols.items()
+        }
+
+    @cached_property
+    def _idx_cols(
+        self,
+    ) -> Mapping[str, Col[Hashable, Any, BackT, Any, Any]]:
+        """Return the index cols."""
+        return {
+            self._gen_col_fqn(col_name): self[col]
+            for col_name, col in self.target._pk_cols.items()
+        }
+
+    @cached_property
+    def _sql_table(
+        self,
+    ) -> sqla.FromClause:
+        """Recursively join all bases of this record to get the full data."""
+        base_table = self._get_sql_base_table("read")
+
+        table = base_table
+        cols = {col.name: col for col in base_table.columns}
+        for superclass, pk_map in self.target._superclass_pks.items():
+            superclass_table = self._db[superclass]._sql_table
+            cols |= {col.key: col for col in superclass_table.columns}
+
+            table = table.join(
+                superclass_table,
+                reduce(
+                    sqla.and_,
+                    (
+                        base_table.c[pk.name] == superclass_table.c[target_pk.name]
+                        for pk, target_pk in pk_map.items()
+                    ),
+                ),
+            )
+
+        return (
+            sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
+            .select_from(table)
+            .subquery()
+        )
+
+    @property
+    def _sql_select(self) -> sqla.Select:
         """Get select for this recset with stable alias name."""
-        return self.select().alias(
-            self.target_type._get_table_name(self.db._subs) + "." + hex(hash(self))[:6]
+        select = sqla.select(
+            *(
+                self._sql_table.c[col.name].label(label)
+                for label, col in self._cols.items()
+            )
+        ).select_from(self._sql_table)
+
+        for join in self._gen_joins():
+            select = select.join(*join)
+
+        for filt in self._filters:
+            select = select.where(filt)
+
+        return select
+
+    @cached_property
+    def _sql_query(self) -> sqla.Subquery:
+        """Get select for this recset with stable alias name."""
+        return self._sql_select.subquery(
+            self.target._get_table_name(self._db._subs) + "." + hex(hash(self))[:6]
         )
 
     def _to_static(
@@ -2913,14 +3275,15 @@ class Table(
         return copy_and_override(
             Table[RecT, WriteT, Static, SelT, FiltT, RecT],
             self,
-            db=DB(b_id=Local.static, types={self.target_type}),
+            _db=DB(b_id=Local.static, types={self.target}),
+            _target_type=self.target,
         )
 
     def _gen_idx_value_map(self, idx: Any, base: bool = False) -> dict[str, Hashable]:
         idx_names = list(
-            self._sql_idx_cols.keys()
+            self._idx_cols.keys()
             if not base
-            else self.db[self.target_type]._sql_idx_cols.keys()
+            else self._db[self.target]._idx_cols.keys()
         )
 
         if len(idx_names) == 1:
@@ -2939,10 +3302,10 @@ class Table(
         _traversed = _traversed or set()
 
         # Get relations of the target type as next relations
-        next_rels = set(self.target_type._rels.values())
+        next_rels = set(self.target._rels.values())
 
         for backlink_record in backlink_records:
-            next_rels |= backlink_record._backrels_to_rels(self.target_type)
+            next_rels |= backlink_record._backrels_to_rels(self.target)
 
         # Filter out already traversed relations
         next_rels = {rel for rel in next_rels if rel not in _traversed}
@@ -2963,28 +3326,27 @@ class Table(
         self,
         _subtree: JoinDict | None = None,
         _parent: Table[Any, Any, Any, Any, Any, Any] | None = None,
-    ) -> list[Join]:
+    ) -> list[SqlJoin]:
         """Extract join operations from the relation tree."""
-        joins: list[Join] = []
+        joins: list[SqlJoin] = []
         _subtree = _subtree if _subtree is not None else self._join_dict
         _parent = _parent if _parent is not None else self
 
-        for rel, next_subtree in _subtree.items():
-            target = RelTable(parent_type=_parent.target_type, rel=rel)._prefix(_parent)
+        for target, next_subtree in _subtree.items():
             joins.append(
                 (
-                    target._query,
+                    target._sql_query,
                     reduce(
                         sqla.and_,
                         (
                             (
-                                _parent[lk] == target[rk]
-                                for lk, rk in target._fk_map.items()
+                                _parent[fk] == target[pk]
+                                for fk, pk in target._fk_map.items()
                             )
-                            if isinstance(rel, Rel)
+                            if isinstance(target.direct_rel, Rel)
                             else (
-                                target[lk] == _parent[rk]
-                                for lk, rk in target._fk_map.items()
+                                target[fk] == _parent[pk]
+                                for fk, pk in target._fk_map.items()
                             )
                         ),
                     ),
@@ -2995,28 +3357,6 @@ class Table(
 
         return joins
 
-    @cached_property
-    def _has_list_index(self) -> bool:
-        return (
-            isinstance(self, RelTable)
-            and self._path_idx is not None
-            and len(self._path_idx) == 1
-            and is_subtype(list(self._path_idx)[0].value_type, int)
-        )
-
-    @cached_property
-    def _single_key(self) -> Hashable | None:
-        """Return the single selected key, if it exists."""
-        single_keys = [
-            k
-            for k in self._key_filt
-            if not isinstance(k, list | slice) and not has_type(k, tuple[slice, ...])
-        ]
-        if len(single_keys) > 0:
-            return single_keys[0]
-
-        return None
-
     def _suffix(
         self, right: RelTable[RecT2, Any, Any, Any, Any, Any, Any]
     ) -> RelTable[RecT2, Record, Any, WriteT, BackT, Record, Record]:
@@ -3024,29 +3364,28 @@ class Table(
         return copy_and_override(
             RelTable[RecT2, Record, Any, WriteT, BackT, Any, Record],
             right,
-            db=self.db,
-            parent_type=self.rec,
-            rel=right.rel,
+            _db=self._db,
+            _parent_type=self.rec,
+            _rel_prop=right.rel_prop,
         )
 
     def _visit_col(
         self,
         element: sqla_visitors.ExternallyTraversible,
         reflist: set[RelTable[Any, Any, Any, Any, Any]] = set(),
-        render: bool = False,
         **kw: Any,
     ) -> sqla.ColumnElement | None:
         if isinstance(element, Col):
-            if isinstance(element.table, RelTable):
+            if isinstance(element.db_table, RelTable):
                 if (
                     not isinstance(self, RelTable)
-                    or element.table._to_static() != self._to_static()
+                    or element.db_table._to_static() != self._to_static()
                 ):
-                    element.table = element.table._prefix(self)
+                    element._table = element.db_table._prefix(self)
 
-                reflist.add(element.table)
+                reflist.add(element.db_table)
 
-            return element.table._base_table().c[element.name] if render else element
+            return element
 
         return None
 
@@ -3065,111 +3404,30 @@ class Table(
 
         return parsed_filt, merge
 
-    @cached_property
-    def _sql_base_cols(self) -> dict[str, sqla.Column]:
-        """Columns of this record type's table."""
-        registry = orm.registry(
-            metadata=self.db._metadata, type_annotation_map=self.target_type._type_map
-        )
-
-        return {
-            name: sqla.Column(
-                col.name,
-                registry._resolve_type(col.value_type),  # type: ignore
-                primary_key=col.primary_key,
-                autoincrement=False,
-                index=col.index,
-                nullable=has_type(None, col.value_type),
-            )
-            for name, col in self.target_type._base_cols.items()
-        }
-
-    @cached_property
-    def _sql_base_fks(self) -> list[sqla.ForeignKeyConstraint]:
-        fks: list[sqla.ForeignKeyConstraint] = []
-
-        for rt in self.target_type._base_rels.values():
-            if isinstance(rt.rel, Rel):
-                rel_table = rt._base_table()
-                fks.append(
-                    sqla.ForeignKeyConstraint(
-                        [col.name for col in rt._fk_map.keys()],
-                        [rel_table.c[col.name] for col in rt._fk_map.values()],
-                        name=f"{self.target_type._get_table_name(self.db._subs)}_{rt.rel.name}_fk",
-                    )
-                )
-
-        for base, pks in self.target_type._superclass_pks.items():
-            base_table = self.db[base]._base_table()
-
-            fks.append(
-                sqla.ForeignKeyConstraint(
-                    [col.name for col in pks.keys()],
-                    [base_table.c[col.name] for col in pks.values()],
-                    name=(
-                        self.target_type._get_table_name(self.db._subs)
-                        + "_base_fk_"
-                        + gen_str_hash(base._get_table_name(self.db._subs), 5)
-                    ),
-                )
-            )
-
-        return fks
-
-    @cached_property
-    def _sql_idx_cols(
-        self,
-    ) -> Mapping[
-        str, tuple[Col[Hashable, Any, Static, RecT], sqla_elements.KeyedColumnElement]
-    ]:
-        """Return the index cols."""
-        return {
-            (label := self._sql_col_fqn(col_name)): (
-                col,
-                self._table.c[col_name].label(label),
-            )
-            for col_name, col in self.target_type._pk_cols.items()
-        }
-
-    @cached_property
-    def _sql_query_cols(self) -> Mapping[str, sqla_elements.KeyedColumnElement]:
-        return {
-            (label := self._sql_col_fqn(col_name)): col.label(label)
-            for col_name, col in self._table.columns.items()
-        } | {
-            (label := rel._sql_col_fqn(col_name)): col.label(label)
-            for rel in self._sel_merge.rels
-            for col_name, col in rel._query.columns.items()
-        }
-
-    @property
-    def _rendered_filters(
-        self,
-    ) -> list[sqla.ColumnElement[bool]]:
-        """Parse filter argument and return SQL expression and join operations."""
-        replace_func = partial(self._visit_col, render=True)
-        parsed_filt = [
-            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
-            for f in self._filters
-        ]
-
-        return parsed_filt
-
-    def _sql_col_fqn(self, col_name: str) -> str:
+    def _gen_col_fqn(self, col_name: str) -> str:
         """Return the fully qualified name of a column."""
-        return f"{self.target_type._default_table_name()}.{col_name}"
+        return f"{self.target._default_table_name()}.{col_name}"
 
     def _parse_schema_items(
         self,
         element: sqla_visitors.ExternallyTraversible,
         **kw: Any,
-    ) -> sqla.ColumnElement | sqla.FromClause | None:
-        if isinstance(element, RelTable):
-            return element._query
-        elif isinstance(element, Col):
-            return element.table._query.c[element.name]
+    ) -> Any | None:
+        if isinstance(element, RelTable) and element._to_static() != self._to_static():
+            return element._prefix(self)
+        elif (
+            isinstance(element, Col)
+            and isinstance(element.db_table, RelTable)
+            and element.db_table._to_static() != self._to_static()
+        ):
+            return copy_and_override(
+                type(element),
+                element,
+                _table=element.db_table._prefix(self),
+                _attr=element._attr,
+            )
         elif has_type(element, type[Record]):
-            return self.db[element]._query
+            return self._db[element]
 
         return None
 
@@ -3182,7 +3440,7 @@ class Table(
             ),
         )
 
-    def _base_table(
+    def _get_sql_base_table(
         self,
         mode: Literal["read", "replace", "upsert"] = "read",
         without_auto_fks: bool = False,
@@ -3192,45 +3450,45 @@ class Table(
 
         if (
             mode != "read"
-            and self.db.write_to_overlay is not None
-            and self.target_type not in self.db._subs
+            and self._db.write_to_overlay is not None
+            and self.target not in self._db._subs
         ):
-            orig_table = self._base_table("read")
+            orig_table = self._get_sql_base_table("read")
 
             # Create an empty overlay table for the record type
-            self.db._subs[self.target_type] = sqla.table(
+            self._db._subs[self.target] = sqla.table(
                 (
                     (
-                        self.db.write_to_overlay
+                        self._db.write_to_overlay
                         + "_"
-                        + self.target_type._default_table_name()
+                        + self.target._default_table_name()
                     )
-                    if self.db.overlay_type == "name_prefix"
-                    else self.target_type._default_table_name()
+                    if self._db.overlay_type == "name_prefix"
+                    else self.target._default_table_name()
                 ),
                 schema=(
-                    self.db.write_to_overlay
-                    if self.db.overlay_type == "db_schema"
+                    self._db.write_to_overlay
+                    if self._db.overlay_type == "db_schema"
                     else None
                 ),
             )
 
-        table_name = self.target_type._get_table_name(self.db._subs)
+        table_name = self.target._get_table_name(self._db._subs)
 
-        if not without_auto_fks and table_name in self.db._metadata.tables:
+        if not without_auto_fks and table_name in self._db._metadata.tables:
             # Return the table object from metadata if it already exists.
             # This is necessary to avoid circular dependencies.
-            return self.db._metadata.tables[table_name]
+            return self._db._metadata.tables[table_name]
 
-        sub = self.db._subs.get(self.target_type)
+        sub = self._db._subs.get(self.target)
 
         cols = self._sql_base_cols
         if without_auto_fks:
             cols = {
                 name: col
                 for name, col in cols.items()
-                if name in self.target_type._base_fk_cols
-                and name not in self.target_type._base_cols
+                if name in self.target._base_fk_cols
+                and name not in self.target._base_cols
             }
 
         # Create a partial SQLAlchemy table object from the class definition
@@ -3238,7 +3496,7 @@ class Table(
         # This adds the table to the metadata.
         sqla.Table(
             table_name,
-            self.db._metadata,
+            self._db._metadata,
             *cols.values(),
             schema=(sub.schema if sub is not None else None),
         )
@@ -3249,8 +3507,8 @@ class Table(
                 fk
                 for fk in fks
                 if not any(
-                    c.name in self.target_type._base_fk_cols
-                    and c.name not in self.target_type._base_cols
+                    c.name in self.target._base_fk_cols
+                    and c.name not in self.target._base_cols
                     for c in fk.columns
                 )
             ]
@@ -3258,7 +3516,7 @@ class Table(
         # Re-create the table object with foreign keys and return it.
         table = sqla.Table(
             table_name,
-            self.db._metadata,
+            self._db._metadata,
             *cols.values(),
             *fks,
             schema=(sub.schema if sub is not None else None),
@@ -3268,7 +3526,7 @@ class Table(
         self._create_sqla_table(table)
 
         if orig_table is not None and mode == "upsert":
-            with self.db.engine.connect() as conn:
+            with self._db.engine.connect() as conn:
                 conn.execute(
                     sqla.insert(table).from_select(
                         orig_table.columns.keys(), orig_table.select()
@@ -3283,7 +3541,7 @@ class Table(
         """Return a SQLAlchemy table object for this schema."""
         metadata = sqla.MetaData()
         registry = orm.registry(
-            metadata=self.db._metadata, type_annotation_map=self.target_type._type_map
+            metadata=self._db._metadata, type_annotation_map=self.target._type_map
         )
 
         cols = {
@@ -3295,10 +3553,10 @@ class Table(
                 index=col.index,
                 nullable=has_type(None, col.value_type),
             )
-            for name, col in self.target_type._cols.items()
+            for name, col in self.target._cols.items()
         }
 
-        table_name = self.target_type._default_table_name() + "_" + token_hex(5)
+        table_name = self.target._default_table_name() + "_" + token_hex(5)
         table = sqla.Table(
             table_name,
             metadata,
@@ -3307,90 +3565,64 @@ class Table(
 
         return table
 
-    @cached_property
-    def _table(
-        self,
-    ) -> sqla.FromClause:
-        """Recursively join all bases of this record to get the full data."""
-        base_table = self._base_table("read")
-
-        table = base_table
-        cols = {col.name: col for col in base_table.columns}
-        for superclass, pk_map in self.target_type._superclass_pks.items():
-            superclass_table = self.db[superclass]._table
-            cols |= {col.name: col for col in superclass_table.columns}
-
-            table = table.join(
-                superclass_table,
-                reduce(
-                    sqla.and_,
-                    (
-                        base_table.c[pk.name] == superclass_table.c[target_pk.name]
-                        for pk, target_pk in pk_map.items()
-                    ),
-                ),
-            )
-
-        return (
-            sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
-            .select_from(table)
-            .subquery()
-        )
-
     def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
         """Create SQL-side table from Table class."""
-        if self.db.remove_cross_fks:
+        if self._db.remove_cross_fks:
             # Create a temporary copy of the table object and remove external FKs.
             # That way, local metadata will retain info on the FKs
             # (for automatic joins) but the FKs won't be created in the DB.
             sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
             _remove_cross_fk(sqla_table)
 
-        sqla_table.create(self.db.engine, checkfirst=True)
+        sqla_table.create(self._db.engine, checkfirst=True)
 
     def _load_from_excel(self) -> None:
         """Load all tables from Excel."""
-        assert isinstance(self.db.url, Path | CloudPath | HttpFile)
-        path = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
+        assert isinstance(self._db.url, Path | CloudPath | HttpFile)
+        path = (
+            self._db.url.get() if isinstance(self._db.url, HttpFile) else self._db.url
+        )
 
         recs: list[type[Record]] = [
-            self.target_type,
-            *self.target_type._record_superclasses,
+            self.target,
+            *self.target._record_superclasses,
         ]
         with open(path, "rb") as file:
             for rec in recs:
-                table = self.db[rec]._base_table("replace")
+                table = self._db[rec]._get_sql_base_table("replace")
 
-                with self.db.engine.connect() as conn:
+                with self._db.engine.connect() as conn:
                     conn.execute(table.delete())
 
                 pl.read_excel(
-                    file, sheet_name=rec._get_table_name(self.db._subs)
+                    file, sheet_name=rec._get_table_name(self._db._subs)
                 ).write_database(
                     str(table),
-                    str(self.db.engine.url),
+                    str(self._db.engine.url),
                     if_table_exists="append",
                 )
 
     def _save_to_excel(self) -> None:
         """Save all (or selected) tables to Excel."""
-        assert isinstance(self.db.url, Path | CloudPath | HttpFile)
-        file = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
+        assert isinstance(self._db.url, Path | CloudPath | HttpFile)
+        file = (
+            self._db.url.get() if isinstance(self._db.url, HttpFile) else self._db.url
+        )
 
         recs: list[type[Record]] = [
-            self.target_type,
-            *self.target_type._record_superclasses,
+            self.target,
+            *self.target._record_superclasses,
         ]
         with ExcelWorkbook(file) as wb:
             for rec in recs:
                 pl.read_database(
-                    str(self.db[rec]._base_table().select()),
-                    self.db.engine,
-                ).write_excel(wb, worksheet=rec._get_table_name(self.db._subs))
+                    str(self._db[rec]._get_sql_base_table().select()),
+                    self._db.engine,
+                ).write_excel(wb, worksheet=rec._get_table_name(self._db._subs))
 
-        if isinstance(self.db.url, HttpFile):
+        if isinstance(self._db.url, HttpFile):
             assert isinstance(file, BytesIO)
-            self.db.url.set(file)
+            self._db.url.set(file)
 
     def _df_to_table(
         self,
@@ -3400,7 +3632,7 @@ class Table(
         if isinstance(df, pd.DataFrame) and any(
             name is None for name in df.index.names
         ):
-            idx_names = list(self._sql_idx_cols.keys())
+            idx_names = list(self._idx_cols.keys())
             df.index.set_names(idx_names, inplace=True)
 
         if isinstance(df, pd.DataFrame):
@@ -3414,13 +3646,13 @@ class Table(
             if isinstance(df, pd.DataFrame):
                 df.reset_index().to_sql(
                     value_table.name,
-                    self.db.engine,
+                    self._db.engine,
                     if_exists="replace",
                     index=False,
                 )
             else:
                 df.write_database(
-                    str(value_table), self.db.engine, if_table_exists="append"
+                    str(value_table), self._db.engine, if_table_exists="append"
                 )
 
         return value_table
@@ -3435,7 +3667,7 @@ class Table(
         ]
 
         rec_types = {type(rec) for rec in records.values()}
-        cols = set(c for c, _ in self._sql_idx_cols.values()) | reduce(
+        cols = set(self._idx_cols.values()) | reduce(
             set.union, (set(rec._cols.values()) for rec in rec_types)
         )
         # Transform attribute data into DataFrame.
@@ -3447,7 +3679,7 @@ class Table(
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         record_ids: dict[Hashable, Hashable] | None = None
-        valid_caches = self.db._get_valid_cache_set(self.target_type)
+        valid_caches = self._db._get_valid_cache_set(self.target)
 
         match value:
             case sqla.Select():
@@ -3455,35 +3687,35 @@ class Table(
                 valid_caches.clear()
             case Table():
                 value = cast(Table[RecT2, Any, Any, Any, Any], value)
-                if value.db != self.db:
+                if value._db != self._db:
                     remote_db = value if isinstance(value, DB) else value.extract()
                     for s in remote_db._def_types:
-                        if remote_db.b_id == self.db.b_id:
-                            self.db[s]._mutate_from_sql(remote_db[s]._query, "upsert")
+                        if remote_db.b_id == self._db.b_id:
+                            self._db[s]._mutate_from_sql(
+                                remote_db[s]._sql_query, "upsert"
+                            )
                         else:
                             value_table = self._df_to_table(
                                 remote_db[s].to_df(),
-                                pks=list(remote_db[s]._sql_idx_cols.keys()),
+                                pks=list(remote_db[s]._idx_cols.keys()),
                             )
-                            self.db[s]._mutate_from_sql(
+                            self._db[s]._mutate_from_sql(
                                 value_table,
                                 "upsert",
                             )
-                            value_table.drop(self.db.engine)
+                            value_table.drop(self._db.engine)
 
                 self._mutate_from_sql(value.select().subquery(), mode)
                 valid_caches -= set(value.keys())
             case pd.DataFrame() | pl.DataFrame():
-                value_table = self._df_to_table(
-                    value, pks=list(self._sql_idx_cols.keys())
-                )
+                value_table = self._df_to_table(value, pks=list(self._idx_cols.keys()))
                 self._mutate_from_sql(
                     value_table,
                     mode,
                 )
-                value_table.drop(self.db.engine)
+                value_table.drop(self._db.engine)
 
-                base_idx_cols = [c.name for c in self.target_type._pk_cols.values()]
+                base_idx_cols = [c.name for c in self.target._pk_cols.values()]
                 base_idx_keys = set(
                     value[base_idx_cols].iter_rows()
                     if isinstance(value, pl.DataFrame)
@@ -3555,24 +3787,22 @@ class Table(
         }
 
         unconnected_records = db_grouped.get(None, {})
-        local_records = db_grouped.get(self.db, {})
+        local_records = db_grouped.get(self._db, {})
 
         remote_records = {
             db: recs
             for db, recs in db_grouped.items()
-            if db is not None and db != self.db
+            if db is not None and db != self._db
         }
 
         if unconnected_records:
             df_data = self._records_to_df(unconnected_records)
-            value_table = self._df_to_table(
-                df_data, pks=list(self._sql_idx_cols.keys())
-            )
+            value_table = self._df_to_table(df_data, pks=list(self._idx_cols.keys()))
             self._mutate_from_sql(
                 value_table,
                 mode,
             )
-            value_table.drop(self.db.engine)
+            value_table.drop(self._db.engine)
 
         if local_records and isinstance(self, RelTable):
             # Only update relations for records already existing in this db.
@@ -3582,24 +3812,24 @@ class Table(
 
         for db, recs in remote_records.items():
             rec_ids = [rec._index for rec in recs.values()]
-            remote_set = db[self.target_type][rec_ids]
+            remote_set = db[self.target][rec_ids]
 
             remote_db = (
                 db if all(rec._root for rec in recs.values()) else remote_set.extract()
             )
             for s in remote_db._def_types:
-                if remote_db.b_id == self.db.b_id:
-                    self.db[s]._mutate_from_sql(remote_db[s]._query, "upsert")
+                if remote_db.b_id == self._db.b_id:
+                    self._db[s]._mutate_from_sql(remote_db[s]._sql_query, "upsert")
                 else:
                     value_table = self._df_to_table(
                         remote_db[s].to_df(),
-                        pks=list(remote_db[s]._sql_idx_cols.keys()),
+                        pks=list(remote_db[s]._idx_cols.keys()),
                     )
-                    self.db[s]._mutate_from_sql(
+                    self._db[s]._mutate_from_sql(
                         value_table,
                         "upsert",
                     )
-                    value_table.drop(self.db.engine)
+                    value_table.drop(self._db.engine)
 
             self._mutate_from_sql(remote_set.select().subquery(), mode)
 
@@ -3611,13 +3841,17 @@ class Table(
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         base_recs: list[type[Record]] = [
-            self.target_type,
-            *self.target_type._record_superclasses,
+            self.target,
+            *self.target._record_superclasses,
         ]
         cols_by_table = {
-            self.db[rec]._base_table(
+            self._db[rec]._get_sql_base_table(
                 "upsert" if mode in ("update", "insert", "upsert") else "replace"
-            ): {a for a in self.target_type._cols.values() if a.parent_type is rec}
+            ): {
+                label: col
+                for label, col in self.target._cols.items()
+                if col.db_table.target is rec
+            }
             for rec in base_recs
         }
 
@@ -3625,11 +3859,9 @@ class Table(
 
         if mode == "replace":
             # Delete all records in the current selection.
-            select = self._query
-
             for table in cols_by_table:
                 # Prepare delete statement.
-                if self.db.engine.dialect.name in (
+                if self._db.engine.dialect.name in (
                     "postgres",
                     "postgresql",
                     "duckdb",
@@ -3642,7 +3874,7 @@ class Table(
                             reduce(
                                 sqla.and_,
                                 (
-                                    col == select.corresponding_column(col)
+                                    col == self._sql_query.corresponding_column(col)
                                     for col in table.primary_key.columns
                                 ),
                             )
@@ -3660,16 +3892,19 @@ class Table(
             for table, cols in cols_by_table.items():
                 # Do an insert-from-select operation, which updates on conflict:
                 if mode == "upsert":
-                    if self.db.engine.dialect.name in (
+                    if self._db.engine.dialect.name in (
                         "postgres",
                         "postgresql",
                         "duckdb",
                     ):
                         # For Postgres / DuckDB, use: https://docs.sqlalchemy.org/en/20/dialects/postgresql.html#updating-using-the-excluded-insert-values
                         statement = postgresql.Insert(table).from_select(
-                            [col.name for col in cols],
+                            [col.name for col in cols.values()],
                             sqla.select(
-                                *(value_table.c[col.name] for col in cols)
+                                *(
+                                    value_table.c[label].label(col.name)
+                                    for label, col in cols.items()
+                                )
                             ).select_from(value_table),
                         )
                         statement = statement.on_conflict_do_update(
@@ -3678,11 +3913,11 @@ class Table(
                             ],
                             set_={
                                 c.name: statement.excluded[c.name]
-                                for c in cols
+                                for c in cols.values()
                                 if c.name not in table.primary_key.columns
                             },
                         )
-                    elif self.db.engine.dialect.name in (
+                    elif self._db.engine.dialect.name in (
                         "mysql",
                         "mariadb",
                     ):
@@ -3690,9 +3925,12 @@ class Table(
                         statement = (
                             mysql.Insert(table)
                             .from_select(
-                                [a.name for a in cols],
+                                [c.name for c in cols.values()],
                                 sqla.select(
-                                    *(value_table.c[col.name] for col in cols)
+                                    *(
+                                        value_table.c[label].label(col.name)
+                                        for label, col in cols.items()
+                                    )
                                 ).select_from(value_table),
                             )
                             .prefix_with("INSERT INTO")
@@ -3707,7 +3945,7 @@ class Table(
                         )
                 else:
                     statement = table.insert().from_select(
-                        [a.name for a in cols],
+                        [c.name for c in cols.values()],
                         value_table,
                     )
 
@@ -3719,17 +3957,17 @@ class Table(
             value_join_on = reduce(
                 sqla.and_,
                 (
-                    self._query.c[idx_col.name] == idx_col
+                    self._sql_query.corresponding_column(idx_col) == idx_col
                     for idx_col in value_table.primary_key
                 ),
             )
-            select = self._query.join(
+            select = self._sql_query.join(
                 value_table,
                 value_join_on,
             )
 
             for table, cols in cols_by_table.items():
-                col_names = {a.name for a in cols}
+                col_names = {c.name for c in cols.values()}
                 values = {
                     c_name: c
                     for c_name, c in value_table.columns.items()
@@ -3737,7 +3975,7 @@ class Table(
                 }
 
                 # Prepare update statement.
-                if self.db.engine.dialect.name in (
+                if self._db.engine.dialect.name in (
                     "postgres",
                     "postgresql",
                     "duckdb",
@@ -3763,11 +4001,11 @@ class Table(
                     raise NotImplementedError("Correlated update not supported yet.")
 
         # Execute delete / insert / update statements.
-        with self.db.engine.begin() as con:
+        with self._db.engine.begin() as con:
             for statement in statements:
                 con.execute(statement)
 
-        if self.db.backend_type == "excel-file":
+        if self._db.backend_type == "excel-file":
             self._save_to_excel()
 
         return
@@ -3784,29 +4022,50 @@ class Table(
 @dataclass(kw_only=True, eq=False)
 class Col(
     sqla.ColumnClause[ValTi],
-    Generic[ValTi, WriteT, BackT, RecT, IdxT],
+    Generic[ValTi, WriteT, BackT, RecT, IdxT, FiltT],
 ):
     """Reference an attribute of a record."""
 
-    table: Table[RecT, WriteT, BackT, Any, Any]  # type: ignore[reportIncompatibleVariableOverride]
-    attr: Attr[ValTi, WriteT]
+    _table: Table[RecT, WriteT, BackT, Any, Any]
+    _attr: Attr[ValTi, WriteT] | AttrSet[ValTi, IdxT, WriteT]
 
     def __post_init__(self) -> None:  # noqa: D105
         # Initialize fields required by SQLAlchemy superclass.
+        self.table = self.db_table._sql_query
+        self.name = self.attr.name
+        self.type = sqla_types.to_instance(
+            self.attr.value_type  # pyright: ignore[reportArgumentType,reportCallIssue]
+        )
         self.is_literal = False
 
     @cached_property
-    def sql_type(self) -> sqla_types.TypeEngine:
-        """Column key."""
-        return sqla_types.to_instance(self.value_type)  # type: ignore[reportCallIssue]
+    def db_table(self) -> Table[RecT, WriteT, BackT, Any, Any]:
+        """Table reference."""
+        return self._table
 
-    def all(self) -> sqla.CollectionAggregate[bool]:
-        """Return a SQL ALL expression for this attribute."""
-        return sqla.all_(self)
+    @cached_property
+    def rel_table(
+        self: Col[Any, Any, Any, Any, Any, Full | Filtered]
+    ) -> RelTable[DynRecord, None, IdxT, WriteT, BackT, Any, Any, Any, RecT]:
+        """Table reference."""
+        assert isinstance(self._table, RelTable)
+        return self._table
 
-    def any(self) -> sqla.CollectionAggregate[bool]:
-        """Return a SQL ANY expression for this attribute."""
-        return sqla.any_(self)
+    @cached_property
+    def attr(
+        self: Col[Any, Any, Any, Any, Any, Singular | Nullable]
+    ) -> Attr[ValTi, WriteT]:
+        """Attribute reference."""
+        assert isinstance(self._attr, Attr)
+        return self._attr
+
+    @cached_property
+    def attr_set(
+        self: Col[Any, Any, Any, Any, Any, Full | Filtered]
+    ) -> AttrSet[ValTi, IdxT, WriteT]:
+        """Attribute reference."""
+        assert isinstance(self._attr, AttrSet)
+        return self._attr
 
     @overload
     def __getitem__(
@@ -3827,25 +4086,20 @@ class Col(
         key: list[Hashable] | slice | tuple[slice, ...] | Hashable,
     ) -> Col[Any, Any, Any, Any, Any]:
         return copy_and_override(
-            Col, self, table=self.table[cast(slice, key)], attr=self.attr
+            Col, self, _table=self._table[cast(slice, key)], _attr=self.attr
         )
 
     def __setitem__(
         self,
         key: Any,
-        other: Col[Any, Any, Any, Any, Any],
+        other: Col[Any, Any, Any, Any, Any, Any],
     ) -> None:
         """Catchall setitem."""
         return
 
     def select(self) -> sqla.Select:
         """Return select statement for this column."""
-        selection_table = self.table.select().subquery()
-
-        return sqla.select(
-            *(selection_table.c[col] for col in self.table._sql_idx_cols),
-            selection_table.c[self.name],
-        ).select_from(selection_table)
+        return sqla.select(self).select_from(self.db_table._sql_query)
 
     @overload
     def to_series(self, kind: type[pd.Series]) -> pd.Series: ...
@@ -3859,7 +4113,7 @@ class Col(
     ) -> pd.Series | pl.Series:
         """Download selection."""
         select = self.select()
-        engine = self.table.db.engine
+        engine = self.db_table._db.engine
 
         if kind is pd.Series:
             with engine.connect() as con:
@@ -3870,9 +4124,9 @@ class Col(
         return pl.read_database(str(select.compile(engine)), engine)[self.name]
 
     def __imatmul__(
-        self: Col[Any, RW, Any, Any, Any],
-        value: ValInput | Col[ValT, Any, Any, Any, Any],
-    ) -> Col[ValT, RW, BackT, ParT, IdxT]:
+        self: Col[Any, RW, Any, Any, Any, Any],
+        value: ValInput[ValTi, Any] | Col[ValTi, Any, Any, Any, Any, Any],
+    ) -> Col[ValTi, RW, BackT, ParT, IdxT, FiltT]:
         """Do item-wise, broadcasting assignment on this value set."""
         match value:
             case pd.Series() | pl.Series():
@@ -3886,14 +4140,14 @@ class Col(
 
         df = series.rename(self.name).to_frame()
 
-        self.table._mutate(df)
+        self.db_table._mutate(df)
         return self
 
     def keys(
         self: Col,
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
-        return self.table.keys()
+        return self.db_table.keys()
 
     def values(  # noqa: D102
         self,
@@ -3907,11 +4161,11 @@ class Col(
 
     def __len__(self) -> int:
         """Return the number of records in the dataset."""
-        return len(self.table)
+        return len(self._table)
 
     def __hash__(self) -> int:
         """Hash the Col."""
-        return gen_int_hash((self.table, self.attr))
+        return gen_int_hash((self._table, self.attr))
 
 
 @dataclass(kw_only=True, eq=False)
@@ -3921,104 +4175,177 @@ class RelTable(
 ):
     """Relational record set."""
 
-    parent_type: type[ParT]
-    rel: Rel[RecT | None, WriteT] | RelSet[RecT, LnT, Any, WriteT]
-
-    def __post_init__(self) -> None:  # noqa: D105
-        self.target_type = self.rel.target_type
+    @cached_property
+    def parent(
+        self: RelTable[Any, Any, Any, Any, Any, Any, Any, Any, ParT2]
+    ) -> type[ParT2]:
+        """Parent record type."""
+        return self._parent_type
 
     @cached_property
-    def link_type(self) -> type[LnT]:
+    def rel_prop(
+        self: RelTable[Any, Any, Any, Any, Any, Any, Any, Any, Any]
+    ) -> (
+        Rel[RecT | None, WriteT]
+        | BackRel[RecT, Any, WriteT]
+        | RelSet[RecT, LnT, Any, WriteT]
+    ):
+        """Relation of this table."""
+        return self._rel_prop
+
+    @cached_property
+    def direct_rel(
+        self: RelTable[Any, None, Any, Any, Any, Any, Any, Any, Any]
+    ) -> Rel[RecT | None, WriteT] | BackRel[RecT, Any, WriteT]:
+        """Relation of this table."""
+        assert isinstance(self._rel_prop, Rel | BackRel)
+        return self._rel_prop
+
+    @cached_property
+    def counter_rel(
+        self,
+    ) -> (
+        Rel[ParT | None, WriteT]
+        | BackRel[ParT, Any, WriteT]
+        | RelSet[ParT, LnT, Any, WriteT]
+    ):
+        """Counter relation of this table's relation prop."""
+        match self.rel_prop:
+            case Rel():
+                rels_to_parent = [
+                    r
+                    for r in self.target._rels.values()
+                    if issubclass(self.parent, r.target)
+                    and isinstance(r.rel_prop, BackRel)
+                ]
+                if len(rels_to_parent) == 1:
+                    return cast(BackRel[ParT, Any, WriteT], rels_to_parent[0].rel_prop)
+                else:
+                    return BackRel[ParT, Any, WriteT](
+                        _type=BackRel[self.parent],
+                        to=getattr(self.target, self.rel_prop.name),
+                    )
+            case BackRel():
+                return cast(Rel[ParT | None, WriteT], self.rel_prop.to.direct_rel)
+            case RelSet():
+                rels_to_parent = [
+                    r
+                    for r in self.target._rels.values()
+                    if issubclass(self.parent, r.target) and r.link is self.link
+                ]
+                if len(rels_to_parent) == 1:
+                    return cast(
+                        RelSet[ParT, LnT, Any, WriteT], rels_to_parent[0].rel_prop
+                    )
+                else:
+                    return RelSet(_type=RelSet[self.parent, self.link])
+
+    @cached_property
+    def target(self) -> type[RecT]:
+        """Traget record type."""
+        return self.rel_prop.target_type
+
+    @cached_property
+    def link(self) -> type[LnT]:
         """Link record type."""
         return cast(
             type[LnT],
-            (self.rel.link_type if isinstance(self.rel, RelSet) else NoneType),
+            (
+                self.rel_prop.link_type
+                if isinstance(self.rel_prop, RelSet)
+                else NoneType
+            ),
         )
 
     @cached_property
-    def _filters(self) -> list[sqla.ColumnElement[bool]]:
-        """Get the SQL filters for this table."""
-        return super()._filters + self.parents._filters
-
-    @cached_property
-    def _rel_tree(self) -> RelTree:
-        """Full relation tree for this table."""
-        return super()._rel_tree | self.parents._rel_tree * self
-
-    @cached_property
-    def parents(self) -> Table[ParT, WriteT, BackT, Any, Any, ParT]:
+    def parent_table(self) -> Table[ParT, WriteT, BackT, Any, Any, ParT]:
         """Parent set of this Rel."""
         if self._parent_rel is not None:
             tmpl = cast(RelTable[ParT, Any, Any, WriteT, BackT, ParT, Any, Any], self)
             return copy_and_override(
                 type(tmpl),
                 tmpl,
-                parent_type=self._parent_rel.parent_type,
-                rel=self._parent_rel.rel,
+                _parent_type=self._parent_rel.parent,
+                _rel_prop=self._parent_rel.rel_prop,
             )
 
         return copy_and_override(
             Table[ParT, WriteT, BackT, Any, Any, ParT],
             self,
-            target_type=self.parent_type,
+            _target_type=self.parent,
         )
 
     @property
-    def links(
+    def link_table(
         self: RelTable[Any, RecT2, Any, Any, Any, Any, Any, Any],
     ) -> RelTable[RecT2, None, IdxT, WriteT, BackT, RecT2, SelT, FiltT, ParT]:
         """Get the link set."""
-        link_to_parent_rel = self._target_path[0]
-        parent_to_link_rel = BackRel[RecT2, Any, WriteT](
-            to=getattr(self.link_type, link_to_parent_rel.name)
-        )
-        parent_to_link_rel._type = set[self.link_type]
+        link_to_parent = self._target_path[0]
+        parent_to_link_rel = link_to_parent.counter_rel
 
         return copy_and_override(
             RelTable[RecT2, None, IdxT, WriteT, BackT, RecT2, SelT, FiltT, ParT],
             self,
-            parent_type=self.parent_type,
-            rel=parent_to_link_rel,
+            _parent_type=self.parent,
+            _rel_prop=parent_to_link_rel,
         )
 
     @cached_property
     def ln(self: RelTable[Any, RecT2, Any, Any, Any, Any]) -> type[RecT2]:
         """Reference props of the link record type."""
-        return self.links.rec if self.links is not None else cast(type[RecT2], Record)
+        return (
+            self.link_table.rec
+            if self.link_table is not None
+            else cast(type[RecT2], Record)
+        )
 
     def __hash__(self) -> int:
         """Hash the RelSet."""
-        return gen_int_hash((Table.__hash__(self), self.rel))
+        return gen_int_hash((Table.__hash__(self), self.rel_prop))
+
+    _parent_type: type[ParT]
+    _rel_prop: (
+        Rel[RecT | None, WriteT]
+        | BackRel[RecT, Any, WriteT]
+        | RelSet[RecT, LnT, Any, WriteT]
+    )
+
+    _target_type: type[RecT] = field(init=False)
 
     @cached_property
-    def _query(self) -> sqla.Subquery:
-        """Get select for this relset with stable alias name."""
-        return self.select().alias(self._path_str + "." + hex(hash(self))[:6])
+    def _filters(self) -> list[sqla.ColumnElement[bool]]:
+        """Get the SQL filters for this table."""
+        return super()._filters + self.parent_table._filters
+
+    @cached_property
+    def _rel_tree(self) -> RelTree:
+        """Full relation tree for this table."""
+        return super()._rel_tree | self.parent_table._rel_tree * self
 
     @cached_property
     def _fk_map(
         self,
     ) -> bidict[Col[Hashable, Any, Static], Col[Hashable, Any, Static]]:
         """Map source foreign keys to target cols."""
-        match self.rel:
+        match self.rel_prop:
             case Rel():
-                return self.rel.fk_map or bidict(
+                return self.rel_prop.fk_map or bidict(
                     {
                         Col[Hashable, Any, Static, Any](
-                            table=self.parent_type._stat_table,
-                            attr=Attr[Hashable](
-                                _name=f"{self.rel.name}_{target_col.attr.name}",
+                            _table=self.parent._stat_table,
+                            _attr=Attr[Hashable](
+                                _name=f"{self.rel_prop.name}_{target_col.attr.name}",
                                 _type=target_col.attr.value_type,
                                 init=False,
-                                index=self.rel.index,
-                                primary_key=self.rel.primary_key,
+                                index=self.rel_prop.index,
+                                primary_key=self.rel_prop.primary_key,
                             ),
                         ): cast(Col[Hashable], target_col)
-                        for target_col in self.target_type._pk_cols.values()
+                        for target_col in self.target._pk_cols.values()
                     }
                 )
             case BackRel():
-                return self.rel.to._fk_map
+                return self.rel_prop.to._fk_map
             case RelSet():
                 return bidict()
 
@@ -4026,7 +4353,7 @@ class RelTable(
     def _parent_rel(self) -> RelTable[ParT, Any, Any, WriteT, BackT, Any, ParT] | None:
         """Parent relation of this Rel."""
         try:
-            rel = getattr(self.parent_type, "_rel")
+            rel = getattr(self.parent, "_rel")
 
             if not isinstance(rel, RelTable):
                 return None
@@ -4039,40 +4366,37 @@ class RelTable(
             return None
 
     @property
-    def _target_path(self) -> tuple[Rel[Any, Any] | BackRel[Any, Any, Any], ...]:
-        match self.rel:
-            case Rel():
-                return (self.rel,)
-            case BackRel():
-                return self.rel.to._target_path
-            case RelSet():
-                assert issubclass(self.rel.link_type, Record)
-                backrels = [
-                    r
-                    for r in self.rel.link_type._rels.values()
-                    if issubclass(self.target_type, r.target_type)
-                    and isinstance(r, Rel)
-                ]
-                assert len(backrels) == 1, "Backrel on link record must be unique."
-                fwrels = [
-                    r
-                    for r in self.rel.link_type._rels.values()
-                    if issubclass(self.parent_type, r.target_type)
-                    and isinstance(r, Rel)
-                ]
-                assert len(fwrels) == 1, "Forward ref on link record must be unique."
-                return backrels[0], fwrels[0]
+    def _target_path(
+        self,
+    ) -> tuple[RelTable[Any, None, Any, Any, Any, Any, Any, Any, Any], ...]:
+        if self.link is None:
+            return (cast(RelTable[Any, None], self),)
+        else:
+            assert issubclass(self.link, Record)
+            backrels = [
+                r
+                for r in self.link._rels.values()
+                if issubclass(self.parent, r.target) and r.link is None
+            ]
+            assert len(backrels) == 1, "Backrel on link record must be unique."
+            fwrels = [
+                r
+                for r in self.link._rels.values()
+                if issubclass(self.target, r.target) and r.link is None
+            ]
+            assert len(fwrels) == 1, "Forward ref on link record must be unique."
+            return backrels[0], fwrels[0]
 
     @cached_property
     def _join_path(
         self,
     ) -> tuple[
         Table[Record, WriteT, BackT],
-        *tuple[Rel[Any, Any] | BackRel[Any, Any, Any], ...],
+        *tuple[RelTable[Any, None, Any, Any, Any, Any, Any, Any, Any], ...],
     ]:
         """Path from base record type to this Rel."""
         if self._parent_rel is None:
-            return (self.parents,)
+            return (self.parent_table,)
 
         return (
             *self._parent_rel._join_path,
@@ -4086,21 +4410,22 @@ class RelTable(
         """Get the path index of the relation."""
         return {
             **(
-                self.parents._path_idx
-                if isinstance(self.parents, RelTable)
+                self.parent_table._path_idx
+                if isinstance(self.parent_table, RelTable)
                 else {
-                    col: self.parents
-                    for col in self.parents.target_type._pk_cols.values()
+                    col: self.parent_table
+                    for col in self.parent_table.target._pk_cols.values()
                 }
             ),
             **{
                 col: self
                 for col in (
-                    [self.rel.map_by]
-                    if isinstance(self.rel, RelSet) and self.rel.map_by is not None
+                    [self.rel_prop.map_by]
+                    if isinstance(self.rel_prop, RelSet)
+                    and self.rel_prop.map_by is not None
                     else (
-                        self.target_type._pk_cols.values()
-                        if isinstance(self.rel, RelSet)
+                        self.target._pk_cols.values()
+                        if isinstance(self.rel_prop, RelSet)
                         else []
                     )
                 )
@@ -4108,14 +4433,20 @@ class RelTable(
         }
 
     @cached_property
+    def _has_list_index(self) -> bool:
+        return len(self._path_idx) == 1 and is_subtype(
+            list(self._path_idx)[0].value_type, int
+        )
+
+    @cached_property
     def _path_str(self) -> str:
         """String representation of the relation path."""
         prefix = (
-            self.parent_type.__name__
+            self.parent.__name__
             if self._parent_rel is None
             else self._parent_rel._path_str
         )
-        return f"{prefix}.{self.rel.name}"
+        return f"{prefix}.{self.rel_prop.name}"
 
     @cached_property
     def _root_set(self) -> Table[Record, WriteT, BackT]:
@@ -4123,23 +4454,18 @@ class RelTable(
         return self._join_path[0]
 
     @cached_property
-    def _sql_idx_cols(
+    def _idx_cols(
         self,
-    ) -> Mapping[
-        str, tuple[Col[Hashable, Any, Static, RecT], sqla_elements.KeyedColumnElement]
-    ]:
+    ) -> Mapping[str, Col[Hashable, Any, BackT, RecT, Any]]:
         """Return the index cols."""
         return {
-            (label := rel._sql_col_fqn(col.name)): (
-                col,
-                (
-                    rel._query.c[col.name]
-                    if rel is not self
-                    else self._table.c[col.name]
-                ).label(label),
-            )
-            for col, rel in self._path_idx.items()
+            rel._gen_col_fqn(col.name): self[col] for col, rel in self._path_idx.items()
         }
+
+    @cached_property
+    def _sql_query(self) -> sqla.Subquery:
+        """Get select for this relset with stable alias name."""
+        return self._sql_select.subquery(self._path_str + "." + hex(hash(self))[:6])
 
     def _is_ancestor(self, other: Table[RecT2, Any, Any, Any, Any]) -> bool:
         """Check if this table is an ancestor of another."""
@@ -4149,7 +4475,7 @@ class RelTable(
             and self._parent_rel._is_ancestor(other)
         )
 
-    def _sql_col_fqn(self, col_name: str) -> str:
+    def _gen_col_fqn(self, col_name: str) -> str:
         """Return the fully qualified name of a column."""
         return f"{self._path_str}.{col_name}"
 
@@ -4161,9 +4487,9 @@ class RelTable(
         return copy_and_override(
             RelTable[RecT, LnT, IdxT, WriteT, BackT2, RecT, SelT, FiltT, ParT],
             self,
-            db=left.db,
-            parent_type=left.rec,
-            rel=self.rel,
+            _db=left._db,
+            _parent_type=left.rec,
+            _rel_prop=self.rel_prop,
         )
 
     def _to_static(
@@ -4173,9 +4499,9 @@ class RelTable(
         return copy_and_override(
             RelTable[RecT, LnT, IdxT, WriteT, Static, RecT, SelT, FiltT, ParT],
             self,
-            db=DB(b_id=Local.static, types={self.target_type}),
-            parent_type=self.parent_type,
-            rel=self.rel,
+            _db=DB(b_id=Local.static, types={self.target}),
+            _parent_type=self.parent,
+            _rel_prop=self.rel_prop,
         )
 
     def _gen_fk_value_map(self, val: Hashable) -> dict[str, Hashable]:
@@ -4196,9 +4522,7 @@ class RelTable(
             for idx, base_idx in indexes.items()
         ]
 
-        idx_cols = set(col for col, _ in self._sql_idx_cols.values()) | set(
-            self.target_type._pk_cols.values()
-        )
+        idx_cols = set(self._idx_cols.values()) | set(self.target._pk_cols.values())
         # Transform attribute data into DataFrame.
         return pl.DataFrame(col_data, schema=_get_pl_schema(idx_cols))
 
@@ -4209,7 +4533,7 @@ class RelTable(
     ) -> None:
         idx_df = self._indexes_to_df(indexes)
         self._mutate_from_sql(
-            self._df_to_table(idx_df, pks=list(self._sql_idx_cols.keys())),
+            self._df_to_table(idx_df, pks=list(self._idx_cols.keys())),
             mode,
             rel_only=True,
         )
@@ -4225,16 +4549,16 @@ class RelTable(
             Table._mutate_from_sql(self, value_table, mode)
 
         # Update relations with parent records.
-        if isinstance(self.rel, Rel):
+        if isinstance(self.rel_prop, Rel):
             # Case: parent links directly to child (n -> 1)
             fk_cols = [
                 value_table.c[pk.name].label(fk.name) for fk, pk in self._fk_map.items()
             ]
-            self.parents._mutate_from_sql(
+            self.parent_table._mutate_from_sql(
                 sqla.select(*fk_cols).select_from(value_table).subquery(),
                 "update",
             )
-        elif issubclass(self.link_type, Record):
+        elif issubclass(self.link, Record):
             # Case: parent and child are linked via assoc table (n <--> m)
             # Update link table with new child indexes.
             link_cols = [
@@ -4242,9 +4566,9 @@ class RelTable(
                     value_table.c[pk.name].label(fk.name)
                     for fk, pk in self._fk_map.items()
                 ),
-                *(value_table.c[col_name] for col_name in self._sql_idx_cols),
+                *(value_table.c[col_name] for col_name in self._idx_cols),
             ]
-            self.links._mutate_from_sql(
+            self.link_table._mutate_from_sql(
                 sqla.select(*link_cols).select_from(value_table).subquery(), mode
             )
         else:
@@ -4359,9 +4683,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                 },
             )
 
-        self.target_type = self.target_type or get_lowest_common_base(
-            self._def_types.keys()
-        )
+        self.target = self.target or get_lowest_common_base(self._def_types.keys())
 
         if self.validate_on_init:
             self.validate()
@@ -4468,7 +4790,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
             }
 
         tables = {
-            self[b_rec]._base_table(): required
+            self[b_rec]._get_sql_base_table(): required
             for rec, required in types.items()
             for b_rec in [rec, *rec._record_superclasses]
         }
@@ -4536,7 +4858,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
         )
 
         rec = dynamic_record_type(name, props=props_from_data(data, fks))
-        ds = Table[DynRecord, RW, BackT](target_type=rec, db=self)
+        ds = Table[DynRecord, RW, BackT](_target_type=rec, _db=self)
 
         ds &= data
 
@@ -4557,7 +4879,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
         node_dfs = [
             n.to_df(kind=pd.DataFrame)
             .reset_index()
-            .assign(table=n.target_type._default_table_name())
+            .assign(table=n.target._default_table_name())
             for n in node_tables
         ]
         node_df = (
@@ -4576,9 +4898,9 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                 if len(at._rels) == 2:
                     left, right = (r for r in at._rels.values())
                     assert left is not None and right is not None
-                    if left.target_type == n:
+                    if left.target == n:
                         undirected_edges[n].add((left, right))
-                    elif right.target_type == n:
+                    elif right.target == n:
                         undirected_edges[n].add((right, left))
 
         # Concat all edges into one table.
@@ -4587,13 +4909,13 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                 *[
                     node_df.loc[
                         node_df["table"]
-                        == str((rt.parent_type or Record)._default_table_name())
+                        == str((rt.parent or Record)._default_table_name())
                     ]
                     .rename(columns={"node_id": "source"})
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(rt.rel.target_type._default_table_name())
+                            == str(rt.rel_prop.target_type._default_table_name())
                         ],
                         left_on=[c.name for c in rt._fk_map.keys()],
                         right_on=[c.name for c in rt._fk_map.values()],
@@ -4611,7 +4933,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target_type._default_table_name())
+                            == str(left_rel.target._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in left_rel._fk_map.keys()],
                         right_on=[c.name for c in left_rel._fk_map.values()],
@@ -4621,7 +4943,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target_type._default_table_name())
+                            == str(left_rel.target._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in right_rel._fk_map.keys()],
                         right_on=[c.name for c in right_rel._fk_map.values()],
@@ -4632,7 +4954,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                             {
                                 "source",
                                 "target",
-                                *(a for a in (left_rel.parent_type or Record)._cols),
+                                *(a for a in (left_rel.parent or Record)._cols),
                             }
                         )
                     ]
@@ -4681,12 +5003,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
         for rec in self._def_types:
             pks = set([col.name for col in rec._pk_cols.values()])
             fks = set(
-                [
-                    col.name
-                    for rel in rec._rels.values()
-                    if isinstance(rel.rel, Rel)
-                    for col in rel._fk_map.keys()
-                ]
+                [col.name for rel in rec._rels.values() for col in rel._fk_map.keys()]
             )
             if pks == fks:
                 assoc_types.add(rec)
@@ -4707,7 +5024,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
         for rec in self._def_types:
             for rel in rec._rels.values():
                 rels[rec].add(rel)
-                rels[rel.target_type].add(rel)
+                rels[rel.target].add(rel)
 
         return rels
 
@@ -4768,14 +5085,14 @@ class DynRecordMeta(RecordMeta):
 
     def __getitem__(cls: type[Record], name: str) -> Col[Any, Any, Any, Record]:
         """Get dynamic attribute by dynamic name."""
-        return Col(attr=Attr(_name=name), table=cls._stat_table)
+        return Col(_attr=Attr(_name=name), _table=cls._stat_table)
 
     def __getattr__(cls: type[Record], name: str) -> Col[Any, Any, Any, Record]:
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
 
-        return Col(attr=Attr(_name=name), table=cls._stat_table)
+        return Col(_attr=Attr(_name=name), _table=cls._stat_table)
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):
