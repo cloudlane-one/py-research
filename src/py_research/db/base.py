@@ -321,7 +321,7 @@ def _gen_prop(
     name: str,
     data: pd.Series | pl.Series | sqla.ColumnElement,
     pk: bool = False,
-    fks: Mapping[str, Col] = {},
+    fks: Mapping[str, Col[Any, Any, Static, Any, BaseIdx, Singular | Nullable]] = {},
 ) -> Prop[Any, Any]:
     is_rel = name in fks
     value_type = (
@@ -341,7 +341,9 @@ def _gen_prop(
 
 def props_from_data(
     data: pd.DataFrame | pl.DataFrame | sqla.Select,
-    foreign_keys: Mapping[str, Col] | None = None,
+    foreign_keys: (
+        Mapping[str, Col[Any, Any, Static, Any, BaseIdx, Singular | Nullable]] | None
+    ) = None,
     primary_keys: list[str] | None = None,
 ) -> list[Prop]:
     """Extract prop definitions from dataframe or query."""
@@ -685,7 +687,7 @@ class Attr(Prop[ValT, WriteT], Generic[ValT, WriteT, PubT]):
             instance.__dict__[self.name] = value
 
         if self.pub_status is Public and instance._connected:
-            instance._set._mutate(instance)
+            instance._table._mutate(instance)
 
         return
 
@@ -753,18 +755,21 @@ class AttrSet(Prop[ValT, WriteT], Generic[ValT, IdxT, WriteT]):
         if value is Keep:
             return
 
-        instance._set._mutate(instance)
+        instance._table._mutate(instance)
         stat_col: Col[ValT2, RW, Static, Record, IdxT, Full] = getattr(
             type(instance), self.name
         )
-        instance._set[stat_col] @= value
+        instance._table[stat_col] @= value
         return
 
 
 type Fks[P: Record, T: Record] = (
-    Col[Any, Any, Any, P, Any]
-    | dict[Col[Any, Any, Any, P, Any], Col[Any, Any, Any, T, Any]]
-    | list[Col[Any, Any, Any, P, Any]]
+    Col[Any, Any, Static, P, BaseIdx, Singular | Nullable]
+    | dict[
+        Col[Any, Any, Static, P, BaseIdx, Singular | Nullable],
+        Col[Any, Any, Static, T, BaseIdx, Singular | Nullable],
+    ]
+    | list[Col[Any, Any, Static, P, BaseIdx, Singular | Nullable]]
 )
 
 
@@ -787,7 +792,10 @@ class Rel(
     @cached_property
     def fk_map(
         self,
-    ) -> bidict[Col[Hashable, Any, Static], Col[Hashable, Any, Static]]:
+    ) -> bidict[
+        Col[Hashable, Any, Static, Any, BaseIdx, Singular | Nullable],
+        Col[Hashable, Any, Static, Any, BaseIdx, Singular | Nullable],
+    ]:
         """Map source foreign keys to target cols."""
         match self.fks:
             case dict():
@@ -917,7 +925,7 @@ class Rel(
         stat_rel: RelTable[
             RecT2, None, BaseIdx, RW, Static, RecT2, None, Singular, ParT2
         ] = getattr(owner, self.name)
-        instance._set[stat_rel]._mutate(value)
+        instance._table[stat_rel]._mutate(value)
         instance._update_dict()
 
 
@@ -1004,7 +1012,7 @@ class RelSet(
         stat_rel: RelTable[RecT, LnT, IdxT, RW, Static, RecT, None, Full, ParT2] = (
             getattr(type(instance), self.name)
         )
-        instance._set[stat_rel]._mutate(value)
+        instance._table[stat_rel]._mutate(value)
 
 
 type BackLink[P: Record, T: Record] = (
@@ -1026,10 +1034,6 @@ class RecordMeta(type):
     """Metaclass for record types."""
 
     _record_superclasses: list[type[Record]]
-    _superclass_pks: dict[
-        type[Record],
-        dict[Attr[Hashable], Attr[Hashable]],
-    ]
     _class_props: dict[str, Prop[Any, Any]]
 
     _is_root_class: bool = False
@@ -1103,20 +1107,6 @@ class RecordMeta(type):
                 assert orig is c
                 cls._record_superclasses.append(orig)
 
-        cls._superclass_pks = (
-            {
-                base: {
-                    Attr(
-                        _name=pk.name, primary_key=True, _type=pk.attr.value_type
-                    ): pk.attr
-                    for pk in base._pk_cols.values()
-                }
-                for base in cls._record_superclasses
-            }
-            if not cls._is_root_class
-            else {}
-        )
-
         cls._class_props = (
             {name: getattr(cls, name) for name in prop_defs.keys()}
             if not cls._is_root_class
@@ -1124,83 +1114,9 @@ class RecordMeta(type):
         )
 
     @property
-    def _base_rels(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, RelTable[Any, Any, Any, Any, Static, Any, Any, Any, RecT2]]:
-        """The relations of this record type without superclasses."""
-        return {
-            name: getattr(cls, name)
-            for name, rel in cls._class_props.items()
-            if isinstance(rel, Rel | RelSet)
-        }
-
-    @property
-    def _base_fk_cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Hashable, Any, Static, RecT2]]:
-        """The foreign key columns of this record type without superclasses."""
-        return cast(
-            dict[str, Col[Hashable, Any, Static, RecT2]],
-            {
-                c.attr.name: c
-                for rel in cls._base_rels.values()
-                for c in rel._fk_map.keys()
-            },
-        )
-
-    @property
-    def _pk_cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Hashable, Any, Static, RecT2]]:
-        """The primary key columns of this record type."""
-        super_pk_cols = {
-            v.name: getattr(cls, v.name)
-            for vs in cls._superclass_pks.values()
-            for v in vs.keys()
-        }
-        own_pks = {
-            name: getattr(cls, name)
-            for name, a in cls._static_props.items()
-            if isinstance(a, Attr) and a.primary_key
-        }
-
-        if len(super_pk_cols) > 0 and len(own_pks) > 0:
-            assert set(own_pks.keys()).issubset(
-                set(super_pk_cols.keys())
-            ), f"Primary keys of {cls} are ambiguous. "
-            return cast(dict[str, Col[Hashable, Any, Static, RecT2]], super_pk_cols)
-
-        return cast(
-            dict[str, Col[Hashable, Any, Static, RecT2]],
-            {**super_pk_cols, **own_pks},
-        )
-
-    @property
-    def _base_cols(cls: type[RecT2]) -> dict[str, Col[Any, Any, Static, RecT2]]:  # type: ignore
-        """The columns of this record type without superclasses."""
-        return (
-            cls._base_fk_cols
-            | cls._pk_cols
-            | {
-                k: getattr(cls, a.name)
-                for k, a in cls._class_props.items()
-                if isinstance(a, Attr) and a.pub_status is Public
-            }
-        )
-
-    @property
-    def _fk_cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Hashable, Any, Static, Record]]:
-        """The foreign key columns of this record type."""
-        return reduce(
-            lambda x, y: {**x, **y},
-            (c._fk_cols for c in cls._record_superclasses),
-            cls._base_fk_cols,
-        )
-
-    @property
-    def _static_props(cls: type[RecT2]) -> dict[str, Prop[Any, Any]]:  # type: ignore
+    def _props(
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
+    ) -> dict[str, Prop[Any, Any]]:
         """The statically defined properties of this record type."""
         return reduce(
             lambda x, y: {**x, **y},
@@ -1209,57 +1125,36 @@ class RecordMeta(type):
         )
 
     @property
-    def _props(cls: type[RecT2]) -> dict[str, Prop[Any, Any]]:  # type: ignore
-        """The properties of this record type."""
-        return {name: c.attr for name, c in cls._fk_cols.items()} | cls._static_props
-
-    @property
     def _attrs(
-        cls: type[RecT2],  # type: ignore
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
     ) -> dict[str, Attr[Any, Any]]:
         return {k: c for k, c in cls._props.items() if isinstance(c, Attr)}
 
     @property
     def _attr_sets(
-        cls: type[RecT2],  # type: ignore
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
     ) -> dict[str, AttrSet[Any, Any, Any]]:
         return {k: c for k, c in cls._props.items() if isinstance(c, AttrSet)}
 
     @property
-    def _cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Any, Any, Static, RecT2, BaseIdx, Singular | Nullable]]:
-        return {
-            k: getattr(cls, a.name)
-            for k, a in cls._attrs.items()
-            if a.pub_status is Public
-        }
-
-    @property
-    def _rel_cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Any, Any, Static, RecT2, Any, Full]]:
-        return {k: getattr(cls, a.name) for k, a in cls._attr_sets.items()}
-
-    @property
     def _rels(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, RelTable[Any, Any, Any, Any, Static, Any, Any, Any, RecT2]]:
-        return {
-            k: getattr(cls, r.name)
-            for k, r in cls._props.items()
-            if isinstance(r, Rel | RelSet)
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
+    ) -> dict[str, Rel[Any, Any]]:
+        return {k: r for k, r in cls._props.items() if isinstance(r, Rel)}
+
+    @property
+    def _rel_sets(
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
+    ) -> dict[str, RelSet[Any, Any, Any, Any]]:
+        return {k: r for k, r in cls._props.items() if isinstance(r, RelSet)}
+
+    @property
+    def _rel_types(
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
+    ) -> set[type[Record]]:
+        return {rel.target_type for rel in cls._rels.values()} | {
+            rel_set.target_type for rel_set in cls._rel_sets.values()
         }
-
-    @property
-    def _data_cols(
-        cls: type[RecT2],  # type: ignore
-    ) -> dict[str, Col[Any, Any, Static, RecT2, BaseIdx, Singular | Nullable]]:
-        return {k: c for k, c in cls._cols.items() if k not in cls._fk_cols}
-
-    @property
-    def _rel_types(cls: type[RecT2]) -> set[type[Record]]:  # type: ignore
-        return {rel.target for rel in cls._rels.values()}
 
     @property
     def _stat_db(cls) -> DB[Any, Static]:
@@ -1267,7 +1162,7 @@ class RecordMeta(type):
 
     @property
     def _stat_table(
-        cls: type[RecT2],  # type: ignore
+        cls: type[RecT2],  # pyright: ignore[reportGeneralTypeIssues]
     ) -> Table[RecT2, Any, Static, None, Any, RecT2]:
         return cls._stat_db[cls]
 
@@ -1373,11 +1268,11 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
             set()
         )
         for rel in cls._rels.values():
-            if isinstance(rel.rel_prop, BackRel):
+            if isinstance(rel, BackRel):
                 rels.add(
                     RelTable[Self, Any, Singular, Any, Static, Self, Any, Any, RecT2](
                         _parent_type=target,
-                        _rel_prop=cast(Rel[Self], rel.rel_prop.to.rel_prop),
+                        _rel_prop=cast(Rel[Self], rel.to.rel_prop),
                     )
                 )
 
@@ -1416,18 +1311,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         cls = type(self)
 
         attrs = {name: val for name, val in kwargs.items() if name in cls._attrs}
-        direct_rels = {
-            name: val
-            for name, val in kwargs.items()
-            if name in cls._rels and isinstance(cls._rels[name].rel_prop, Rel)
-        }
+        direct_rels = {name: val for name, val in kwargs.items() if name in cls._rels}
         attr_sets = {
             name: val for name, val in kwargs.items() if name in cls._attr_sets
         }
         indirect_rels = {
-            name: val
-            for name, val in kwargs.items()
-            if name in cls._rels and isinstance(cls._rels[name].rel_prop, RelSet)
+            name: val for name, val in kwargs.items() if name in cls._rel_sets
         }
 
         # First set all attributes.
@@ -1448,7 +1337,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
         self.__post_init__()
 
-        pks = type(self)._pk_cols
+        pks = self._table._pk_cols
         if len(pks) == 1:
             self._index = getattr(self, next(iter(pks)))
         else:
@@ -1457,7 +1346,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         return
 
     @cached_property
-    def _set(self) -> Table[Self, RW, Any, Any, Singular, Self]:
+    def _table(self) -> Table[Self, RW, Any, Any, Singular, Self]:
         if not self._connected:
             self._db[type(self)] |= self
             self._connected = True
@@ -1503,9 +1392,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
         vals = {
             p if not name_keys else p.name: getattr(self, p.name)
-            for p in (
-                type(self)._props if with_fks else type(self)._static_props
-            ).values()
+            for p in (type(self)._props if with_fks else type(self)._props).values()
             if isinstance(p, include_types)
         }
 
@@ -1519,16 +1406,15 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
         """Check if dict data contains all required info for record type."""
         data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
         return all(
-            a.name in data
-            or a.getter is None
-            or a.default is Undef
-            or a.default_factory is None
-            for a in cls._data_cols.values()
-            if a.init is not False
+            c.attr.name in data
+            or c.attr.getter is None
+            or c.attr.default is Undef
+            or c.attr.default_factory is None
+            for c in cls._stat_table._data_cols.values()
+            if c.attr.init is not False
         ) and all(
-            r.rel_prop.name in data or all(fk.name in data for fk in r._fk_map.keys())
+            r.name in data or all(fk.name in data for fk in r.fk_map.keys())
             for r in cls._rels.values()
-            if isinstance(r.rel_prop, Rel)
         )
 
     def _update_dict(self) -> None:
@@ -2882,7 +2768,7 @@ class Table(
                         reduce(
                             sqla.and_,
                             (
-                                col == self[self.target._pk_cols[col.name]]
+                                col == self[self._pk_cols[col.name]]
                                 for col in table.primary_key.columns
                             ),
                         )
@@ -2936,7 +2822,9 @@ class Table(
 
         # Get the entire subdag of this target type.
         all_paths_rels = {
-            r for rel in self.target._rels.values() for r in rel._get_subdag(rec_types)
+            r
+            for rel in self.target._rels.values()
+            for r in self[rel]._get_subdag(rec_types)
         }
 
         # Extract rel paths, which contain an aggregated rel.
@@ -3067,6 +2955,127 @@ class Table(
     _sel_merge: RelTree = field(default_factory=RelTree)
     _sel_type: type[SelT] = NoneType
 
+    @property
+    def _base_rels(
+        self,
+    ) -> dict[str, RelTable[Any, Any, Any, Any, BackT, Any, Any, Any, RecT]]:
+        """The relations of this record type without superclasses."""
+        return {
+            name: self._db[
+                cast(
+                    RelTable[Any, Any, Any, Any, Static, Any, Any, Any, RecT],
+                    getattr(self.target, name),
+                )
+            ]
+            for name, rel in self.target._class_props.items()
+            if isinstance(rel, Rel | RelSet)
+        }
+
+    @property
+    def _base_fk_cols(
+        self,
+    ) -> dict[str, Col[Hashable, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
+        """The foreign key columns of this record type without superclasses."""
+        return {
+            c.attr.name: c
+            for rel in self._base_rels.values()
+            for c in rel._fk_map.keys()
+        }
+
+    @property
+    def _pk_cols(
+        self,
+    ) -> dict[str, Col[Hashable, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
+        """The primary key columns of this record type."""
+        return {
+            name: self._db[
+                cast(
+                    Col[Any, Any, Static, RecT, BaseIdx, Singular | Nullable],
+                    getattr(self.target, name),
+                )
+            ]
+            for name, a in self.target._props.items()
+            if isinstance(a, Attr) and a.primary_key
+        }
+
+    @property
+    def _base_cols(
+        self,
+    ) -> dict[str, Col[Any, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
+        """The columns of this record type without superclasses."""
+        return (
+            self._base_fk_cols
+            | self._pk_cols
+            | {
+                k: self._db[
+                    cast(
+                        Col[Any, Any, Static, RecT, BaseIdx, Singular | Nullable],
+                        getattr(self.target, a.name),
+                    )
+                ]
+                for k, a in self.target._class_props.items()
+                if isinstance(a, Attr) and a.pub_status is Public
+            }
+        )
+
+    @property
+    def _fk_cols(
+        self,
+    ) -> Mapping[str, Col[Hashable, Any, BackT, Record, BaseIdx, Singular | Nullable]]:
+        """The foreign key columns of this record type."""
+        return reduce(
+            lambda x, y: {**x, **y},
+            (self._db[c]._base_fk_cols for c in self.target._record_superclasses),
+            self._base_fk_cols,
+        )
+
+    @property
+    def _target_cols(
+        self,
+    ) -> dict[str, Col[Any, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
+        return {
+            k: self._db[
+                cast(
+                    Col[Any, Any, Static, RecT, BaseIdx, Singular | Nullable],
+                    getattr(self.target, a.name),
+                )
+            ]
+            for k, a in self.target._attrs.items()
+            if a.pub_status is Public
+        }
+
+    @property
+    def _rel_cols(self) -> dict[str, Col[Any, Any, BackT, RecT, Any, Full]]:
+        return {
+            k: self._db[
+                cast(
+                    Col[Any, Any, Static, RecT, Any, Full], getattr(self.target, a.name)
+                )
+            ]
+            for k, a in self.target._attr_sets.items()
+        }
+
+    @property
+    def _rel_tables(
+        self,
+    ) -> dict[str, RelTable[Any, Any, Any, Any, BackT, Any, Any, Any, RecT]]:
+        return {
+            k: self._db[
+                cast(
+                    RelTable[Any, Any, Any, Any, Static, Any, Any, Any, RecT],
+                    getattr(self.target, r.name),
+                )
+            ]
+            for k, r in self.target._props.items()
+            if isinstance(r, Rel | RelSet)
+        }
+
+    @property
+    def _data_cols(
+        self,
+    ) -> dict[str, Col[Any, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
+        return {k: c for k, c in self._target_cols.items() if k not in self._fk_cols}
+
     @cached_property
     def _single_key(self) -> Hashable | None:
         """Return the single selected key, if it exists."""
@@ -3113,7 +3122,7 @@ class Table(
         return (
             self._filter_merge[1]
             | self._sel_merge
-            | RelTree([col.rel_table for col in self.target._rel_cols.values()])
+            | RelTree([col.rel_table for col in self._rel_cols.values()])
         )
 
     @cached_property
@@ -3148,20 +3157,22 @@ class Table(
         return {
             name: sqla.Column(
                 col.name,
-                registry._resolve_type(col.value_type),  # type: ignore
-                primary_key=col.primary_key,
+                registry._resolve_type(
+                    col.attr.value_type  # pyright: ignore[reportArgumentType]
+                ),
+                primary_key=col.attr.primary_key,
                 autoincrement=False,
                 index=col.index,
-                nullable=has_type(None, col.value_type),
+                nullable=has_type(None, col.attr.value_type),
             )
-            for name, col in self.target._base_cols.items()
+            for name, col in self._base_cols.items()
         }
 
     @cached_property
     def _sql_base_fks(self) -> list[sqla.ForeignKeyConstraint]:
         fks: list[sqla.ForeignKeyConstraint] = []
 
-        for rt in self.target._base_rels.values():
+        for rt in self._base_rels.values():
             if isinstance(rt.rel_prop, Rel):
                 rel_table = rt._get_sql_base_table()
                 fks.append(
@@ -3172,17 +3183,17 @@ class Table(
                     )
                 )
 
-        for base, pks in self.target._superclass_pks.items():
-            base_table = self._db[base]._get_sql_base_table()
+        for superclass in self.target._record_superclasses:
+            base_table = self._db[superclass]._get_sql_base_table()
 
             fks.append(
                 sqla.ForeignKeyConstraint(
-                    [col.name for col in pks.keys()],
-                    [base_table.c[col.name] for col in pks.values()],
+                    [pk_name for pk_name in self._pk_cols],
+                    [base_table.c[pk_name] for pk_name in self._pk_cols],
                     name=(
                         self.target._get_table_name(self._db._subs)
                         + "_base_fk_"
-                        + gen_str_hash(base._get_table_name(self._db._subs), 5)
+                        + gen_str_hash(superclass._get_table_name(self._db._subs), 5)
                     ),
                 )
             )
@@ -3190,27 +3201,26 @@ class Table(
         return fks
 
     @cached_property
-    def _cols(
+    def _query_cols(
         self,
     ) -> Mapping[str, Col[Any, Any, BackT, Any, BaseIdx, Singular | Nullable]]:
         """Return the index cols."""
         return {
-            self._gen_col_fqn(col_name): self[col]
-            for col_name, col in self.target._cols.items()
+            self._gen_col_fqn(col_name): col
+            for col_name, col in self._target_cols.items()
         } | {
             label: col
             for rel in self._rel_tree.all_rels
-            for label, col in rel._cols.items()
+            for label, col in rel._target_cols.items()
         }
 
     @cached_property
     def _idx_cols(
         self,
-    ) -> Mapping[str, Col[Hashable, Any, BackT, Any, Any]]:
+    ) -> Mapping[str, Col[Hashable, Any, BackT, Any, BaseIdx, Singular | Nullable]]:
         """Return the index cols."""
         return {
-            self._gen_col_fqn(col_name): self[col]
-            for col_name, col in self.target._pk_cols.items()
+            self._gen_col_fqn(col_name): col for col_name, col in self._pk_cols.items()
         }
 
     @cached_property
@@ -3222,7 +3232,7 @@ class Table(
 
         table = base_table
         cols = {col.name: col for col in base_table.columns}
-        for superclass, pk_map in self.target._superclass_pks.items():
+        for superclass in self.target._record_superclasses:
             superclass_table = self._db[superclass]._sql_table
             cols |= {col.key: col for col in superclass_table.columns}
 
@@ -3231,8 +3241,8 @@ class Table(
                 reduce(
                     sqla.and_,
                     (
-                        base_table.c[pk.name] == superclass_table.c[target_pk.name]
-                        for pk, target_pk in pk_map.items()
+                        base_table.c[pk_name] == superclass_table.c[pk_name]
+                        for pk_name in self._pk_cols
                     ),
                 ),
             )
@@ -3249,7 +3259,7 @@ class Table(
         select = sqla.select(
             *(
                 self._sql_table.c[col.name].label(label)
-                for label, col in self._cols.items()
+                for label, col in self._query_cols.items()
             )
         ).select_from(self._sql_table)
 
@@ -3302,7 +3312,7 @@ class Table(
         _traversed = _traversed or set()
 
         # Get relations of the target type as next relations
-        next_rels = set(self.target._rels.values())
+        next_rels = set(self._to_static()._rel_tables.values())
 
         for backlink_record in backlink_records:
             next_rels |= backlink_record._backrels_to_rels(self.target)
@@ -3485,10 +3495,7 @@ class Table(
         cols = self._sql_base_cols
         if without_auto_fks:
             cols = {
-                name: col
-                for name, col in cols.items()
-                if name in self.target._base_fk_cols
-                and name not in self.target._base_cols
+                name: col for name, col in cols.items() if name in self.target._attrs
             }
 
         # Create a partial SQLAlchemy table object from the class definition
@@ -3507,8 +3514,7 @@ class Table(
                 fk
                 for fk in fks
                 if not any(
-                    c.name in self.target._base_fk_cols
-                    and c.name not in self.target._base_cols
+                    c.name in self._base_fk_cols and c.name not in self._base_cols
                     for c in fk.columns
                 )
             ]
@@ -3544,23 +3550,27 @@ class Table(
             metadata=self._db._metadata, type_annotation_map=self.target._type_map
         )
 
-        cols = {
-            name: sqla.Column(
-                col.name,
-                registry._resolve_type(col.value_type),  # type: ignore
-                primary_key=col.primary_key,
+        upload_cols = self._target_cols | dict(self._idx_cols)
+
+        cols = [
+            sqla.Column(
+                col_name,
+                registry._resolve_type(
+                    col.attr.value_type  # pyright: ignore[reportArgumentType]
+                ),
+                primary_key=col.attr.primary_key,
                 autoincrement=False,
-                index=col.index,
-                nullable=has_type(None, col.value_type),
+                index=col.attr.index,
+                nullable=has_type(None, col.attr.value_type),
             )
-            for name, col in self.target._cols.items()
-        }
+            for col_name, col in upload_cols.items()
+        ]
 
         table_name = self.target._default_table_name() + "_" + token_hex(5)
         table = sqla.Table(
             table_name,
             metadata,
-            *cols.values(),
+            *cols,
         )
 
         return table
@@ -3661,14 +3671,17 @@ class Table(
         col_data = [
             {
                 **self._gen_idx_value_map(idx),
-                **{p.name: getattr(rec, p.name) for p in type(rec)._cols.values()},
+                **{
+                    p.name: getattr(rec, p.name)
+                    for p in type(rec)._stat_table._target_cols.values()
+                },
             }
             for idx, rec in records.items()
         ]
 
         rec_types = {type(rec) for rec in records.values()}
         cols = set(self._idx_cols.values()) | reduce(
-            set.union, (set(rec._cols.values()) for rec in rec_types)
+            set.union, (set(rec._stat_table._target_cols.values()) for rec in rec_types)
         )
         # Transform attribute data into DataFrame.
         return pl.DataFrame(col_data, schema=_get_pl_schema(cols))
@@ -3715,7 +3728,7 @@ class Table(
                 )
                 value_table.drop(self._db.engine)
 
-                base_idx_cols = [c.name for c in self.target._pk_cols.values()]
+                base_idx_cols = [c.name for c in self._pk_cols.values()]
                 base_idx_keys = set(
                     value[base_idx_cols].iter_rows()
                     if isinstance(value, pl.DataFrame)
@@ -3849,7 +3862,7 @@ class Table(
                 "upsert" if mode in ("update", "insert", "upsert") else "replace"
             ): {
                 label: col
-                for label, col in self.target._cols.items()
+                for label, col in self._query_cols.items()
                 if col.db_table.target is rec
             }
             for rec in base_recs
@@ -4214,7 +4227,7 @@ class RelTable(
             case Rel():
                 rels_to_parent = [
                     r
-                    for r in self.target._rels.values()
+                    for r in self._rel_tables.values()
                     if issubclass(self.parent, r.target)
                     and isinstance(r.rel_prop, BackRel)
                 ]
@@ -4230,7 +4243,7 @@ class RelTable(
             case RelSet():
                 rels_to_parent = [
                     r
-                    for r in self.target._rels.values()
+                    for r in self._rel_tables.values()
                     if issubclass(self.parent, r.target) and r.link is self.link
                 ]
                 if len(rels_to_parent) == 1:
@@ -4313,6 +4326,53 @@ class RelTable(
     _target_type: type[RecT] = field(init=False)
 
     @cached_property
+    def _fk_map(
+        self,
+    ) -> bidict[
+        Col[Hashable, Any, BackT, Any, BaseIdx, Singular | Nullable],
+        Col[Hashable, Any, BackT, Any, BaseIdx, Singular | Nullable],
+    ]:
+        """Map source foreign keys to target cols."""
+        match self.rel_prop:
+            case Rel():
+                if self.rel_prop.fk_map is not None:
+                    return bidict(
+                        {
+                            self[fk]: self._db[pk]
+                            for fk, pk in self.rel_prop.fk_map.items()
+                        }
+                    )
+                else:
+                    return bidict(
+                        {
+                            Col[
+                                Hashable, Any, BackT, Any, BaseIdx, Singular | Nullable
+                            ](
+                                _table=self,
+                                _attr=Attr[Hashable](
+                                    _name=f"{self.rel_prop.name}_{target_col.attr.name}",
+                                    _type=target_col.attr.value_type,
+                                    init=False,
+                                    index=self.rel_prop.index,
+                                    primary_key=self.rel_prop.primary_key,
+                                ),
+                            ): self._db[
+                                target_col
+                            ]
+                            for target_col in self.target._stat_table._pk_cols.values()
+                        }
+                    )
+            case BackRel():
+                return bidict(
+                    {
+                        self._db[fk]: self._db[pk]
+                        for fk, pk in self.rel_prop.to._fk_map.items()
+                    }
+                )
+            case RelSet():
+                return bidict()
+
+    @cached_property
     def _filters(self) -> list[sqla.ColumnElement[bool]]:
         """Get the SQL filters for this table."""
         return super()._filters + self.parent_table._filters
@@ -4321,33 +4381,6 @@ class RelTable(
     def _rel_tree(self) -> RelTree:
         """Full relation tree for this table."""
         return super()._rel_tree | self.parent_table._rel_tree * self
-
-    @cached_property
-    def _fk_map(
-        self,
-    ) -> bidict[Col[Hashable, Any, Static], Col[Hashable, Any, Static]]:
-        """Map source foreign keys to target cols."""
-        match self.rel_prop:
-            case Rel():
-                return self.rel_prop.fk_map or bidict(
-                    {
-                        Col[Hashable, Any, Static, Any](
-                            _table=self.parent._stat_table,
-                            _attr=Attr[Hashable](
-                                _name=f"{self.rel_prop.name}_{target_col.attr.name}",
-                                _type=target_col.attr.value_type,
-                                init=False,
-                                index=self.rel_prop.index,
-                                primary_key=self.rel_prop.primary_key,
-                            ),
-                        ): cast(Col[Hashable], target_col)
-                        for target_col in self.target._pk_cols.values()
-                    }
-                )
-            case BackRel():
-                return self.rel_prop.to._fk_map
-            case RelSet():
-                return bidict()
 
     @cached_property
     def _parent_rel(self) -> RelTable[ParT, Any, Any, WriteT, BackT, Any, ParT] | None:
@@ -4376,16 +4409,18 @@ class RelTable(
             backrels = [
                 r
                 for r in self.link._rels.values()
-                if issubclass(self.parent, r.target) and r.link is None
+                if issubclass(self.parent, r.target_type)
             ]
             assert len(backrels) == 1, "Backrel on link record must be unique."
             fwrels = [
                 r
                 for r in self.link._rels.values()
-                if issubclass(self.target, r.target) and r.link is None
+                if issubclass(self.target, r.target_type)
             ]
             assert len(fwrels) == 1, "Forward ref on link record must be unique."
-            return backrels[0], fwrels[0]
+            return getattr(self.link, backrels[0].name), getattr(
+                self.link, fwrels[0].name
+            )
 
     @cached_property
     def _join_path(
@@ -4406,7 +4441,9 @@ class RelTable(
     @cached_property
     def _path_idx(
         self,
-    ) -> Mapping[Col[Any, Any, Any, Any], Table[Any, Any, Any, Any, Any]]:
+    ) -> Mapping[
+        Col[Any, Any, Any, Any, Any, Any], Table[Any, Any, Any, Any, Any, Any]
+    ]:
         """Get the path index of the relation."""
         return {
             **(
@@ -4414,7 +4451,7 @@ class RelTable(
                 if isinstance(self.parent_table, RelTable)
                 else {
                     col: self.parent_table
-                    for col in self.parent_table.target._pk_cols.values()
+                    for col in self.parent_table._pk_cols.values()
                 }
             ),
             **{
@@ -4424,7 +4461,7 @@ class RelTable(
                     if isinstance(self.rel_prop, RelSet)
                     and self.rel_prop.map_by is not None
                     else (
-                        self.target._pk_cols.values()
+                        self._pk_cols.values()
                         if isinstance(self.rel_prop, RelSet)
                         else []
                     )
@@ -4456,7 +4493,7 @@ class RelTable(
     @cached_property
     def _idx_cols(
         self,
-    ) -> Mapping[str, Col[Hashable, Any, BackT, RecT, Any]]:
+    ) -> Mapping[str, Col[Hashable, Any, BackT, RecT, BaseIdx, Singular | Nullable]]:
         """Return the index cols."""
         return {
             rel._gen_col_fqn(col.name): self[col] for col, rel in self._path_idx.items()
@@ -4522,7 +4559,7 @@ class RelTable(
             for idx, base_idx in indexes.items()
         ]
 
-        idx_cols = set(self._idx_cols.values()) | set(self.target._pk_cols.values())
+        idx_cols = set(self._idx_cols.values()) | set(self._pk_cols.values())
         # Transform attribute data into DataFrame.
         return pl.DataFrame(col_data, schema=_get_pl_schema(idx_cols))
 
@@ -4551,25 +4588,32 @@ class RelTable(
         # Update relations with parent records.
         if isinstance(self.rel_prop, Rel):
             # Case: parent links directly to child (n -> 1)
+            idx_cols = [value_table.c[col_name] for col_name in self._idx_cols]
             fk_cols = [
                 value_table.c[pk.name].label(fk.name) for fk, pk in self._fk_map.items()
             ]
             self.parent_table._mutate_from_sql(
-                sqla.select(*fk_cols).select_from(value_table).subquery(),
+                sqla.select(*idx_cols, *fk_cols).select_from(value_table).subquery(),
                 "update",
             )
         elif issubclass(self.link, Record):
             # Case: parent and child are linked via assoc table (n <--> m)
             # Update link table with new child indexes.
+            idx_cols = [value_table.c[col_fqn] for col_fqn in self._idx_cols]
+            fk_cols = [
+                value_table.c[pk.name].label(fk.name)
+                for fk, pk in self._target_path[1]._fk_map.items()
+            ]
             link_cols = [
-                *(
-                    value_table.c[pk.name].label(fk.name)
-                    for fk, pk in self._fk_map.items()
-                ),
-                *(value_table.c[col_name] for col_name in self._idx_cols),
+                value_table.c[col_fqn].label(col.name)
+                for col_fqn, col in self._idx_cols.items()
+                if col.name in self.link_table._target_cols
             ]
             self.link_table._mutate_from_sql(
-                sqla.select(*link_cols).select_from(value_table).subquery(), mode
+                sqla.select(*idx_cols, *fk_cols, *link_cols)
+                .select_from(value_table)
+                .subquery(),
+                mode,
             )
         else:
             # The (1 <- n) case is already covered by updating
@@ -4634,7 +4678,7 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
     )
 
     def __post_init__(self):  # noqa: D105
-        self.db = self  # type: ignore
+        self.db = self
 
         if self.types is not None:
             types = self.types
@@ -4848,7 +4892,10 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
     def load(
         self: DB[RW, Any],
         data: pd.DataFrame | pl.DataFrame | sqla.Select,
-        fks: Mapping[str, Col] | None = None,
+        fks: (
+            Mapping[str, Col[Any, Any, Static, Any, BaseIdx, Singular | Nullable]]
+            | None
+        ) = None,
     ) -> Table[DynRecord, R, BackT, Any, Any, DynRecord]:
         """Create a temporary dataset instance from a DataFrame or SQL query."""
         name = (
@@ -4888,9 +4935,11 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
             .rename(columns={"index": "node_id"})
         )
 
-        directed_edges = reduce(set.union, (self._relation_map[n] for n in nodes))
+        directed_edges = reduce(
+            set.union, (set(self[n]._rel_tables.values()) for n in nodes)
+        )
 
-        undirected_edges: dict[type[Record], set[tuple[RelTable, ...]]] = {
+        undirected_edges: dict[type[Record], set[tuple[Rel, ...]]] = {
             t: set() for t in nodes
         }
         for n in nodes:
@@ -4898,9 +4947,9 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                 if len(at._rels) == 2:
                     left, right = (r for r in at._rels.values())
                     assert left is not None and right is not None
-                    if left.target == n:
+                    if left.target_type == n:
                         undirected_edges[n].add((left, right))
-                    elif right.target == n:
+                    elif right.target_type == n:
                         undirected_edges[n].add((right, left))
 
         # Concat all edges into one table.
@@ -4933,20 +4982,20 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target._default_table_name())
+                            == str(left_rel.target_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in left_rel._fk_map.keys()],
-                        right_on=[c.name for c in left_rel._fk_map.values()],
+                        left_on=[c.name for c in left_rel.fk_map.keys()],
+                        right_on=[c.name for c in left_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "source"})
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target._default_table_name())
+                            == str(left_rel.target_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in right_rel._fk_map.keys()],
-                        right_on=[c.name for c in right_rel._fk_map.values()],
+                        left_on=[c.name for c in right_rel.fk_map.keys()],
+                        right_on=[c.name for c in right_rel.fk_map.values()],
                         how="inner",
                     )
                     .rename(columns={"node_id": "target"})[
@@ -4954,13 +5003,13 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
                             {
                                 "source",
                                 "target",
-                                *(a for a in (left_rel.parent or Record)._cols),
+                                *(a for a in self[assoc_table]._target_cols),
                             }
                         )
                     ]
                     .assign(
-                        ltr=",".join(c.name for c in right_rel._fk_map.keys()),
-                        rtl=",".join(c.name for c in left_rel._fk_map.keys()),
+                        ltr=",".join(c.name for c in right_rel.fk_map.keys()),
+                        rtl=",".join(c.name for c in left_rel.fk_map.keys()),
                     )
                     for assoc_table, rels in undirected_edges.items()
                     for left_rel, right_rel in rels
@@ -5001,32 +5050,15 @@ class DB(Table[Record, WriteT, BackT, None, Full], Backend[BackT]):
         """Set of all association tables in this DB."""
         assoc_types = set()
         for rec in self._def_types:
-            pks = set([col.name for col in rec._pk_cols.values()])
+            assoc_table = self[rec]
+            pks = set([col.name for col in assoc_table._pk_cols.values()])
             fks = set(
-                [col.name for rel in rec._rels.values() for col in rel._fk_map.keys()]
+                [col.name for rel in rec._rels.values() for col in rel.fk_map.keys()]
             )
             if pks == fks:
                 assoc_types.add(rec)
 
         return assoc_types
-
-    @cached_property
-    def _relation_map(
-        self,
-    ) -> dict[
-        type[Record], set[RelTable[Record, Any, Any, Any, Any, Any, Any, Any, Record]]
-    ]:
-        """Maps all tables in this DB to their outgoing or incoming relations."""
-        rels: dict[type[Record], set[RelTable]] = {
-            table: set() for table in self._def_types
-        }
-
-        for rec in self._def_types:
-            for rel in rec._rels.values():
-                rels[rec].add(rel)
-                rels[rel.target].add(rel)
-
-        return rels
 
     def _get_valid_cache_set(self, rec: type[Record]) -> set[Hashable]:
         """Get the valid cache set for a record type."""
@@ -5067,7 +5099,10 @@ class RecHashed(Record[int]):
 
     def __post_init__(self) -> None:  # noqa: D105
         self._id = gen_int_hash(
-            {a.name: getattr(self, a.name) for a in type(self)._base_cols.values()}
+            {
+                a.name: getattr(self, a.name)
+                for a in type(self)._stat_table._base_cols.values()
+            }
         )
 
 
