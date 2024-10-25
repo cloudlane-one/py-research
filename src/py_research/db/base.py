@@ -843,14 +843,18 @@ class Rel(
         self: Rel[RecT2, WriteT],
         instance: None,
         owner: type[ParT2],
-    ) -> RelTable[RecT2, None, BaseIdx, RO, Static, RecT2, None, Singular, ParT2]: ...
+    ) -> RelTable[
+        RecT2, None, BaseIdx, WriteT, Static, RecT2, None, Singular, ParT2
+    ]: ...
 
     @overload
     def __get__(
         self: Rel[RecT2 | None, WriteT],
         instance: None,
         owner: type[ParT2],
-    ) -> RelTable[RecT2, None, BaseIdx, RO, Static, RecT2, None, Nullable, ParT2]: ...
+    ) -> RelTable[
+        RecT2, None, BaseIdx, WriteT, Static, RecT2, None, Nullable, ParT2
+    ]: ...
 
     @overload
     def __get__(
@@ -875,7 +879,15 @@ class Rel(
         owner: type | type[ParT2] | None,
     ) -> (
         RelTable[
-            RecT2, None, BaseIdx, RO, Static, RecT2, None, Singular | Nullable, ParT2
+            RecT2,
+            None,
+            BaseIdx,
+            WriteT,
+            Static,
+            RecT2,
+            None,
+            Singular | Nullable,
+            ParT2,
         ]
         | Record
         | None
@@ -956,7 +968,7 @@ class RelSet(
         self,
         instance: None,
         owner: type[ParT2],
-    ) -> RelTable[RecT, LnT, IdxT, RO, Static, RecT, None, Full, ParT2]: ...
+    ) -> RelTable[RecT, LnT, IdxT, WriteT, Static, RecT, None, Full, ParT2]: ...
 
     @overload
     def __get__(
@@ -973,7 +985,7 @@ class RelSet(
         instance: object | None,
         owner: type | type[ParT2] | None,
     ) -> (
-        RelTable[RecT, LnT, IdxT, WriteT | RO, Any, RecT, Record | None, Full, ParT2]
+        RelTable[RecT, LnT, IdxT, WriteT, Any, RecT, Record | None, Full, ParT2]
         | Record
         | None
         | Self

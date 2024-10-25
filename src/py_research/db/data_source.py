@@ -26,7 +26,21 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DB, Col, Record, RelTable, Static, Table
+from .base import (
+    DB,
+    RW,
+    BackRel,
+    BaseIdx,
+    Col,
+    Nullable,
+    Record,
+    Rel,
+    RelSet,
+    RelTable,
+    Singular,
+    Static,
+    Table,
+)
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -191,7 +205,9 @@ class Index:
     """Map to the index of the record."""
 
     pos: int | slice = slice(None)
-    pks: Iterable[Col[Hashable, Any, Static, Any, Any]] | None = None
+    pks: (
+        Iterable[Col[Hashable, Any, Static, Any, BaseIdx, Singular | Nullable]] | None
+    ) = None
 
 
 type PullMap[Rec: Record] = SupportsItems[
@@ -254,7 +270,7 @@ class RecMap[Rec: Record, Dat]:
         }
 
     @cached_property
-    def rels(self) -> dict[RelTable, SubMap]:
+    def rels(self) -> dict[RelTable[Any, Any, Any, Any, Any, Record], SubMap]:
         """Get all relation mappings."""
         return {
             cast(RelTable[Any, Any, Any, Any, Any, Record], rel): sel
@@ -337,7 +353,7 @@ class SubMap(RecMap, DataSelect):
 class RelMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: RelTable[Rec, Any, Any, Any, Static, Rec2, Rec]
+    rel: RelTable[Rec, Any, Any, RW, Static, Rec, Any, Any, Rec2]
     """Relation to use for mapping."""
 
     link: RecMap | None = None
@@ -366,7 +382,8 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
             return {All: push_map}
         case Iterable() if has_type(push_map, Iterable[Col | RelMap]):
             return {
-                k.name if isinstance(k, Col) else k.rel.name: True for k in push_map
+                k.name if isinstance(k, Col) else k.rel.rel_prop.name: True
+                for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -486,7 +503,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    rec_type: type[Record],
+    rec_set: Table,
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -496,7 +513,7 @@ def _gen_match_expr(
         return [rec_idx]
     else:
         match_cols = (
-            list(rec_type._cols.values())
+            list(rec_set._target_cols.values())
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Col) else match_by
         )
@@ -504,8 +521,8 @@ def _gen_match_expr(
 
 
 type InData = dict[tuple[Hashable, DirectPath], TreeNode]
-type RelData = list[tuple[RelMap, InData]]
-type RestData = list[tuple[RecMap, InData]]
+type RelData = list[tuple[RelMap[Record, TreeNode, Record], InData]]
+type RestData = list[tuple[RecMap[Record, TreeNode], InData]]
 
 
 async def _load_record[
@@ -531,7 +548,7 @@ async def _load_record[
     ref_fks: dict[str, Hashable] = {}
 
     for rel, target_map in rec_map.rels.items():
-        if rel.is_direct_ref:
+        if isinstance(rel.rel_prop, Rel):
             sub_items = list(target_map.select(data, path_idx).items())
             assert len(sub_items) == 1
 
@@ -556,7 +573,7 @@ async def _load_record[
         if isinstance(idx, Index)
     }
     if len(indexes) > 0:
-        rec_pks = list(rec_set.target._pk_cols.values())
+        rec_pks = list(rec_set._pk_cols.values())
         idx_maps = [
             dict(
                 zip(
@@ -586,9 +603,9 @@ async def _load_record[
         )
 
     parent_rel_fks = {}
-    if isinstance(rec_map, RelMap) and not rec_map.rel._backrel.is_direct_ref:
+    if isinstance(rec_map, RelMap) and isinstance(rec_map.rel.rel_prop, BackRel):
         assert parent_idx is not None
-        parent_rel_fks = rec_map.rel._backrel._gen_fk_value_map(parent_idx)
+        parent_rel_fks = rec_map.rel._gen_fk_value_map(parent_idx)
 
     attrs = {
         a.name: (a, *list(sel.select(data, path_idx).items())[0])
@@ -609,7 +626,7 @@ async def _load_record[
         rec = rec_map.rec_type(_db=rec_set._db, **rec_dict)
 
     match_expr = _gen_match_expr(
-        rec_map.rec_type,
+        rec_set,
         rec._index if rec is not None else rec_idx if rec_idx is not None else None,
         rec_dict,
         rec_map.match_by,
@@ -643,7 +660,7 @@ async def _load_record[
             parent_idx,
             path_idx,
             data,
-            inject=rec_map.rel._backrel._gen_fk_value_map(rec_idx),
+            inject=rec_map.rel._gen_fk_value_map(rec_idx),
         )
 
     return rec if rec is not None and is_new else rec_idx, link
@@ -651,7 +668,7 @@ async def _load_record[
 
 async def _load_records(
     db: DB,
-    rec_map: RecMap,
+    rec_map: RecMap[Record, TreeNode],
     in_data: InData,
     rest_data: RestData,
 ) -> dict[Hashable, Record | Hashable]:
@@ -694,16 +711,22 @@ async def _load_records(
                     continue
                 else:
                     rel_idx = link
-            elif rec_map.rel.map_by is not None:
-                if issubclass(rec_map.rec_type, rec_map.rel.map_by.parent_type):
+            elif (
+                isinstance(rec_map.rel.rel_prop, RelSet)
+                and rec_map.rel.rel_prop.map_by is not None
+            ):
+                if issubclass(
+                    rec_map.rec_type, rec_map.rel.rel_prop.map_by.parent_type
+                ):
                     rec = rec if isinstance(rec, Record) else db[rec_map.rec_type][rec]
-                    mapped_idx = getattr(rec, rec_map.rel.map_by.name)
+                    mapped_idx = getattr(rec, rec_map.rel.rel_prop.map_by.name)
                 else:
                     assert (
                         link is not None
                         and rec_map.link is not None
                         and issubclass(
-                            rec_map.link.rec_type, rec_map.rel.map_by.parent_type
+                            rec_map.link.rec_type,
+                            rec_map.rel.rel_prop.map_by.parent_type,
                         )
                     )
                     link = (
@@ -711,7 +734,7 @@ async def _load_records(
                         if isinstance(link, Record)
                         else db[rec_map.link.rec_type][link].get()
                     )
-                    mapped_idx = getattr(link, rec_map.rel.map_by.name)
+                    mapped_idx = getattr(link, rec_map.rel.rel_prop.map_by.name)
 
                 rel_idx = (
                     *(parent_idx if isinstance(parent_idx, tuple) else [parent_idx]),
@@ -766,7 +789,9 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
         db = db if db is not None else DB()
         in_data: InData = {((), ()): dat for dat in data}
         rest_data: RestData = []
-        loaded = await _load_records(db, self, in_data, rest_data)
+        loaded = await _load_records(
+            db, cast(RecMap[Record, TreeNode], self), in_data, rest_data
+        )
 
         # Perform second pass to load remaining data
         for rec_map, tree_data in rest_data:
