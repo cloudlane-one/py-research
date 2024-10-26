@@ -66,7 +66,7 @@ class Project(Record[int]):
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
     org: Link[Organization]
-    tasks: BackLink[Task] = BackLink(link=Task.project)
+    tasks: BackLink[Task] = BackLink(to=Task.project)
     members: RelSet[User, Membership]
 
 
@@ -76,5 +76,5 @@ class Organization(RecUUID):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: BackLink[Project] = BackLink(link=Project.org, default=True)
+    projects: BackLink[Project] = BackLink(to=Project.org, default=True)
     countries: AttrSet[str]
