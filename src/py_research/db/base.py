@@ -334,12 +334,14 @@ def _gen_prop(
         else _sql_to_py_dtype(data)
     ) or Any
     attr = Attr[value_type](
-        primary_key=pk, _name=name if not is_rel else f"fk_{name}", _type=value_type
+        primary_key=pk,
+        _name=name if not is_rel else f"fk_{name}",
+        _typehint=Attr[value_type],
     )
     return (
         attr
         if not is_rel
-        else Link(fks=fks[name], _type=fks[name].value_type, _name=f"rel_{name}")
+        else Link(fks=fks[name], _typehint=fks[name]._typehint, _name=f"rel_{name}")
     )
 
 
@@ -395,32 +397,81 @@ def _remove_cross_fk(table: sqla.Table):
     )
 
 
-@dataclass
-class PropType(Generic[ValT]):
-    """Reference to a type."""
+@dataclass(eq=False)
+class Prop(Generic[ValT, WriteT]):
+    """Record property."""
 
-    hint: str | SingleTypeDef[Prop[ValT, Any]] | None = None
-    ctx: ModuleType | None = None
-    typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
+    _name: str | None = None
 
-    def __set__(  # noqa: D105
-        self, instance: object, value: PropType | str | type[Prop] | SingleTypeDef[ValT]
-    ) -> None:
-        if isinstance(value, PropType):
-            self.hint = value.hint
-            self.ctx = value.ctx
-            self.typevar_map = value.typevar_map
-        elif isinstance(value, str) or is_subtype(value, Prop):
-            self.hint = value
-        else:
-            self.hint = cast(type[Prop[ValT, Any]], Prop[value])
+    _typehint: str | SingleTypeDef[Prop[ValT, Any]] | None = None
+    _ctx: ModuleType | None = None
+    _typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
+
+    _owner_type: type[Record] | None = None
 
     def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.hint, self.ctx, self.typevar_map))
+        return gen_int_hash((self._typehint, self._ctx, self._typevar_map))
 
-    def prop_type(self) -> type[Prop] | type[None]:
+    @cached_property
+    def value_type(self) -> SingleTypeDef[ValT2]:
+        """Resolve the value type reference."""
+        args = self._generic_args
+        if len(args) == 0:
+            return cast(type[ValT2], object)
+
+        arg = args[0]
+        return cast(SingleTypeDef[ValT2], self._to_typedef(arg))
+
+    @cached_property
+    def record_type(
+        self: Prop[RecT2 | Iterable[RecT2 | None] | None],
+    ) -> type[RecT2]:
+        """Resolve the record type reference."""
+        args = self._generic_args
+        assert len(args) > 0
+
+        recs = args[0]
+        if isinstance(recs, TypeVar):
+            recs = self._to_type(recs)
+
+        rec_args = get_args(recs)
+        rec_arg = extract_nullable_type(recs)
+        assert rec_arg is not None
+
+        if is_subtype(recs, Iterable):
+            assert len(rec_args) >= 1
+            rec_arg = rec_args[0]
+
+        rec_type = self._to_type(rec_arg)
+        assert issubclass(rec_type, Record)
+
+        return cast(type[RecT2], rec_type)
+
+    @property
+    def name(self) -> str:
+        """Property name."""
+        assert self._name is not None
+        return self._name
+
+    @cached_property
+    def value_origin_type(self) -> type:
+        """Value type of the property."""
+        return (
+            self.value_type
+            if isinstance(self.value_type, type)
+            else get_origin(self.value_type) or object
+        )
+
+    def __set_name__(self, _, name: str) -> None:  # noqa: D105
+        if self._name is None:
+            self._name = name
+        else:
+            assert name == self._name
+
+    @cached_property
+    def _prop_type(self) -> type[Prop] | type[None]:
         """Resolve the property type reference."""
-        hint = self.hint
+        hint = self._typehint
 
         if hint is None:
             return NoneType
@@ -444,6 +495,21 @@ class PropType(Generic[ValT]):
         else:
             return NoneType
 
+    @cached_property
+    def _generic_type(self) -> SingleTypeDef | UnionType:
+        """Resolve the generic property type reference."""
+        hint = self._typehint or Prop
+        generic = self._to_typedef(hint)
+        assert is_subtype(generic, Prop)
+
+        return generic
+
+    @cached_property
+    def _generic_args(self) -> tuple[SingleTypeDef | UnionType | TypeVar, ...]:
+        """Resolve the generic property type reference."""
+        args = get_args(self._generic_type)
+        return tuple(self._to_typedef(hint) for hint in args)
+
     def _to_typedef(
         self, hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef
     ) -> SingleTypeDef:
@@ -451,15 +517,15 @@ class PropType(Generic[ValT]):
 
         if isinstance(typedef, str):
             typedef = eval(
-                typedef, {**globals(), **(vars(self.ctx) if self.ctx else {})}
+                typedef, {**globals(), **(vars(self._ctx) if self._ctx else {})}
             )
 
         if isinstance(typedef, TypeVar):
-            typedef = self.typevar_map.get(typedef) or typedef.__bound__ or object
+            typedef = self._typevar_map.get(typedef) or typedef.__bound__ or object
 
         if isinstance(typedef, ForwardRef):
             typedef = typedef._evaluate(
-                {**globals(), **(vars(self.ctx) if self.ctx else {})},
+                {**globals(), **(vars(self._ctx) if self._ctx else {})},
                 {},
                 recursive_guard=frozenset(),
             )
@@ -489,106 +555,8 @@ class PropType(Generic[ValT]):
             orig.__name__ + "_" + token_hex(5),
             (hint,),
             None,
-            lambda ns: ns.update({"_src_mod": self.ctx}),
+            lambda ns: ns.update({"_src_mod": self._ctx}),
         )
-
-    @cached_property
-    def _generic_type(self) -> SingleTypeDef | UnionType:
-        """Resolve the generic property type reference."""
-        hint = self.hint or Prop
-        generic = self._to_typedef(hint)
-        assert is_subtype(generic, Prop)
-
-        return generic
-
-    @cached_property
-    def _generic_args(self) -> tuple[SingleTypeDef | UnionType | TypeVar, ...]:
-        """Resolve the generic property type reference."""
-        args = get_args(self._generic_type)
-        return tuple(self._to_typedef(hint) for hint in args)
-
-    def value_type(self: PropType[ValT2]) -> SingleTypeDef[ValT2]:
-        """Resolve the value type reference."""
-        args = self._generic_args
-        if len(args) == 0:
-            return cast(type[ValT2], object)
-
-        arg = args[0]
-        return cast(SingleTypeDef[ValT2], self._to_typedef(arg))
-
-    def record_type(
-        self: PropType[Record | Iterable[Record | None] | None],
-    ) -> type[Record]:
-        """Resolve the record type reference."""
-        assert is_subtype(self._generic_type, DataSet)
-
-        args = self._generic_args
-        assert len(args) > 0
-
-        recs = args[0]
-        if isinstance(recs, TypeVar):
-            recs = self._to_type(recs)
-
-        rec_args = get_args(recs)
-        rec_arg = extract_nullable_type(recs)
-        assert rec_arg is not None
-
-        if is_subtype(recs, Iterable):
-            assert len(rec_args) >= 1
-            rec_arg = rec_args[0]
-
-        rec_type = self._to_type(rec_arg)
-        assert issubclass(rec_type, Record)
-
-        return rec_type
-
-    def link_type(
-        self: PropType[Record | Iterable[Record | None] | None],
-    ) -> type[Record | None]:
-        """Resolve the record type reference."""
-        assert is_subtype(self._generic_type, DataSet)
-        args = self._generic_args
-        rec = args[1]
-        rec_type = self._to_type(rec)
-
-        if not issubclass(rec_type, Record):
-            return NoneType
-
-        return rec_type
-
-
-@dataclass(eq=False)
-class Prop(Generic[ValT, WriteT]):
-    """Record property."""
-
-    _name: str | None = None
-    _type: PropType[ValT] = field(default_factory=PropType[ValT])
-
-    @property
-    def name(self) -> str:
-        """Property name."""
-        assert self._name is not None
-        return self._name
-
-    @cached_property
-    def value_type(self) -> SingleTypeDef[ValT]:
-        """Value type of the property."""
-        return self._type.value_type()
-
-    @cached_property
-    def value_origin_type(self) -> type:
-        """Value type of the property."""
-        return (
-            self.value_type
-            if isinstance(self.value_type, type)
-            else get_origin(self.value_type) or object
-        )
-
-    def __set_name__(self, _, name: str) -> None:  # noqa: D105
-        if self._name is None:
-            self._name = name
-        else:
-            assert name == self._name
 
 
 @final
@@ -644,6 +612,8 @@ class Attr(Prop[ValT, WriteT], Generic[ValT, WriteT, PubT]):
         | ValT
         | Self
     ):
+        owner = self._owner_type or owner
+
         if owner is not None and issubclass(owner, Record):
             if isinstance(instance, Record):
                 if (
@@ -728,11 +698,6 @@ class Link(
     index: bool = False
     primary_key: bool = False
 
-    @property
-    def target_type(self: Link[RecT2 | None, Any]) -> type[RecT2]:
-        """Target record type of the relation."""
-        return cast(type[RecT2], self._type.record_type())
-
     @cached_property
     def fk_map(self) -> bidict[
         Attr,
@@ -746,8 +711,8 @@ class Link(
                 fks = self.fks if isinstance(self.fks, list) else [self.fks]
 
                 pks = [
-                    getattr(self.target_type, name)
-                    for name in self.target_type._pk_attrs
+                    getattr(self.record_type, name)
+                    for name in self.record_type._pk_attrs
                 ]
 
                 return bidict(dict(zip(fks, pks)))
@@ -756,12 +721,12 @@ class Link(
                     {
                         Attr[Hashable](
                             _name=f"{self.name}_{a.name}",
-                            _type=a.value_type,
+                            _typehint=a.value_type,
                             init=False,
                             index=self.index,
                             primary_key=self.primary_key,
-                        ): getattr(self.target_type, a.name)
-                        for a in self.target_type._pk_attrs.values()
+                        ): getattr(self.record_type, a.name)
+                        for a in self.record_type._pk_attrs.values()
                     }
                 )
 
@@ -820,6 +785,8 @@ class Link(
         | None
         | Link[Any, Any]
     ):
+        owner = self._owner_type or owner
+
         if owner is not None and issubclass(owner, Record):
             if isinstance(instance, Record):
                 self_ref = cast(
@@ -842,7 +809,7 @@ class Link(
                 return DataSet(
                     db=owner._sym_db,
                     _parent=owner,
-                    _rel=self,
+                    _ref=self,
                 )
 
         return self
@@ -868,18 +835,38 @@ class Link(
 
 
 @dataclass(kw_only=True)
-class BackLink(
+class RefSet(
     Ref[RecT, WriteT],
-    Generic[RecT, IdxT, WriteT],
+    Generic[RecT, LnT, IdxT, WriteT, AttrT],
 ):
-    """Relational record set."""
+    """Reference record set."""
 
     default: bool = False
 
-    to: DataSet[Record, None, BaseIdx, Any, Symbolic, Record, None, One, RecT, FullRec]
     map_by: (
-        DataSet[RecT, None, BaseIdx, Any, Symbolic, RecT, None, One, None, Value] | None
+        DataSet[Record, None, BaseIdx, Any, Symbolic, Record, None, One, None, Value]
+        | None
     ) = None
+
+    @cached_property
+    def attr(self) -> Attr[Any, WriteT] | None:
+        """Referenced attribute."""
+        return None
+
+    @cached_property
+    def link_type(
+        self,
+    ) -> type[LnT]:
+        """Resolve the record type reference."""
+        assert is_subtype(self._generic_type, RefSet)
+        args = self._generic_args
+        rec = args[1]
+        rec_type = self._to_type(rec)
+
+        if not issubclass(rec_type, Record):
+            return cast(type[LnT], NoneType)
+
+        return cast(type[LnT], rec_type)
 
     @overload
     def __get__(
@@ -887,7 +874,7 @@ class BackLink(
         instance: None,
         owner: type[RecParT2],
     ) -> DataSet[
-        RecT, None, IdxT, WriteT, Symbolic, RecT, None, Open, RecParT2, FullRec
+        RecT, LnT, IdxT, WriteT, Symbolic, RecT, None, Open, RecParT2, AttrT
     ]: ...
 
     @overload
@@ -896,7 +883,7 @@ class BackLink(
         instance: RecParT2,
         owner: type[RecParT2],
     ) -> DataSet[
-        RecT, None, IdxT, WriteT, DynBackendID, RecT, None, Open, RecParT2, FullRec
+        RecT, LnT, IdxT, WriteT, DynBackendID, RecT, None, Open, RecParT2, AttrT
     ]: ...
 
     @overload
@@ -906,37 +893,72 @@ class BackLink(
         self,
         instance: object | None,
         owner: type | None,
-    ) -> (
-        DataSet[RecT, None, IdxT, WriteT, Any, RecT, None, Open, Any, FullRec]
-        | Record
-        | None
-        | Self
-    ):
+    ) -> DataSet[RecT, LnT, IdxT, WriteT, Any, RecT, None, Open, Any, AttrT] | Self:
+        owner = self._owner_type or owner
+
         if owner is not None and issubclass(owner, Record):
             if isinstance(instance, Record):
                 return DataSet[
-                    RecT, None, IdxT, WriteT, Any, RecT, None, Open, Any, FullRec
-                ](
-                    db=instance._db,
-                    _parent=owner,
-                    _rel=self,
-                )
+                    RecT, LnT, IdxT, WriteT, Any, RecT, None, Open, Any, AttrT
+                ](db=instance._db, _parent=owner, _ref=self, _attr=self.attr)
 
             if instance is None:
                 return DataSet(
-                    db=owner._sym_db,
-                    _parent=owner,
-                    _rel=self,
+                    db=owner._sym_db, _parent=owner, _ref=self, _attr=self.attr
                 )
 
         return self
 
-    def __set__(  # noqa: D105
-        self: BackLink[RecT2, IdxT2, RW],
+    @overload
+    def __set__(
+        self: RefSet[RecT2, None, IdxT2, RW, FullRec],
         instance: Record,
         value: (
             DataSet[RecT2, Any, IdxT2, Any, Any, RecT2, None, Any, Any, FullRec]
             | Input[RecT2, Hashable, Hashable]
+            | type[Keep]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __set__(
+        self: RefSet[RecT2, RelT2, IdxT2, RW, FullRec],
+        instance: Record,
+        value: (
+            DataSet[RecT2, RelT2, IdxT2, Any, Any, RecT2, None, Any, Any, FullRec]
+            | Input[RecT2, Hashable, Hashable]
+            | type[Keep]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __set__(
+        self: RefSet[RecT2, None, IdxT2, RW, ValT2],
+        instance: Record,
+        value: (
+            DataSet[Any, Any, IdxT2, Any, Any, Any, None, Any, Any, ValT2]
+            | Input[ValT2, Hashable, None]
+            | type[Keep]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __set__(
+        self: RefSet[RecT2, RelT2, IdxT2, RW, ValT2],
+        instance: Record,
+        value: (
+            DataSet[Any, RelT2, IdxT2, Any, Any, Any, None, Any, Any, ValT2]
+            | Input[ValT2, Hashable, None]
+            | type[Keep]
+        ),
+    ) -> None: ...
+
+    def __set__(  # noqa: D105
+        self: RefSet[RecT2, LnT2, IdxT2, RW, AttrT2],
+        instance: Record,
+        value: (
+            DataSet[Any, Any, IdxT2, Any, Any, Any, None, Any, Any, FullRec | ValT2]
+            | Input[Any, Hashable, Any]
             | type[Keep]
         ),
     ) -> None:
@@ -951,13 +973,22 @@ class BackLink(
 
 
 @dataclass(kw_only=True)
+class BackLink(RefSet[RecT, None, IdxT, WriteT, AttrT]):
+    """Backlink record set."""
+
+    to: DataSet[Record, None, BaseIdx, Any, Symbolic, Record, None, One, RecT, FullRec]
+
+    @cached_property
+    def link(self) -> Link[Record | None, WriteT]:
+        """The forward link."""
+        return self.to.link
+
+
+@dataclass(kw_only=True)
 class RelSet(
-    Ref[RecT, WriteT],
-    Generic[RecT, RelT, IdxT, WriteT],
+    RefSet[RecT, RelT, IdxT, WriteT, FullRec],
 ):
     """Relational record set."""
-
-    default: bool = False
 
     map_by: (
         DataSet[
@@ -975,189 +1006,63 @@ class RelSet(
         | None
     ) = None
 
-    @cached_property
-    def target_type(self) -> type[RecT]:
-        """Get the record type."""
-        return cast(type[RecT], self._type.record_type())
-
-    @property
-    def link_type(self) -> type[RelT]:
-        """Get the link record type."""
-        return cast(
-            type[RelT],
-            self._type.link_type(),
-        )
-
-    @overload
-    def __get__(
-        self,
-        instance: None,
-        owner: type[RecParT2],
-    ) -> DataSet[
-        RecT, RelT, IdxT, WriteT, Symbolic, RecT, None, Open, RecParT2, FullRec
-    ]: ...
-
-    @overload
-    def __get__(
-        self,
-        instance: RecParT2,
-        owner: type[RecParT2],
-    ) -> DataSet[
-        RecT, RelT, IdxT, WriteT, DynBackendID, RecT, None, Open, RecParT2, FullRec
-    ]: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
-        self,
-        instance: object | None,
-        owner: type | None,
-    ) -> (
-        DataSet[RecT, RelT, IdxT, WriteT, Any, RecT, None, Open, Any, FullRec]
-        | Record
-        | None
-        | Self
-    ):
-        if owner is not None and issubclass(owner, Record):
-            if isinstance(instance, Record):
-                return DataSet[
-                    RecT, RelT, IdxT, WriteT, Any, RecT, None, Open, Any, FullRec
-                ](
-                    db=instance._db,
-                    _parent=owner,
-                    _rel=self,
-                )
-
-            if instance is None:
-                return DataSet(
-                    db=owner._sym_db,
-                    _parent=owner,
-                    _rel=self,
-                )
-
-        return self
-
-    def __set__(  # noqa: D105
-        self: RelSet[RecT2, RelT2, IdxT2, RW],
-        instance: Record,
-        value: (
-            DataSet[RecT2, RelT2, IdxT2, Any, Any, RecT2, None, Any, Any, FullRec]
-            | Input[RecT2, Hashable, Hashable]
-            | type[Keep]
-        ),
-    ) -> None:
-        if value is Keep:
-            return
-
-        stat_rel: DataSet[RecT2, RelT2, IdxT2, RW, Symbolic, RecT2, None, Open, Any] = (
-            getattr(type(instance), self.name)
-        )
-        instance._table[stat_rel]._mutate(value)
-        return
-
 
 @dataclass(eq=False)
-class AttrSet(Ref[ValT, WriteT], Generic[ValT, IdxT, WriteT]):
+class AttrSet(BackLink["DynRecord", KeyT, WriteT, ValT], Generic[ValT, KeyT, WriteT]):
     """Record attribute set."""
 
-    default: bool = False
+    to: DataSet[
+        Record, None, BaseIdx, Any, Symbolic, Record, None, One, Any, FullRec
+    ] = field(init=False)
 
-    def gen_dyn_rec_type(self, owner: type[Record]) -> type[DynRecord]:
+    @cached_property
+    def attr_value_type(
+        self,
+    ) -> type[ValT]:
+        """Resolve the record type reference."""
+        assert is_subtype(self._generic_type, AttrSet)
+        args = self._generic_args
+        val = args[0]
+        val_type = self._to_type(val)
+
+        return cast(type[ValT], val_type)
+
+    @cached_property
+    def attr_idx_type(
+        self,
+    ) -> type[KeyT]:
+        """Resolve the record type reference."""
+        assert is_subtype(self._generic_type, AttrSet)
+        args = self._generic_args
+        val = args[1]
+        val_type = self._to_type(val)
+
+        return cast(type[KeyT], val_type)
+
+    @cached_property
+    def idx_attr(self) -> Attr[KeyT, WriteT]:
+        """Attribute of the dynamic backlink table."""
+        return Attr[KeyT, WriteT](_name="index", _typehint=Attr[self.attr_idx_type])
+
+    @cached_property
+    def attr(self) -> Attr[ValT, WriteT]:
+        """Attribute of the dynamic backlink table."""
+        return Attr[ValT, WriteT](_name="value", _typehint=Attr[self.attr_value_type])
+
+    @cached_property
+    def link(self) -> Link[Any, WriteT]:
+        """The forward link."""
+        assert self._owner_type is not None
+        return Link(_name="owner", _typehint=Link[self._owner_type])
+
+    @cached_property
+    def record_type(self) -> type[DynRecord]:
         """Generate a dynamic record type."""
-        link_to_owner = Link(_name="owner", _type=owner)
-        value_attr = Attr[ValT, WriteT](_name="value", _type=self._type.value_type())
-        idx_attr = Attr[Any, WriteT](_name="index")
+        assert self._owner_type is not None
         return dynamic_record_type(
-            owner._default_table_name() + "_" + self.name,
-            [link_to_owner, value_attr, idx_attr],
+            self._owner_type._default_table_name() + "_" + self.name,
+            [self.idx_attr, self.attr, self.link],
         )
-
-    @overload
-    def __get__(
-        self, instance: None, owner: type[RecParT2]
-    ) -> DataSet[
-        DynRecord, None, IdxT, WriteT, Symbolic, DynRecord, None, Open, RecParT2, ValT
-    ]: ...
-
-    @overload
-    def __get__(self, instance: RecParT2, owner: type[RecParT2]) -> DataSet[
-        DynRecord,
-        None,
-        IdxT,
-        WriteT,
-        DynBackendID,
-        DynRecord,
-        None,
-        Open,
-        RecParT2,
-        ValT,
-    ]: ...
-
-    @overload
-    def __get__(self, instance: object | None, owner: type | None) -> Self: ...
-
-    def __get__(  # noqa: D105
-        self, instance: object | None, owner: type | None
-    ) -> (
-        DataSet[DynRecord, None, IdxT, WriteT, Any, DynRecord, None, Open, Any, ValT]
-        | Self
-    ):
-        if owner is not None and issubclass(owner, Record):
-            rec_type = self.gen_dyn_rec_type(owner)
-
-            if isinstance(instance, Record):
-                return DataSet[
-                    DynRecord, None, IdxT, WriteT, Any, DynRecord, None, Open, Any, ValT
-                ](
-                    db=instance._db,
-                    record_type=rec_type,
-                    _parent=owner,
-                    _rel=BackLink(to=getattr(rec_type, "owner")),
-                    _attr=rec_type.value.attr,
-                )
-
-            if instance is None:
-                return DataSet[
-                    DynRecord,
-                    None,
-                    IdxT,
-                    WriteT,
-                    Symbolic,
-                    DynRecord,
-                    None,
-                    Open,
-                    Any,
-                    ValT,
-                ](
-                    db=owner._sym_db,
-                    record_type=rec_type,
-                    _parent=owner,
-                    _rel=BackLink(to=getattr(rec_type, "owner")),
-                    _attr=rec_type.value.attr,
-                )
-
-        return self
-
-    def __set__(
-        self: AttrSet[ValT2, IdxT2, RW],
-        instance: Record,
-        value: (
-            DataSet[Any, None, IdxT2, Any, Any, Any, None, Any, Any, ValT2]
-            | Input[ValT2, Hashable, None]
-            | type[Keep]
-        ),
-    ) -> None:
-        """Set the value of the column."""
-        if value is Keep:
-            return
-
-        instance._table._mutate(instance)
-        stat_col: DataSet[
-            Record, None, IdxT2, RW, Symbolic, Record, None, Open, Any, ValT2
-        ] = getattr(type(instance), self.name)
-        instance._table[stat_col]._mutate(value)
-        return
 
 
 class RecordMeta(type):
@@ -1181,26 +1086,29 @@ class RecordMeta(type):
         prop_defs = {
             name: pt
             for name, hint in get_annotations(cls).items()
-            if issubclass((pt := PropType(hint, ctx=cls._src_mod)).prop_type(), Prop)
+            if is_subtype(
+                (pt := Prop(_typehint=hint, _ctx=cls._src_mod))._prop_type, Prop
+            )
             or (
                 isinstance(hint, str)
-                and ("Attr" in hint or "Col" in hint or "Rel" in hint)
+                and ("Attr" in hint or "Link" in hint or "Rel" in hint)
             )
         }
 
-        for prop_name, prop_type in prop_defs.items():
+        for prop_name, prop_def in prop_defs.items():
             if prop_name not in cls.__dict__:
-                pt = prop_type.prop_type()
+                pt = prop_def._prop_type
                 assert issubclass(pt, Attr | DataSet)
                 setattr(
                     cls,
                     prop_name,
-                    pt(_name=prop_name, _type=prop_type),
+                    pt(_name=prop_name, _typehint=prop_def._typehint, _owner_type=cls),
                 )
             else:
                 prop = cls.__dict__[prop_name]
                 assert isinstance(prop, Prop)
-                prop._type = prop_type
+                prop._typehint = prop_def._typehint
+                prop._owner_type = cls
 
         cls._record_superclasses = []
         super_types: Iterable[type | GenericProtocol] = (
@@ -1220,17 +1128,15 @@ class RecordMeta(type):
 
             if orig._template or cls._derivate:
                 for prop_name, prop in orig._class_props.items():
-                    prop_defs[prop_name] = prop._type
+                    prop_defs[prop_name] = prop
                     if prop_name not in cls.__dict__:
                         prop = copy_and_override(
                             type(prop),
                             prop,
-                            _type=copy_and_override(
-                                type(prop._type),
-                                prop._type,
-                                typevar_map=typevar_map,
-                                ctx=cls._src_mod,
-                            ),
+                            _typehint=prop._typehint,
+                            _typevar_map=typevar_map,
+                            _ctx=cls._src_mod,
+                            _owner_type=cls,
                         )
                         setattr(cls, prop_name, prop)
             else:
@@ -1332,8 +1238,8 @@ class RecordMeta(type):
 
     @property
     def _rel_types(cls) -> set[type[Record]]:
-        return {rel.target_type for rel in cls._links.values()} | {
-            rel_set.target_type for rel_set in cls._rel_sets.values()
+        return {rel.record_type for rel in cls._links.values()} | {
+            rel_set.record_type for rel_set in cls._rel_sets.values()
         }
 
     @property
@@ -1434,12 +1340,12 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
     ) -> set[DataSet[Self, Any, One, Any, Symbolic, Self, Any, Any, RecT2]]:
         """Get all direct relations from a target record type to this type."""
         rels: set[DataSet[Self, Any, One, Any, Symbolic, Self, Any, Any, RecT2]] = set()
-        for rel in cls._links.values():
-            if isinstance(rel, BackLink):
+        for ln in cls._links.values():
+            if isinstance(ln, BackLink):
                 rels.add(
                     DataSet[Self, Any, One, Any, Symbolic, Self, Any, Any, RecT2](
                         _parent=target,
-                        _rel=cast(Link[Self], rel.to.link),
+                        _ref=cast(Link[Self], ln.link),
                     )
                 )
 
@@ -1628,25 +1534,18 @@ class Merge(Generic[*ValTt]):
         return cast(Self, Merge(rels))
 
     def __mul__(
-        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
+        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
     ) -> Merge[*ValTt, RecT2]:
         """Append more rels to the set."""
         other = other if isinstance(other, Merge) else Merge([other])
         return Merge([*self.rels, *other.rels])
 
     def __rmul__(
-        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
+        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
     ) -> Merge[RecT2, *ValTt]:
         """Append more rels to the set."""
         other = other if isinstance(other, Merge) else Merge([other])
         return Merge([*other.rels, *self.rels])
-
-    def __or__(
-        self: Merge[RecT2], other: DataSet[RecT3] | Merge[RecT3]
-    ) -> Merge[RecT2 | RecT3]:
-        """Add more rels to the set."""
-        other = other if isinstance(other, Merge) else Merge([other])
-        return Merge([*self.rels, *other.rels])
 
     @property
     def types(self) -> tuple[*ValTt]:
@@ -1687,13 +1586,7 @@ class DataSet(
         | DataSet[Any, Any, Any, WriteT | RW, BackT, Any, Any, Any, Any]
         | None
     ) = None
-    _rel: (
-        Link[RecT | None, WriteT]
-        | BackLink[RecT, Any, WriteT]
-        | RelSet[RecT, Any, Any, WriteT]
-        | AttrSet[Any, Any, WriteT]
-        | None
-    ) = None
+    _ref: Ref[Any, WriteT] | None = None
 
     _filt: Sequence[
         Sequence[slice | list[Hashable] | Hashable] | sqla.ColumnElement[bool]
@@ -1724,28 +1617,43 @@ class DataSet(
     @cached_property
     def fqn(self) -> str:
         """Return the fully qualified name of a column."""
-        rel_base = (
-            f"{self._path_str}"
-            if self._parent is not None
-            else f"{self.record_type._default_table_name()}"
+        return (
+            f"{self._rel_path_str}.{self._attr.name}"
+            if self._attr is not None
+            else self._rel_path_str
         )
-        return f"{rel_base}.{self._attr.name}" if self._attr is not None else rel_base
+
+    @property
+    def ref(
+        self: DataSet[Any, Any, Any, Any, Any, Any, Any, Any, RecParT2, Any]
+    ) -> Ref[Any, WriteT]:
+        """Backlink prop of this table."""
+        assert self._ref is not None
+        return self._ref
 
     @property
     def link(
-        self: DataSet[Any, None, Any, Any, Any, Any, Any, Singular, RecParT2]
+        self: DataSet[Any, None, Any, Any, Any, Any, Any, Singular, RecParT2, Any]
     ) -> Link[RecT | None, WriteT]:
         """Link prop of this table."""
-        assert isinstance(self._rel, Link)
-        return self._rel
+        assert isinstance(self._ref, Link)
+        return self._ref
 
     @property
     def backlink(
-        self: DataSet[Any, None, Any, Any, Any, Any, Any, Plural, RecParT2]
+        self: DataSet[Any, None, Any, Any, Any, Any, Any, Plural, RecParT2, Any]
     ) -> BackLink[RecT, Any, WriteT]:
         """Backlink prop of this table."""
-        assert isinstance(self._rel, BackLink)
-        return self._rel
+        assert isinstance(self._ref, BackLink)
+        return self._ref
+
+    @property
+    def ref_set(
+        self: DataSet[Any, Any, Any, Any, Any, Any, Any, Plural, RecParT2, Any]
+    ) -> RefSet[RecT, LnT, Any, WriteT, AttrT]:
+        """Backlink prop of this table."""
+        assert isinstance(self._ref, RefSet)
+        return self._ref
 
     @property
     def attr(
@@ -1756,12 +1664,23 @@ class DataSet(
         return self._attr
 
     @property
+    def attr_set(
+        self: DataSet[
+            DynRecord, None, Any, Any, Any, DynRecord, None, Plural, RecParT2, ValT2
+        ]
+    ) -> AttrSet[ValT2, Any, WriteT]:
+        """Selected attribute prop of this table."""
+        assert self._attr is not None
+        assert isinstance(self._rel, AttrSet)
+        return self._rel
+
+    @property
     def direct_link(
         self: DataSet[Any, None, Any, Any, Any, Any, None, Singular | Plural, Any]
     ) -> Link[Record | None, WriteT] | BackLink[Record, Any, WriteT]:
         """Counter relation of this table's relation prop."""
-        assert isinstance(self._rel, Link | BackLink)
-        return self._rel
+        assert isinstance(self._ref, Link | BackLink)
+        return self._ref
 
     @overload
     def inv_link(
@@ -1777,23 +1696,23 @@ class DataSet(
         self: DataSet[Any, None, Any, Any, Any, Any, None, Singular | Plural, Any]
     ) -> Link[Record | None, WriteT] | BackLink[Record, Any, WriteT]:
         """Counter relation of this table's relation prop."""
-        match self._rel:
+        match self._ref:
             case Link():
                 rels_to_parent = [
                     r
-                    for r in self._rel_tables.values()
-                    if issubclass(self._parent_type, r.record_type)
-                    and isinstance(r._rel, BackLink)
+                    for r in self._ref_tables.values()
+                    if issubclass(self.record_type, r.record_type)
+                    and isinstance(r._ref, BackLink)
                 ]
                 if len(rels_to_parent) == 1:
-                    return cast(BackLink[Record, Any, WriteT], rels_to_parent[0]._rel)
+                    return cast(BackLink[Record, Any, WriteT], rels_to_parent[0]._ref)
                 else:
                     return BackLink[Record, Any, WriteT](
-                        _type=BackLink[self._parent_type],
-                        to=getattr(self.record_type, self._rel.name),
+                        _typehint=BackLink[self.record_type],
+                        to=getattr(self.record_type, self._ref.name),
                     )
             case BackLink():
-                return cast(Link[Record | None, WriteT], self._rel.to.inv_link)
+                return cast(Link[Record | None, WriteT], self._ref.link)
             case _:
                 raise ValueError("Not a link.")
 
@@ -1836,16 +1755,16 @@ class DataSet(
             self,
             record_type=parent.record_type,
             _parent=parent._parent,
-            _rel=parent._rel,
+            _ref=parent._ref,
         )
 
     @cached_property
     def rel_type(self) -> type[LnT]:
         """Link record type."""
-        assert isinstance(self._rel, RelSet)
+        assert isinstance(self._ref, RelSet)
         return cast(
             type[LnT],
-            self._rel.link_type,
+            self._ref.link_type,
         )
 
     @property
@@ -1862,7 +1781,7 @@ class DataSet(
             DataSet[RecT2, None, IdxT, WriteT, BackT, RecT2, MergeT, LeafT, ParT2],
             self,
             _parent=self.parent,
-            _rel=parent_to_link_rel,
+            _ref=parent_to_link_rel,
         )
 
     @cached_property
@@ -3282,8 +3201,8 @@ class DataSet(
             for rel, agg in aggs.items():
                 for path_rel in all_paths_rels:
                     if path_rel._is_ancestor(rel):
-                        aggs_per_type[rel._parent_type] = [
-                            *aggs_per_type.get(rel._parent_type, []),
+                        aggs_per_type[rel.parent_type] = [
+                            *aggs_per_type.get(rel.parent_type, []),
                             (rel, agg),
                         ]
                         all_paths_rels.remove(path_rel)
@@ -3382,7 +3301,7 @@ class DataSet(
         return gen_int_hash(self)
 
     @property
-    def _rel_cols(
+    def _ref_cols(
         self,
     ) -> dict[str, DataSet[RecT, None, Any, Any, BackT, RecT, Any, Open]]:
         return {
@@ -3396,7 +3315,7 @@ class DataSet(
         }
 
     @property
-    def _rel_tables(
+    def _ref_tables(
         self,
     ) -> dict[str, DataSet[Any, Any, Any, Any, BackT, Any, Any, Any, RecT]]:
         return {
@@ -3407,7 +3326,7 @@ class DataSet(
                 )
             ]
             for k, r in self.record_type._props.items()
-            if isinstance(r, Link | RelSet)
+            if isinstance(r, Ref)
         }
 
     @cached_property
@@ -3457,10 +3376,10 @@ class DataSet(
     def _rel_tree(self) -> Merge:
         """Get the relation merges for this table."""
         return (
-            self._filter_merge[1]
-            | self._sel
-            | Merge(self._rel_cols.values())
-            | self.parent._rel_tree * self
+            self.parent._rel_tree
+            * self._filter_merge[1]
+            * (self._merge or Merge())
+            * self
         )
 
     @cached_property
@@ -3496,30 +3415,30 @@ class DataSet(
 
         return {
             name: sqla.Column(
-                col.name,
+                attr.name,
                 registry._resolve_type(
-                    col.attr.value_type  # pyright: ignore[reportArgumentType]
+                    attr.value_type  # pyright: ignore[reportArgumentType]
                 ),
-                primary_key=col.attr.primary_key,
+                primary_key=attr.primary_key,
                 autoincrement=False,
-                index=col.attr.index,
-                nullable=has_type(None, col.attr.value_type),
+                index=attr.index,
+                nullable=has_type(None, attr.value_type),
             )
-            for name, col in self._base_attrs.items()
+            for name, attr in self.record_type._base_attrs.items()
         }
 
     @cached_property
     def _sql_base_fks(self) -> list[sqla.ForeignKeyConstraint]:
         fks: list[sqla.ForeignKeyConstraint] = []
 
-        for rt in self._base_refs.values():
-            if isinstance(rt._prop, Link):
+        for rt in self._ref_tables.values():
+            if isinstance(rt._ref, Link):
                 rel_table = rt._get_sql_base_table()
                 fks.append(
                     sqla.ForeignKeyConstraint(
-                        [col.name for col in rt._fk_map.keys()],
-                        [rel_table.c[col.name] for col in rt._fk_map.values()],
-                        name=f"{self.record_type._get_table_name(self.db._subs)}_{rt._prop.name}_fk",
+                        [fk.name for fk in rt._ref.fk_map.keys()],
+                        [rel_table.c[pk.name] for pk in rt._ref.fk_map.values()],
+                        name=f"{self.record_type._get_table_name(self.db._subs)}_{rt._ref.name}_fk",
                     )
                 )
 
@@ -3528,8 +3447,8 @@ class DataSet(
 
             fks.append(
                 sqla.ForeignKeyConstraint(
-                    [pk_name for pk_name in self._pk_attrs],
-                    [base_table.c[pk_name] for pk_name in self._pk_attrs],
+                    [pk_name for pk_name in self.record_type._pk_attrs],
+                    [base_table.c[pk_name] for pk_name in self.record_type._pk_attrs],
                     name=(
                         self.record_type._get_table_name(self.db._subs)
                         + "_base_fk_"
@@ -3663,13 +3582,13 @@ class DataSet(
             backrels = [
                 r
                 for r in self.rel_type._links.values()
-                if issubclass(self._parent_type, r.target_type)
+                if issubclass(self._parent_type, r.record_type)
             ]
             assert len(backrels) == 1, "Backrel on link record must be unique."
             fwrels = [
                 r
                 for r in self.rel_type._links.values()
-                if issubclass(self.record_type, r.target_type)
+                if issubclass(self.record_type, r.record_type)
             ]
             assert len(fwrels) == 1, "Forward ref on link record must be unique."
             return getattr(self.rel_type, backrels[0].name), getattr(
@@ -3744,15 +3663,14 @@ class DataSet(
                     )
                 ]
                 for col in (
-                    [self._rel.map_by]
-                    if isinstance(self._rel, BackLink | RelSet)
-                    and self._rel.map_by is not None
+                    [self._ref.map_by]
+                    if isinstance(self._ref, RefSet) and self._ref.map_by is not None
                     else (
                         [
                             getattr(self.record_type, name)
                             for name in self.record_type._pk_attrs
                         ]
-                        if isinstance(self._rel, BackLink | RelSet)
+                        if isinstance(self._ref, RefSet)
                         else []
                     )
                 )
@@ -3766,14 +3684,15 @@ class DataSet(
         )
 
     @cached_property
-    def _path_str(self) -> str:
+    def _rel_path_str(self) -> str:
         """String representation of the relation path."""
-        prefix = (
-            self._parent_type.__name__
-            if self._parent_tag is None
-            else self._parent_tag._path_str
-        )
-        return f"{prefix}.{self._prop.name}"
+        if self._parent is None:
+            return self.record_type._default_table_name()
+
+        ref_name = cast(
+            DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any, Record], self
+        ).ref.name
+        return f"{self.parent._rel_path_str}.{ref_name}"
 
     @cached_property
     def _root_set(
@@ -3930,7 +3849,7 @@ class DataSet(
         _traversed = _traversed or set()
 
         # Get relations of the target type as next relations
-        next_rels = set(self._to_static()._rel_tables.values())
+        next_rels = set(self._to_static()._ref_tables.values())
 
         for backlink_record in backlink_records:
             next_rels |= backlink_record._backrels_to_rels(self.record_type)
@@ -3976,7 +3895,7 @@ class DataSet(
                             else (
                                 target[getattr(target.record_type, fk.name)]
                                 == _parent[pk]
-                                for fk, pk in target.direct_link.to.link.fk_map.items()
+                                for fk, pk in target.direct_link.link.fk_map.items()
                             )
                         ),
                     ),
@@ -4422,7 +4341,7 @@ class DataSet(
                     valid_caches -= {self.keys()}
                 else:
                     assert (
-                        self._rel is not None
+                        self._ref is not None
                     ), "Inserting via ids requires a relation."
                     cast(
                         DataSet[
@@ -4705,7 +4624,7 @@ class DataSet(
                 con.execute(statement)
 
         # Update relations with parent records.
-        if isinstance(self._rel, Link):
+        if isinstance(self._ref, Link):
             # Case: parent links directly to child (n -> 1)
             idx_cols = [value_table.c[col.name] for col in self._idx_cols]
             fk_cols = [
@@ -5118,9 +5037,9 @@ class DB(
                 if len(at._links) == 2:
                     left, right = (r for r in at._links.values())
                     assert left is not None and right is not None
-                    if left.target_type == n:
+                    if left.record_type == n:
                         undirected_edges[n].add((left, right))
-                    elif right.target_type == n:
+                    elif right.record_type == n:
                         undirected_edges[n].add((right, left))
 
         # Concat all edges into one table.
@@ -5132,7 +5051,7 @@ class DB(
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(link.target_type._default_table_name())
+                            == str(link.record_type._default_table_name())
                         ],
                         left_on=[c.name for c in link.fk_map.keys()],
                         right_on=[c.name for c in link.fk_map.values()],
@@ -5150,7 +5069,7 @@ class DB(
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target_type._default_table_name())
+                            == str(left_rel.record_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in left_rel.fk_map.keys()],
                         right_on=[c.name for c in left_rel.fk_map.values()],
@@ -5160,7 +5079,7 @@ class DB(
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.target_type._default_table_name())
+                            == str(left_rel.record_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in right_rel.fk_map.keys()],
                         right_on=[c.name for c in right_rel.fk_map.values()],
@@ -5319,7 +5238,7 @@ def dynamic_record_type(
         (DynRecord,),
         {
             **{p.name: p for p in props},
-            "__annotations__": {p.name: p._type.hint for p in props},
+            "__annotations__": {p.name: p._typehint for p in props},
         },
     )
 
