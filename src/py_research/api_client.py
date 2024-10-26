@@ -128,8 +128,8 @@ class ApiClient:
             url = self._url / loc.path % loc.query
 
         return copy_and_override(
-            self,
             type(self),
+            self,
             api_name=self.api_name,
             url=url,
             headers={**self.headers, **(headers or {})},
