@@ -10,6 +10,7 @@ import pytest
 from py_research.db import (
     DB,
     Col,
+    DataSet,
     DataSource,
     Link,
     RecMap,
@@ -17,7 +18,6 @@ from py_research.db import (
     RecUUID,
     Rel,
     RelMap,
-    RelTable,
     SubMap,
     Table,
     prop,
@@ -37,7 +37,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: RelTable[Project, SearchResult]
+    results: DataSet[Project, SearchResult]
 
 
 Assignment = Link["User", "Task"]
@@ -48,7 +48,7 @@ class Task(RecUUID):
 
     name: Col[str]
     project: Rel[Project]
-    assignees: RelTable[User, Assignment]
+    assignees: DataSet[User, Assignment]
     status: Col[Literal["todo", "done"]]
 
 
@@ -57,7 +57,7 @@ class User(RecUUID):
 
     name: Col[str]
     age: Col[int]
-    tasks: RelTable[Task, Assignment]
+    tasks: DataSet[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -82,8 +82,8 @@ class Project(Record[int]):
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
     org: Rel[Organization | None]
-    tasks: RelTable[Task] = prop(link_from=Task.project)
-    members: RelTable[User] = prop(link_via=Membership)
+    tasks: DataSet[Task] = prop(link_from=Task.project)
+    members: DataSet[User] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -92,7 +92,7 @@ class Organization(RecUUID):
     name: Col[str]
     address: Col[str]
     city: Col[str]
-    projects: RelTable[Project] = prop(link_from=Project.org)
+    projects: DataSet[Project] = prop(link_from=Project.org)
 
 
 @pytest.fixture

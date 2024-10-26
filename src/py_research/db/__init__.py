@@ -4,13 +4,13 @@ from .base import DB as DB
 from .base import Attr as Attr
 from .base import BackRel as BackRel
 from .base import Col as Col
+from .base import DataSet as DataSet
 from .base import Link as Link
 from .base import Prop as Prop
 from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Rel as Rel
 from .base import RelSet as RelSet
-from .base import RelTable as RelTable
 from .base import Schema as Schema
 from .base import Table as Table
 from .conflicts import DataConflictError as DataConflictError
