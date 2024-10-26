@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Attr, BackRel, Link, Record, RecUUID, Rel, RelSet
+from py_research.db import Attr, AttrSet, BackLink, Link, Record, RecUUID, Rel, RelSet
 
 
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Rel[Search] = Rel(primary_key=True)
-    result: Rel[Project] = Rel(primary_key=True)
+    search: Link[Search] = Link(primary_key=True)
+    result: Link[Project] = Link(primary_key=True)
     score: Attr[float]
 
 
@@ -21,17 +21,17 @@ class Search(Record[str]):
 
     term: Attr[str] = Attr(primary_key=True)
     result_count: Attr[int]
-    results: RelSet[Project, SearchResult]
+    results: RelSet[Project, SearchResult] = RelSet(default=True)
 
 
-Assignment = Link["User", "Task"]
+Assignment = Rel["User", "Task"]
 
 
 class Task(RecUUID):
     """Link search to a result."""
 
     name: Attr[str]
-    project: Rel[Project]
+    project: Link[Project]
     assignees: RelSet[User, Assignment]
     status: Attr[Literal["todo", "done"]]
 
@@ -52,8 +52,8 @@ class User(RecUUID):
 class Membership(RecUUID):
     """Link user to a project."""
 
-    member: Rel[User] = Rel(primary_key=True)
-    project: Rel[Project] = Rel(primary_key=True)
+    member: Link[User] = Link(primary_key=True)
+    project: Link[Project] = Link(primary_key=True)
     role: Attr[str] = Attr(default="member")
 
 
@@ -65,8 +65,8 @@ class Project(Record[int]):
     start: Attr[date]
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
-    org: Rel[Organization]
-    tasks: RelSet[Task] = BackRel(to=Task.project)
+    org: Link[Organization]
+    tasks: BackLink[Task] = BackLink(to=Task.project)
     members: RelSet[User, Membership]
 
 
@@ -76,4 +76,5 @@ class Organization(RecUUID):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: RelSet[Project] = BackRel(to=Project.org)
+    projects: BackLink[Project] = BackLink(to=Project.org, default=True)
+    countries: AttrSet[str]

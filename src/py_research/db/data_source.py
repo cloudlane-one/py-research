@@ -29,17 +29,16 @@ from py_research.telemetry import tqdm
 from .base import (
     DB,
     RW,
-    BackRel,
-    BaseIdx,
-    Col,
+    BackLink,
     DataSet,
+    DynRecord,
+    Link,
     One,
+    Open,
     Record,
-    Rel,
     RelSet,
-    Singular,
-    Static,
-    Table,
+    Symbolic,
+    Value,
 )
 from .conflicts import DataConflictPolicy
 
@@ -156,12 +155,15 @@ class TreePath:
 type NodeSelector = str | int | TreePath | type[All]
 """Select a node in a hierarchical data structure."""
 
+type PropRef[Rec: Record] = DataSet[
+    Rec, Any, Any, Any, Symbolic, Rec, None, Any, None, Value
+] | DataSet[Any, Any, Any, Any, Symbolic, Any, None, Any, Rec, Any]
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
-type PushMap[Rec: Record] = _PushMapping[Rec] | Col[
-    Any, Any, Static, Rec, Any
-] | RelMap | Index | Iterable[Col[Any, Any, Static, Rec, Any] | RelMap | Index]
+type PushMap[Rec: Record] = _PushMapping[Rec] | PropRef[
+    Rec
+] | RefMap | Index | Iterable[PropRef[Rec] | RefMap | Index]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -205,28 +207,27 @@ class Index:
     """Map to the index of the record."""
 
     pos: int | slice = slice(None)
-    pks: Iterable[Col[Hashable, Any, Static, Any, BaseIdx, One | Singular]] | None = (
-        None
-    )
+    pks: (
+        Iterable[
+            DataSet[Record, Any, Any, Any, Symbolic, Record, None, One, Any, Value]
+        ]
+        | None
+    ) = None
 
 
 type PullMap[Rec: Record] = SupportsItems[
-    Col[Any, Any, Static, Rec, Any]
-    | DataSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
-    | Index,
+    PropRef[Rec] | Index,
     "NodeSelector | DataSelect",
 ]
 type _PullMapping[Rec: Record] = Mapping[
-    Col[Any, Any, Static, Rec, Any]
-    | DataSet[Any, Any, Any, Any, Static, Any, Any, Any, Rec]
-    | Index,
+    PropRef[Rec] | Index,
     DataSelect,
 ]
 
 type RecMatchBy[Rec: Record] = (
     Literal["index", "all"]
-    | Col[Any, Any, Static, Rec, Any]
-    | list[Col[Any, Any, Static, Rec, Any]]
+    | DataSet[Rec, Any, Any, Any, Symbolic, Rec, None, One, Any, Value]
+    | list[DataSet[Rec, Any, Any, Any, Symbolic, Rec, None, One, Any, Value]]
 )
 
 
@@ -270,10 +271,14 @@ class RecMap[Rec: Record, Dat]:
         }
 
     @cached_property
-    def rels(self) -> dict[DataSet[Any, Any, Any, Any, Any, Record], SubMap]:
+    def rels(
+        self,
+    ) -> dict[DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], SubMap]:
         """Get all relation mappings."""
         return {
-            cast(DataSet[Any, Any, Any, Any, Any, Record], rel): sel
+            cast(
+                DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], rel
+            ): sel
             for rel, sel in self.full_map.items()
             if isinstance(rel, DataSet) and isinstance(sel, SubMap)
         }
@@ -350,25 +355,25 @@ class SubMap(RecMap, DataSelect):
 
 
 @dataclass(kw_only=True, eq=False)
-class RelMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
+class RefMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    rel: DataSet[Rec, Any, Any, RW, Static, Rec, Any, Any, Rec2]
+    ref: DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Rec2, Any]
     """Relation to use for mapping."""
 
-    link: RecMap | None = None
+    rel: RecMap | None = None
     """Mapping to optional attributes of the link record."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        self.rec_type = self.rel._record_type
-        if self.link is not None:
-            self.link.rec_type = self.rel.link_type
+        self.rec_type = self.ref.record_type
+        if self.rel is not None:
+            self.rel.rec_type = self.ref.rel_type
 
     @cached_property
-    def link_map(self) -> RelMap | None:
+    def rel_map(self) -> RefMap | None:
         """Get the link map."""
-        if issubclass(self.rel.link_type, Record) and self.link is not None:
-            return copy_and_override(RelMap, self.link, rel=self.rel.link)
+        if issubclass(self.ref.rel_type, Record) and self.rel is not None:
+            return copy_and_override(RefMap, self.rel, ref=self.ref.rels)
 
         return None
 
@@ -378,12 +383,11 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
-        case Col() | RelMap() | str() | Index():
+        case DataSet() | RefMap() | str() | Index():
             return {All: push_map}
-        case Iterable() if has_type(push_map, Iterable[Col | RelMap]):
+        case Iterable() if has_type(push_map, Iterable[DataSet | RefMap]):
             return {
-                k.name if isinstance(k, Col) else k.rel._prop.name: True
-                for k in push_map
+                k.name if isinstance(k, DataSet) else k.ref.name: True for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -408,25 +412,27 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
         **{
             (
                 target
-                if isinstance(target, Col | Index)
+                if isinstance(target, DataSet | Index)
                 else getattr(rec, _get_selector_name(sel))
             ): DataSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, Col | Index | bool)
+            if isinstance(target, DataSet | Index | bool)
         },
         **{
             (
-                target.rel
-                if isinstance(target, RelMap) and target.rel is not None
+                target.ref
+                if isinstance(target, RefMap) and target.ref is not None
                 else getattr(rec, _get_selector_name(sel))
             ): (
                 copy_and_override(SubMap, target, sel=sel)
-                if isinstance(target, RelMap)
+                if isinstance(target, RefMap)
                 else DataSelect.parse(sel)
             )
             for sel, targets in mapping.items()
             if has_type(targets, RecMap)
-            or (has_type(targets, Iterable[RecMap]) and not isinstance(targets, Col))
+            or (
+                has_type(targets, Iterable[RecMap]) and not isinstance(targets, DataSet)
+            )
             for target in ([targets] if isinstance(targets, RecMap) else targets)
         },
     }
@@ -503,7 +509,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    rec_set: Table,
+    rec_set: DataSet[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -515,21 +521,27 @@ def _gen_match_expr(
         match_cols = (
             list(rec_set._target_cols.values())
             if isinstance(match_by, str) and match_by == "all"
-            else [match_by] if isinstance(match_by, Col) else match_by
+            else [match_by] if isinstance(match_by, DataSet) else match_by
         )
         return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))
 
 
 type InData = dict[tuple[Hashable, DirectPath], TreeNode]
-type RelData = list[tuple[RelMap[Record, TreeNode, Record], InData]]
+type RefData = list[
+    tuple[
+        RefMap[Record, TreeNode, Record]
+        | DataSet[Record, None, Any, Any, Any, Any, Any, Open, Any, Value],
+        InData,
+    ]
+]
 type RestData = list[tuple[RecMap[Record, TreeNode], InData]]
 
 
 async def _load_record[
     Rec: Record
 ](
-    rec_set: Table[Rec, Any, Static, Any, Any],
-    rel_data: RelData,
+    rec_set: DataSet[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
+    ref_data: RefData,
     rec_map: RecMap[Rec, TreeNode],
     parent_idx: Hashable | None,
     path_idx: DirectPath,
@@ -548,7 +560,7 @@ async def _load_record[
     ref_fks: dict[str, Hashable] = {}
 
     for rel, target_map in rec_map.rels.items():
-        if isinstance(rel._prop, Rel):
+        if isinstance(rel._prop, Link):
             sub_items = list(target_map.select(data, path_idx).items())
             assert len(sub_items) == 1
 
@@ -556,7 +568,7 @@ async def _load_record[
             sub_data = sub_items[0][1]
 
             sub_rec = await _load_record(
-                rec_set[rel], rel_data, target_map, None, sub_path, sub_data, None
+                rec_set[rel], ref_data, target_map, None, sub_path, sub_data, None
             )
 
             if sub_rec is None:
@@ -603,15 +615,29 @@ async def _load_record[
         )
 
     parent_rel_fks = {}
-    if isinstance(rec_map, RelMap) and isinstance(rec_map.rel._prop, BackRel):
+    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, BackLink):
         assert parent_idx is not None
-        parent_rel_fks = rec_map.rel._gen_fk_value_map(parent_idx)
+        parent_rel_fks = rec_map.ref._gen_fk_value_map(parent_idx)
+
+    attr_values = {
+        a.name: (a, list(sel.select(data, path_idx).items()))
+        for a, sel in rec_map.full_map.items()
+        if isinstance(a, DataSet)
+    }
 
     attrs = {
-        a.name: (a, *list(sel.select(data, path_idx).items())[0])
-        for a, sel in rec_map.full_map.items()
-        if isinstance(a, Col)
+        name: (attr, *values[0])
+        for name, (attr, values) in attr_values.items()
+        if attr._rel is None
     }
+
+    ref_data.extend(
+        (
+            attr_set,
+            {(rec_idx, item_path): item_data for item_path, item_data in values},
+        )
+        for attr_set, values in attr_values.values()
+    )
 
     rec_dict = {
         **{a[0].name: a[2] for a in attrs.values()},
@@ -640,30 +666,30 @@ async def _load_record[
     if rec_idx is None:
         return None, None
 
-    rel_data.extend(
+    ref_data.extend(
         (
-            copy_and_override(RelMap, target_map, rel=rel),
+            copy_and_override(RefMap, target_map, ref=ref),
             {
                 (rec_idx, item_path): item_data
                 for item_path, item_data in target_map.select(data, path_idx).items()
             },
         )
-        for rel, target_map in rec_map.rels.items()
+        for ref, target_map in rec_map.rels.items()
     )
 
-    link: Record | Hashable | None = None
-    if isinstance(rec_map, RelMap) and rec_map.link_map is not None:
-        link, _ = await _load_record(
+    rel: Record | Hashable | None = None
+    if isinstance(rec_map, RefMap) and rec_map.rel_map is not None:
+        rel, _ = await _load_record(
             rec_set,
-            rel_data,
-            rec_map.link_map,
+            ref_data,
+            rec_map.rel_map,
             parent_idx,
             path_idx,
             data,
-            inject=rec_map.rel._gen_fk_value_map(rec_idx),
+            inject=rec_map.ref._gen_fk_value_map(rec_idx),
         )
 
-    return rec if rec is not None and is_new else rec_idx, link
+    return rec if rec is not None and is_new else rec_idx, rel
 
 
 async def _load_records(
@@ -673,7 +699,7 @@ async def _load_records(
     rest_data: RestData,
 ) -> dict[Hashable, Record | Hashable]:
     rec_set = db[rec_map.rec_type]
-    rel_data: RelData = []
+    ref_data: RefData = []
 
     async def _load_rec_from_item(
         item: tuple[tuple[Hashable, DirectPath], TreeNode]
@@ -693,7 +719,7 @@ async def _load_records(
     records: dict[Hashable, Record | Hashable] = {}
     rest_records: InData = {}
 
-    async for ((parent_idx, path_idx), data), (rec, link) in loaded:
+    async for ((parent_idx, path_idx), data), (rec, rel) in loaded:
         if rec is None:
             rest_records[(parent_idx, path_idx)] = data
             continue
@@ -704,35 +730,28 @@ async def _load_records(
             *(rec_idx if isinstance(rec_idx, tuple) else [rec_idx]),
         )
 
-        if isinstance(rec_map, RelMap):
-            if rec_map.link is not None:
-                if link is None:
+        if isinstance(rec_map, RefMap):
+            if rec_map.rel is not None:
+                if rel is None:
                     rest_records[(parent_idx, path_idx)] = data
                     continue
                 else:
-                    rel_idx = link
+                    rel_idx = rel
             elif (
-                isinstance(rec_map.rel._prop, RelSet)
-                and rec_map.rel._prop.map_by is not None
+                isinstance(rec_map.ref._rel, BackLink | RelSet)
+                and rec_map.ref._rel.map_by is not None
             ):
-                if issubclass(rec_map.rec_type, rec_map.rel._prop.map_by.parent_type):
+                if issubclass(rec_map.rec_type, rec_map.ref._rel.map_by.parent_type):
                     rec = rec if isinstance(rec, Record) else db[rec_map.rec_type][rec]
-                    mapped_idx = getattr(rec, rec_map.rel._prop.map_by.name)
+                    mapped_idx = getattr(rec, rec_map.ref._rel.map_by.name)
                 else:
-                    assert (
-                        link is not None
-                        and rec_map.link is not None
-                        and issubclass(
-                            rec_map.link.rec_type,
-                            rec_map.rel._prop.map_by.parent_type,
-                        )
+                    assert rel is not None
+                    rel = (
+                        rel
+                        if isinstance(rel, Record)
+                        else db[rec_map.ref.rel_type][rel]
                     )
-                    link = (
-                        link
-                        if isinstance(link, Record)
-                        else db[rec_map.link.rec_type][link].get()
-                    )
-                    mapped_idx = getattr(link, rec_map.rel._prop.map_by.name)
+                    mapped_idx = getattr(rel, rec_map.ref._rel.map_by.name)
 
                 rel_idx = (
                     *(parent_idx if isinstance(parent_idx, tuple) else [parent_idx]),
@@ -742,13 +761,28 @@ async def _load_records(
         records[rel_idx] = rec
 
     # Descend into incoming relations after loading the main records
-    for rel_map, sub_data in rel_data:
-        rec_set[rel_map.rel] |= await _load_records(
-            db,
-            rel_map,
-            sub_data,
-            rest_data,
-        )
+    for rel_prop, sub_data in ref_data:
+        if isinstance(rel_prop, RefMap):
+            # Full record relation set
+            rec_set[rel_prop.ref] |= await _load_records(
+                db,
+                rel_prop,
+                sub_data,
+                rest_data,
+            )
+        else:
+            # Attribute relation set
+            rec_type = cast(type[DynRecord], rel_prop.record_type)
+            ref_map = RefMap(
+                pull={rec_type.value: DataSelect(All), rec_type.index: SelIndex(All)},
+                ref=rel_prop,
+            )
+            rec_set[rel_prop] |= await _load_records(
+                db,
+                ref_map,
+                sub_data,
+                rest_data,
+            )
 
     if len(rest_records) > 0:
         rest_data.append((rec_map, rest_records))

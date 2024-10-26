@@ -27,8 +27,8 @@ from py_research.db import (
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Rel[Search] = prop(primary_key="fk")
-    result: Rel[Project] = prop(primary_key="fk")
+    search: Link[Search] = prop(primary_key="fk")
+    result: Link[Project] = prop(primary_key="fk")
     score: Col[float]
 
 
@@ -40,14 +40,14 @@ class Search(Record[str]):
     results: DataSet[Project, SearchResult]
 
 
-Assignment = Link["User", "Task"]
+Assignment = Rel["User", "Task"]
 
 
 class Task(RecUUID):
     """Link search to a result."""
 
     name: Col[str]
-    project: Rel[Project]
+    project: Link[Project]
     assignees: DataSet[User, Assignment]
     status: Col[Literal["todo", "done"]]
 
@@ -68,8 +68,8 @@ class User(RecUUID):
 class Membership(RecUUID):
     """Link user to a project."""
 
-    member: Rel[User] = prop(primary_key="fk")
-    project: Rel[Project] = prop(primary_key="fk")
+    member: Link[User] = prop(primary_key="fk")
+    project: Link[Project] = prop(primary_key="fk")
     role: Col[str] = prop(default="member")
 
 
@@ -81,7 +81,7 @@ class Project(Record[int]):
     start: Col[date]
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
-    org: Rel[Organization | None]
+    org: Link[Organization | None]
     tasks: DataSet[Task] = prop(link_from=Task.project)
     members: DataSet[User] = prop(link_via=Membership)
 

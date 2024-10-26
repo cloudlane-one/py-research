@@ -2,8 +2,8 @@
 
 from .base import DB as DB
 from .base import Attr as Attr
-from .base import BackRel as BackRel
-from .base import Col as Col
+from .base import AttrSet as AttrSet
+from .base import BackLink as BackLink
 from .base import DataSet as DataSet
 from .base import Link as Link
 from .base import Prop as Prop
@@ -12,12 +12,11 @@ from .base import RecUUID as RecUUID
 from .base import Rel as Rel
 from .base import RelSet as RelSet
 from .base import Schema as Schema
-from .base import Table as Table
 from .conflicts import DataConflictError as DataConflictError
 from .data_source import DataSource as DataSource
 from .data_source import Hash as Hash
 from .data_source import RecMap as RecMap
-from .data_source import RelMap as RelMap
+from .data_source import RefMap as RefMap
 from .data_source import SelIndex as SelIndex
 from .data_source import SubMap as SubMap
 from .data_source import Transform as Transform
