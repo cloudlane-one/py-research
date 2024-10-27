@@ -1507,7 +1507,7 @@ class Record(Generic[KeyT], metaclass=RecordMeta):
 
 
 @dataclass(frozen=True)
-class Merge(Generic[*ValTt]):
+class RelTree(Generic[*ValTt]):
     """Tree of relations starting from the same root."""
 
     rels: Iterable[DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any]] = field(
@@ -1527,12 +1527,15 @@ class Merge(Generic[*ValTt]):
         return list(self.rels)[-1]._root_set
 
     @cached_property
-    def all_rels(self) -> set[DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any]]:
+    def all_rec_rels(
+        self,
+    ) -> set[DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any]]:
         """All relations in the tree, including sub-merges."""
-        return {rel for rel in self.rels} | {
+        rec_rels = {rel._rec_set for rel in self.rels}
+        return rec_rels | {
             sub_rel._prefix(rel)
             for rel in self.rels
-            for sub_rel in rel._rel_tree.all_rels
+            for sub_rel in rel._rel_tree.all_rec_rels
         }
 
     def prefix(
@@ -1540,26 +1543,23 @@ class Merge(Generic[*ValTt]):
     ) -> Self:
         """Prefix all relations in the set with given relation."""
         rels = {rel._prefix(prefix) for rel in self.rels}
-        return cast(Self, Merge(rels))
+        return cast(Self, RelTree(rels))
 
     def __mul__(
-        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
-    ) -> Merge[*ValTt, RecT2]:
+        self,
+        other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | RelTree,
+    ) -> RelTree[*ValTt, RecT2]:
         """Append more rels to the set."""
-        other = other if isinstance(other, Merge) else Merge([other])
-        return Merge([*self.rels, *other.rels])
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*self.rels, *other.rels])
 
     def __rmul__(
-        self, other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | Merge
-    ) -> Merge[RecT2, *ValTt]:
+        self,
+        other: DataSet[RecT2, Any, Any, Any, Any, Any, Any, Any, Any, Any] | RelTree,
+    ) -> RelTree[RecT2, *ValTt]:
         """Append more rels to the set."""
-        other = other if isinstance(other, Merge) else Merge([other])
-        return Merge([*other.rels, *self.rels])
-
-    @property
-    def types(self) -> tuple[*ValTt]:
-        """Return the record types in the relation tree."""
-        return cast(tuple[*ValTt], tuple(r.record_type for r in self.rels))
+        other = other if isinstance(other, RelTree) else RelTree([other])
+        return RelTree([*other.rels, *self.rels])
 
 
 type AggMap[Rec: Record] = dict[
@@ -1602,7 +1602,7 @@ class DataSet(
     ] = field(default_factory=list)
 
     _attr: Attr[Any, WriteT] | None = None
-    _merge: Merge | None = None
+    _merge: RelTree | None = None
 
     def __post_init__(self) -> None:  # noqa: D105
         # Initialize fields required by SQLAlchemy superclass.
@@ -1624,12 +1624,23 @@ class DataSet(
         self.is_literal = False
 
     @cached_property
+    def record_fqn(self) -> str:
+        """String representation of the relation path."""
+        if self._parent is None:
+            return self.record_type._default_table_name()
+
+        ref_name = cast(
+            DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any, Record], self
+        ).ref.name
+        return f"{self.parent.record_fqn}.{ref_name}"
+
+    @cached_property
     def fqn(self) -> str:
         """Return the fully qualified name of a column."""
         return (
-            f"{self._rel_path_str}.{self._attr.name}"
+            f"{self.record_fqn}.{self._attr.name}"
             if self._attr is not None
-            else self._rel_path_str
+            else self.record_fqn
         )
 
     @property
@@ -2357,9 +2368,9 @@ class DataSet(
     @overload
     def __getitem__(
         self: DataSet[RecT2, Any, KeyT2, Any, Any, Any, None, Any, Any, FullRec],
-        key: Merge[RecT2, *ValTt],
+        key: RelTree[*ValTt],
     ) -> DataSet[
-        RecT2, LnT, IdxT, WriteT, BackT, RecT2, tuple[*ValTt], LeafT, ParT
+        RecT2, LnT, IdxT, WriteT, BackT, RecT2, tuple[*ValTt], LeafT, ParT, FullRec
     ]: ...
 
     # 22. Expression / key list / slice filtering
@@ -2428,7 +2439,7 @@ class DataSet(
         key: (
             type[Record]
             | DataSet[Any, Any, Any, Any, Symbolic, Any, Any, Any, Any, Any]
-            | Merge
+            | RelTree
             | sqla.ColumnElement[bool]
             | list[Hashable]
             | slice
@@ -2444,8 +2455,15 @@ class DataSet(
                 )
                 return copy_and_override(DataSet[key], self, record_type=key)
             case DataSet():
-                return self._suffix(key)
-            case Merge():
+                if key._attr is not None:
+                    return copy_and_override(
+                        type(self),
+                        self,
+                        _attr=key._attr,
+                    )
+                else:
+                    return self._suffix(key)
+            case RelTree():
                 return copy_and_override(
                     type(self),
                     self,
@@ -2633,34 +2651,22 @@ class DataSet(
         if index_only:
             return cast(DfT, merged_df)
 
-        main_prefix = self.record_type._default_table_name() + "."
-        main_cols = {
-            col: col[len(main_prefix) :]
-            for col in select.columns.keys()
-            if col.startswith(main_prefix)
+        prefixes = {
+            ".".join(col_name.split(".")[:-1]) for col_name in merged_df.columns
         }
-
-        extra_cols = {
-            rel: {
-                col: col[len(rel._path_str) + 1 :]
-                for col in select.columns.keys()
-                if col.startswith(rel._path_str)
+        col_groups = {
+            prefix: {
+                col_name: col_name.split(".")[-1]
+                for col_name in merged_df.columns
+                if col_name.startswith(prefix)
             }
-            for rel in self._sel.rels
+            for prefix in prefixes
         }
 
-        main_df, *extra_dfs = cast(
+        return cast(
             tuple[DfT, ...],
-            (
-                merged_df[list(main_cols.keys())].rename(main_cols),
-                *(
-                    merged_df[list(cols.keys())].rename(cols)
-                    for cols in extra_cols.values()
-                ),
-            ),
+            (merged_df[list(cols.keys())].rename(cols) for cols in col_groups.values()),
         )
-
-        return main_df, *extra_dfs
 
     @overload
     def to_series(
@@ -2735,41 +2741,59 @@ class DataSet(
     @overload
     def values(
         self: DataSet[Record, Any, Any, Any, Any, Any, tuple[*ValTt], Any, Any, FullRec]
-    ) -> Sequence[tuple[RecT, *ValTt]]: ...
+    ) -> Sequence[tuple[*ValTt]]: ...
 
     def values(  # noqa: D102
         self: DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    ) -> Sequence[RecT2 | Hashable | tuple[RecT2, *tuple[Record, ...]]]:
+    ) -> Sequence[Record | Value | tuple]:
         dfs = self.to_df()
         if isinstance(dfs, pl.DataFrame):
             dfs = (dfs,)
 
-        rec_types: list[type[Record]] = [self.record_type, *self._sel.types]
+        val_selection = (
+            [(r.record_type if r._attr is None else r._attr) for r in self._merge.rels]
+            if self._merge is not None
+            else [self.record_type]
+        )
 
-        valid_caches = {rt: self.db._get_valid_cache_set(rt) for rt in rec_types}
-        instance_maps = {rt: self.db._get_instance_map(rt) for rt in rec_types}
+        valid_caches = {
+            rt: self.db._get_valid_cache_set(rt)
+            for rt in val_selection
+            if isinstance(rt, type)
+        }
+        instance_maps = {
+            rt: self.db._get_instance_map(rt)
+            for rt in val_selection
+            if isinstance(rt, type)
+        }
 
-        recs = []
+        vals = []
         for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
             rows = cast(tuple[dict[str, Any], ...], rows)
 
-            rec_list = []
-            for rec_type, row in zip(rec_types, rows):
-                new_rec = self.record_type(**row)
+            val_list = []
+            for sel, row in zip(val_selection, rows):
+                if isinstance(sel, type):
+                    assert issubclass(sel, Record)
+                    rec_type = sel
 
-                if new_rec._index in valid_caches[rec_type]:
-                    rec = instance_maps[rec_type][new_rec._index]
+                    new_rec = rec_type(**row)
+
+                    if new_rec._index in valid_caches[rec_type]:
+                        rec = instance_maps[rec_type][new_rec._index]
+                    else:
+                        rec = new_rec
+                        rec._db = self.db
+                        valid_caches[rec_type].add(rec._index)
+                        instance_maps[rec_type][rec._index] = rec
+
+                    val_list.append(rec)
                 else:
-                    rec = new_rec
-                    rec._db = self.db
-                    valid_caches[rec_type].add(rec._index)
-                    instance_maps[rec_type][rec._index] = rec
+                    val_list.append(row[sel.name])
 
-                rec_list.append(rec)
+            vals.append(tuple(val_list) if len(val_list) > 1 else val_list[0])
 
-            recs.append(tuple(rec_list) if len(rec_list) > 1 else rec_list[0])
-
-        return recs
+        return vals
 
     @overload
     def __iter__(
@@ -2784,11 +2808,11 @@ class DataSet(
     @overload
     def __iter__(
         self: DataSet[Record, Any, Any, Any, Any, Any, tuple[*ValTt], Any, Any, FullRec]
-    ) -> Iterator[tuple[RecT, *ValTt]]: ...
+    ) -> Iterator[tuple[*ValTt]]: ...
 
     def __iter__(  # noqa: D105
         self: DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any, Any],
-    ) -> Iterator[RecT2 | Hashable | tuple[RecT2, *tuple[Record, ...]]]:
+    ) -> Iterator[Record | Value | tuple]:
         return iter(self.values())
 
     @overload
@@ -3310,6 +3334,27 @@ class DataSet(
         return gen_int_hash(self)
 
     @property
+    def _rec_set(
+        self,
+    ) -> DataSet[RecT, LnT, IdxT, WriteT, BackT, RecT, MergeT, LeafT, ParT, FullRec]:
+        return (
+            cast(
+                DataSet[
+                    RecT, LnT, IdxT, WriteT, BackT, RecT, MergeT, LeafT, ParT, FullRec
+                ],
+                self,
+            )
+            if self._attr is None
+            else copy_and_override(
+                DataSet[
+                    RecT, LnT, IdxT, WriteT, BackT, RecT, MergeT, LeafT, ParT, FullRec
+                ],
+                self,
+                _attr=None,
+            )
+        )
+
+    @property
     def _ref_cols(
         self,
     ) -> dict[str, DataSet[RecT, None, Any, Any, BackT, RecT, Any, Open]]:
@@ -3352,7 +3397,7 @@ class DataSet(
         return None
 
     @cached_property
-    def _filter_merge(self) -> tuple[list[sqla.ColumnElement[bool]], Merge]:
+    def _filter_merge(self) -> tuple[list[sqla.ColumnElement[bool]], RelTree]:
         """Get the SQL filters for this table."""
         sql_filt = [f for f in self._filt if isinstance(f, sqla.ColumnElement)]
         key_filt = [f for f in self._filt if not isinstance(f, sqla.ColumnElement)]
@@ -3382,12 +3427,12 @@ class DataSet(
         )
 
     @cached_property
-    def _rel_tree(self) -> Merge:
+    def _rel_tree(self) -> RelTree:
         """Get the relation merges for this table."""
         return (
             self.parent._rel_tree
             * self._filter_merge[1]
-            * (self._merge or Merge())
+            * (self._merge or RelTree())
             * self
         )
 
@@ -3396,7 +3441,7 @@ class DataSet(
         """Get the SQL filters for this table."""
         return (
             self._filter_merge[0]
-            + [f for rel in self._rel_tree.all_rels for f in rel._filters]
+            + [f for rel in self._rel_tree.all_rec_rels for f in rel._filters]
             + self.parent._filters
         )
 
@@ -3405,7 +3450,7 @@ class DataSet(
         """Dict representation of the relation tree."""
         tree: JoinDict = {}
 
-        for rel in self._rel_tree.all_rels:
+        for rel in self._rel_tree.all_rec_rels:
             subtree = tree
             if len(rel._link_path) > 1:
                 for ref in rel._link_path[1:]:
@@ -3473,28 +3518,56 @@ class DataSet(
         self: DataSet[Record, Any, Any, Any, Any, Any, None, Any, Any, FullRec],
     ) -> list[DataSet[Any, None, Any, Any, BackT, Any, None, One, Any, Value]]:
         """Return the index cols."""
-        return [
-            self[
+        if self._attr is None and self._merge is None:
+            return [
+                self[
+                    cast(
+                        DataSet[
+                            Any,
+                            None,
+                            BaseIdx,
+                            Any,
+                            Symbolic,
+                            Any,
+                            None,
+                            One,
+                            None,
+                            Value,
+                        ],
+                        getattr(self.record_type, name),
+                    )
+                ]
+                for name in self.record_type._col_attrs
+            ]
+        elif self._merge is None:
+            return [
                 cast(
-                    DataSet[
-                        Any, None, BaseIdx, Any, Symbolic, Any, None, One, None, Value
-                    ],
-                    getattr(self.record_type, name),
+                    DataSet[Any, None, Any, Any, BackT, Any, None, One, Any, Value],
+                    self,
                 )
             ]
-            for name in self.record_type._col_attrs
-        ] + [
-            self.db[rel][
-                cast(
-                    DataSet[
-                        Any, None, BaseIdx, Any, Symbolic, Any, None, One, None, Value
-                    ],
-                    getattr(rel.record_type, name),
-                )
+        else:
+            return [
+                self.db[rel][
+                    cast(
+                        DataSet[
+                            Any,
+                            None,
+                            BaseIdx,
+                            Any,
+                            Symbolic,
+                            Any,
+                            None,
+                            One,
+                            None,
+                            Value,
+                        ],
+                        getattr(rel.record_type, name),
+                    )
+                ]
+                for rel in self._rel_tree.all_rec_rels
+                for name in rel.record_type._col_attrs
             ]
-            for rel in self._rel_tree.all_rels
-            for name in rel.record_type._col_attrs
-        ]
 
     @cached_property
     def _idx_cols(
@@ -3691,17 +3764,6 @@ class DataSet(
         return len(self._path_idx) == 1 and is_subtype(
             list(self._path_idx)[0].value_type, int
         )
-
-    @cached_property
-    def _rel_path_str(self) -> str:
-        """String representation of the relation path."""
-        if self._parent is None:
-            return self.record_type._default_table_name()
-
-        ref_name = cast(
-            DataSet[Record, Any, Any, Any, Any, Any, Any, Any, Any, Record], self
-        ).ref.name
-        return f"{self.parent._rel_path_str}.{ref_name}"
 
     @cached_property
     def _root_set(
@@ -3985,7 +4047,7 @@ class DataSet(
     def _parse_filters(
         self,
         filt: Iterable[sqla.ColumnElement[bool]],
-    ) -> tuple[list[sqla.ColumnElement[bool]], Merge]:
+    ) -> tuple[list[sqla.ColumnElement[bool]], RelTree]:
         """Parse filter argument and return SQL expression and join operations."""
         reflist: set[DataSet] = set()
         replace_func = partial(self._visit_col, reflist=reflist, render=False)
@@ -3993,7 +4055,7 @@ class DataSet(
             sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
             for f in filt
         ]
-        merge = Merge(reflist)
+        merge = RelTree(reflist)
 
         return parsed_filt, merge
 
