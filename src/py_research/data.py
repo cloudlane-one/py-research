@@ -2,7 +2,7 @@
 
 import locale
 from collections.abc import Callable
-from dataclasses import MISSING, fields
+from dataclasses import MISSING, Field, fields
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from fractions import Fraction
@@ -32,7 +32,7 @@ DC = TypeVar("DC", bound=DataclassInstance)
 
 def copy_and_override(
     _init: Callable[Params, DC],
-    _obj: DataclassInstance,
+    _obj: DataclassInstance | tuple[DataclassInstance, ...],
     *args: Params.args,
     **kwargs: Params.kwargs,
 ) -> DC:
@@ -46,13 +46,40 @@ def copy_and_override(
         assert orig_init is not None
         _init = orig_init
 
-    src_fields = set(f.name for f in fields(_obj))
+    constr_func = _init or type(_obj)
     target_fields = set(fields(cast(type, _init)))
-    obj_fields = {
-        f: getattr(_obj, f.name)
-        for f in target_fields
-        if f.init and f.name in src_fields
-    }
+
+    objs = _obj if isinstance(_obj, tuple) else (_obj,)
+
+    obj_fields: dict[Field, Any] = {}
+    for obj in objs:
+        src_fields = set(f.name for f in fields(obj))
+        all_obj_fields = {
+            f: getattr(obj, f.name)
+            for f in target_fields
+            if f.init and f.name in src_fields
+        }
+        obj_fields = {
+            f: (
+                v
+                if v != f.default
+                else obj_fields.get(
+                    f,
+                    (
+                        f.default
+                        if f.default is not MISSING
+                        else (
+                            f.default_factory()
+                            if f.default_factory is not MISSING
+                            else MISSING
+                        )
+                    ),
+                )
+            )
+            for f, v in all_obj_fields.items()
+        }
+
+    assert not any(v is MISSING for v in obj_fields.values())
 
     obj_args = [
         v
@@ -71,7 +98,6 @@ def copy_and_override(
     ]
     new_kwargs = {**obj_kwargs, **kwargs}
 
-    constr_func = _init or type(_obj)
     return constr_func(*new_args, **new_kwargs)  # type: ignore
 
 

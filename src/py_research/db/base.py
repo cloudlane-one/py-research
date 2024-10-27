@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, dataclass, field
 from datetime import date, datetime, time
-from functools import cached_property, partial, reduce
+from functools import cache, cached_property, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
 from itertools import groupby
@@ -397,6 +397,11 @@ def _remove_cross_fk(table: sqla.Table):
     )
 
 
+@cache
+def _prop_type_name_map() -> dict[str, type[Prop]]:
+    return {cls.__name__: cls for cls in get_subclasses(Prop) if cls is not Prop}
+
+
 @dataclass(eq=False)
 class Prop(Generic[ValT, WriteT]):
     """Record property."""
@@ -483,15 +488,7 @@ class Prop(Generic[ValT, WriteT]):
 
             return base
         elif isinstance(hint, str):
-            return (
-                Attr
-                if "Attr" in hint
-                else (
-                    RelSet
-                    if "RelSet" in hint
-                    else Link if "Rel" in hint else Prop if "Prop" in hint else NoneType
-                )
-            )
+            return self._map_prop_type_name(hint)
         else:
             return NoneType
 
@@ -509,6 +506,12 @@ class Prop(Generic[ValT, WriteT]):
         """Resolve the generic property type reference."""
         args = get_args(self._generic_type)
         return tuple(self._to_typedef(hint) for hint in args)
+
+    def _map_prop_type_name(self, name: str) -> type[Prop | None]:
+        """Map property type name to class."""
+        name_map = _prop_type_name_map()
+        matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
+        return matches[0] if len(matches) == 1 else NoneType
 
     def _to_typedef(
         self, hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef
@@ -1083,32 +1086,38 @@ class RecordMeta(type):
         if "_src_mod" not in cls.__dict__:
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
-        prop_defs = {
-            name: pt
+        props = {
+            name: Prop(_typehint=hint, _ctx=cls._src_mod)
             for name, hint in get_annotations(cls).items()
-            if is_subtype(
-                (pt := Prop(_typehint=hint, _ctx=cls._src_mod))._prop_type, Prop
-            )
-            or (
-                isinstance(hint, str)
-                and ("Attr" in hint or "Link" in hint or "Rel" in hint)
-            )
+        }
+        props = {
+            name: prop
+            for name, prop in props.items()
+            if is_subtype(prop._prop_type, Prop)
         }
 
-        for prop_name, prop_def in prop_defs.items():
-            if prop_name not in cls.__dict__:
-                pt = prop_def._prop_type
-                assert issubclass(pt, Attr | DataSet)
-                setattr(
-                    cls,
-                    prop_name,
-                    pt(_name=prop_name, _typehint=prop_def._typehint, _owner_type=cls),
+        for prop_name, prop in props.items():
+            prop_type = cast(type[Prop], prop._prop_type)
+
+            if prop_name in cls.__dict__:
+                prop = copy_and_override(
+                    prop_type,
+                    cls.__dict__[prop_name],
+                    _name=prop._name,
+                    _typehint=prop._typehint,
+                    _ctx=cls._src_mod,
+                    _owner_type=cls,
                 )
             else:
-                prop = cls.__dict__[prop_name]
-                assert isinstance(prop, Prop)
-                prop._typehint = prop_def._typehint
-                prop._owner_type = cls
+                prop = prop_type(
+                    _name=prop._name,
+                    _typehint=prop._typehint,
+                    _ctx=cls._src_mod,
+                    _owner_type=cls,
+                )
+
+            setattr(cls, prop_name, prop)
+            props[prop_name] = prop
 
         cls._record_superclasses = []
         super_types: Iterable[type | GenericProtocol] = (
@@ -1128,26 +1137,26 @@ class RecordMeta(type):
 
             if orig._template or cls._derivate:
                 for prop_name, prop in orig._class_props.items():
-                    prop_defs[prop_name] = prop
-                    if prop_name not in cls.__dict__:
+                    if prop_name in cls.__dict__:
+                        prop = copy_and_override(
+                            type(props[prop_name]), (prop, props[prop_name])
+                        )
+                    else:
                         prop = copy_and_override(
                             type(prop),
-                            prop,
-                            _typehint=prop._typehint,
+                            props.get(prop_name, prop),
                             _typevar_map=typevar_map,
                             _ctx=cls._src_mod,
                             _owner_type=cls,
                         )
-                        setattr(cls, prop_name, prop)
+
+                    setattr(cls, prop_name, prop)
+                    props[prop_name] = prop
             else:
-                assert orig is c
+                assert orig is c  # Must be concrete class, not a generic
                 cls._record_superclasses.append(orig)
 
-        cls._class_props = (
-            {name: getattr(cls, name) for name in prop_defs.keys()}
-            if not cls._is_root_class
-            else {}
-        )
+        cls._class_props = props
 
     @property
     def _props(cls) -> dict[str, Prop[Any, Any]]:
@@ -1159,7 +1168,7 @@ class RecordMeta(type):
         )
 
     @property
-    def _base_refs(
+    def _class_refs(
         cls,
     ) -> dict[str, Ref]:
         """The relations of this record type without superclasses."""
@@ -1168,11 +1177,11 @@ class RecordMeta(type):
         }
 
     @property
-    def _base_fk_attrs(cls) -> dict[str, Attr]:
+    def _class_fk_attrs(cls) -> dict[str, Attr]:
         """The foreign key columns of this record type without superclasses."""
         return {
             a.name: a
-            for ref in cls._base_refs.values()
+            for ref in cls._class_refs.values()
             if isinstance(ref, Link)
             for a in ref.fk_map.keys()
         }
@@ -1187,10 +1196,10 @@ class RecordMeta(type):
         }
 
     @property
-    def _base_attrs(cls) -> dict[str, Attr]:
+    def _class_attrs(cls) -> dict[str, Attr]:
         """The columns of this record type without superclasses."""
         return (
-            cls._base_fk_attrs
+            cls._class_fk_attrs
             | cls._pk_attrs
             | {
                 k: a
@@ -1204,8 +1213,8 @@ class RecordMeta(type):
         """The foreign key columns of this record type."""
         return reduce(
             lambda x, y: {**x, **y},
-            (c._base_fk_attrs for c in cls._record_superclasses),
-            cls._base_fk_attrs,
+            (c._class_fk_attrs for c in cls._record_superclasses),
+            cls._class_fk_attrs,
         )
 
     @property
@@ -3424,7 +3433,7 @@ class DataSet(
                 index=attr.index,
                 nullable=has_type(None, attr.value_type),
             )
-            for name, attr in self.record_type._base_attrs.items()
+            for name, attr in self.record_type._class_attrs.items()
         }
 
     @cached_property
@@ -5170,36 +5179,24 @@ class DB(
         return schema_name
 
 
-class RecUUID(Record[UUID]):
-    """Record type with a default UUID primary key."""
+class Schema:
+    """Group multiple record types into a schema."""
 
-    _template = True
-    _id: Attr[UUID] = Attr(primary_key=True, default_factory=uuid4)
+    _record_types: set[type[Record]]
+    _rel_record_types: set[type[Record]]
 
-
-class RecHashed(Record[int]):
-    """Record type with a default hashed primary key."""
-
-    _template = True
-
-    _id: Attr[int] = Attr(primary_key=True, init=False)
-
-    def __post_init__(self) -> None:  # noqa: D105
-        self._id = gen_int_hash(
-            {
-                a.name: getattr(self, a.name)
-                for a in type(self)._sym_dataset._base_attrs.values()
-            }
-        )
+    def __init_subclass__(cls) -> None:  # noqa: D105
+        subclasses = get_subclasses(cls, max_level=1)
+        cls._record_types = {s for s in subclasses if issubclass(s, Record)}
+        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
+        super().__init_subclass__()
 
 
-class Scalar(Record[KeyT], Generic[ValT2, KeyT]):
-    """Dynamically defined record type."""
+@dataclass
+class Require:
+    """Mark schema or record type as required."""
 
-    _template = True
-
-    _id: Attr[KeyT] = Attr(primary_key=True, default_factory=uuid4)
-    _value: Attr[ValT2]
+    present: bool = True
 
 
 class DynRecordMeta(RecordMeta):
@@ -5243,6 +5240,38 @@ def dynamic_record_type(
     )
 
 
+class RecUUID(Record[UUID]):
+    """Record type with a default UUID primary key."""
+
+    _template = True
+    _id: Attr[UUID] = Attr(primary_key=True, default_factory=uuid4)
+
+
+class RecHashed(Record[int]):
+    """Record type with a default hashed primary key."""
+
+    _template = True
+
+    _id: Attr[int] = Attr(primary_key=True, init=False)
+
+    def __post_init__(self) -> None:  # noqa: D105
+        self._id = gen_int_hash(
+            {
+                a.name: getattr(self, a.name)
+                for a in type(self)._sym_dataset._base_attrs.values()
+            }
+        )
+
+
+class Scalar(Record[KeyT], Generic[ValT2, KeyT]):
+    """Dynamically defined record type."""
+
+    _template = True
+
+    _id: Attr[KeyT] = Attr(primary_key=True, default_factory=uuid4)
+    _value: Attr[ValT2]
+
+
 class Rel(RecHashed, Generic[RecT2, RecT3]):
     """Automatically defined relation record type."""
 
@@ -5250,23 +5279,3 @@ class Rel(RecHashed, Generic[RecT2, RecT3]):
 
     _from: DataSet[RecT2]
     _to: DataSet[RecT3]
-
-
-class Schema:
-    """Group multiple record types into a schema."""
-
-    _record_types: set[type[Record]]
-    _rel_record_types: set[type[Record]]
-
-    def __init_subclass__(cls) -> None:  # noqa: D105
-        subclasses = get_subclasses(cls, max_level=1)
-        cls._record_types = {s for s in subclasses if issubclass(s, Record)}
-        cls._rel_record_types = {rr for r in cls._record_types for rr in r._rel_types}
-        super().__init_subclass__()
-
-
-@dataclass
-class Require:
-    """Mark schema or record type as required."""
-
-    present: bool = True
