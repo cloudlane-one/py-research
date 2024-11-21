@@ -26,20 +26,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import (
-    DB,
-    RW,
-    BackLink,
-    DataSet,
-    DynRecord,
-    Link,
-    One,
-    Open,
-    Record,
-    RefSet,
-    Symbolic,
-    Value,
-)
+from .base import DataBase, RW, BackLink, DataSet, Link, One, Record, RefSet, Symbolic, Value
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -160,22 +147,18 @@ type AttrTarget[Rec: Record] = DataSet[
     Rec, Any, Any, Any, Symbolic, Rec, None, One, None, Value
 ]
 
-type AttrSetTarget[Rec: Record] = DataSet[
-    DynRecord, Any, Any, Any, Symbolic, DynRecord, None, Open, Rec, Value
-]
-
 type RelTarget[Rec: Record] = DataSet[
     Any, Any, Any, Any, Symbolic, Any, None, Any, Rec, Any
 ]
 
-type PropTarget[Rec: Record] = AttrTarget[Rec] | AttrSetTarget[Rec] | RelTarget[Rec]
+type PropTarget[Rec: Record] = AttrTarget[Rec] | RelTarget[Rec]
 
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelector, bool | PushMap[Rec]]
 
 type PushMap[Rec: Record] = _PushMapping[Rec] | PropTarget[
     Rec
-] | RefMap | Index | Iterable[PropTarget[Rec] | RefMap | Index]
+] | RefMap | Index | Iterable[AttrTarget[Rec] | RefMap | Index]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -537,7 +520,7 @@ def _gen_match_expr(
 type InData = dict[tuple[Hashable, DirectPath], TreeNode]
 type RefData = list[
     tuple[
-        RefMap[Record, TreeNode, Record] | AttrSetTarget[Record],
+        RefMap[Record, TreeNode, Record] | RelTarget[Record],
         InData,
     ]
 ]
@@ -626,25 +609,22 @@ async def _load_record[
         assert parent_idx is not None
         parent_rel_fks = rec_map.ref._gen_fk_value_map(parent_idx)
 
-    attr_values = {
-        a.name: (a, list(sel.select(data, path_idx).items()))
-        for a, sel in rec_map.full_map.items()
-        if isinstance(a, DataSet)
-    }
-
     attrs = {
-        name: (attr, *values[0])
-        for name, (attr, values) in attr_values.items()
-        if attr._ref is None
+        a.name: (a, *list(sel.select(data, path_idx).items())[0])
+        for a, sel in rec_map.full_map.items()
+        if isinstance(a, DataSet) and a._attr is not None and a._ref is None
     }
 
     ref_data.extend(
         (
-            cast(AttrSetTarget[Record], attr_set),
-            {(rec_idx, item_path): item_data for item_path, item_data in values},
+            cast(RelTarget[Any], a),
+            {
+                (rec_idx, item_path): item_data
+                for item_path, item_data in sel.select(data, path_idx).items()
+            },
         )
-        for attr_set, values in attr_values.values()
-        if attr_set._ref is not None and attr_set._attr is not None
+        for a, sel in rec_map.full_map.items()
+        if isinstance(a, DataSet) and a._attr is not None and a._ref is not None
     )
 
     rec_dict = {
@@ -701,7 +681,7 @@ async def _load_record[
 
 
 async def _load_records(
-    db: DB,
+    db: DataBase,
     rec_map: RecMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
@@ -779,12 +759,12 @@ async def _load_records(
                 rest_data,
             )
         else:
-            # Attribute relation set
-            rec_type = cast(type[DynRecord], rel_tgt.record_type)
-            ref_map = RefMap[DynRecord, TreeNode, Record](
+            # Default relation set mapping
+            rec_type = cast(type[Record], rel_tgt.record_type)
+            ref_map = RefMap[Record, TreeNode, Record](
                 pull={
-                    rec_type[rel_tgt.attr_set.attr.name]: DataSelect(All),
-                    rec_type[rel_tgt.attr_set.idx_attr.name]: SelIndex(All),
+                    getattr(rec_type, a.name): a.name
+                    for a in rec_type._col_attrs.values()
                 },
                 ref=rel_tgt,
             )
@@ -815,7 +795,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
         return {}
 
-    async def load(self, data: Iterable[Dat], db: DB | None = None) -> set[Hashable]:
+    async def load(self, data: Iterable[Dat], db: DataBase | None = None) -> set[Hashable]:
         """Parse recursive data from a data source.
 
         Args:
@@ -829,7 +809,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
         Returns:
             A Record instance
         """
-        db = db if db is not None else DB()
+        db = db if db is not None else DataBase()
         in_data: InData = {((), ()): dat for dat in data}
         rest_data: RestData = []
         loaded = await _load_records(
