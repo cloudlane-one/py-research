@@ -1,9 +1,9 @@
 """Universal relational database interface for python."""
 
-from .base import DataBase as DataBase
 from .base import Attr as Attr
 from .base import AttrSet as AttrSet
 from .base import BackLink as BackLink
+from .base import Base as Base
 from .base import DataSet as DataSet
 from .base import Link as Link
 from .base import Prop as Prop

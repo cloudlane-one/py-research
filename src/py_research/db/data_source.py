@@ -26,7 +26,18 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .base import DataBase, RW, BackLink, DataSet, Link, One, Record, RefSet, Symbolic, Value
+from .base import (
+    RW,
+    BackLink,
+    Base,
+    DataSet,
+    Link,
+    One,
+    Record,
+    RefSet,
+    Symbolic,
+    Value,
+)
 from .conflicts import DataConflictPolicy
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -637,7 +648,7 @@ async def _load_record[
     rec: Record | None = None
     is_new: bool = True
     if rec_map.rec_type._is_complete_dict(rec_dict):
-        rec = rec_map.rec_type(_db=rec_set._db, **rec_dict)
+        rec = rec_map.rec_type(_db=rec_set._base, **rec_dict)
 
     match_expr = _gen_match_expr(
         rec_set,
@@ -681,7 +692,7 @@ async def _load_record[
 
 
 async def _load_records(
-    db: DataBase,
+    db: Base,
     rec_map: RecMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
@@ -795,7 +806,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
         return {}
 
-    async def load(self, data: Iterable[Dat], db: DataBase | None = None) -> set[Hashable]:
+    async def load(self, data: Iterable[Dat], db: Base | None = None) -> set[Hashable]:
         """Parse recursive data from a data source.
 
         Args:
@@ -809,7 +820,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
         Returns:
             A Record instance
         """
-        db = db if db is not None else DataBase()
+        db = db if db is not None else Base()
         in_data: InData = {((), ()): dat for dat in data}
         rest_data: RestData = []
         loaded = await _load_records(

@@ -7,8 +7,9 @@ from datetime import date
 from typing import Literal, reveal_type
 
 import pytest
+
 from py_research.db import (
-    DataBase,
+    Base,
     Col,
     DataSet,
     DataSource,
@@ -155,7 +156,7 @@ def data_source() -> DataSource:
 
 def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     """Test importing nested data dict to database."""
-    db = DataBase()
+    db = Base()
     rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
