@@ -2,13 +2,13 @@
 
 from .base import Attr as Attr
 from .base import AttrSet as AttrSet
-from .base import BackLink as BackLink
-from .base import Base as Base
+from .base import BackRef as BackRef
+from .base import DataBase as DataBase
 from .base import DataSet as DataSet
-from .base import Link as Link
 from .base import Prop as Prop
 from .base import Record as Record
 from .base import RecUUID as RecUUID
+from .base import Ref as Ref
 from .base import Rel as Rel
 from .base import RelSet as RelSet
 from .base import Schema as Schema

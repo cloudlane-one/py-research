@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Attr, AttrSet, BackLink, Link, Record, RecUUID, Rel, RelSet
+from py_research.db import Attr, AttrSet, BackRef, Record, RecUUID, Ref, Rel, RelSet
 
 
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Link[Search] = Link(primary_key=True)
-    result: Link[Project] = Link(primary_key=True)
+    search: Ref[Search] = Ref(primary_key=True)
+    result: Ref[Project] = Ref(primary_key=True)
     score: Attr[float]
 
 
@@ -31,7 +31,7 @@ class Task(RecUUID):
     """Link search to a result."""
 
     name: Attr[str]
-    project: Link[Project]
+    project: Ref[Project]
     assignees: RelSet[User, Assignment]
     status: Attr[Literal["todo", "done"]]
 
@@ -52,8 +52,8 @@ class User(RecUUID):
 class Membership(RecUUID):
     """Link user to a project."""
 
-    member: Link[User] = Link(primary_key=True)
-    project: Link[Project] = Link(primary_key=True)
+    member: Ref[User] = Ref(primary_key=True)
+    project: Ref[Project] = Ref(primary_key=True)
     role: Attr[str] = Attr(default="member")
 
 
@@ -65,8 +65,8 @@ class Project(Record[int]):
     start: Attr[date]
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
-    org: Link[Organization]
-    tasks: BackLink[Task] = BackLink(to=Task.project)
+    org: Ref[Organization]
+    tasks: BackRef[Task] = BackRef(to=Task.project)
     members: RelSet[User, Membership]
 
 
@@ -76,5 +76,5 @@ class Organization(RecUUID):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: BackLink[Project] = BackLink(to=Project.org, default=True)
+    projects: BackRef[Project] = BackRef(to=Project.org, default=True)
     countries: AttrSet[str]

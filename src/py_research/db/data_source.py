@@ -28,13 +28,13 @@ from py_research.telemetry import tqdm
 
 from .base import (
     RW,
-    BackLink,
-    Base,
+    BackRef,
+    DataBase,
     DataSet,
-    Link,
     One,
     Record,
-    RefSet,
+    Ref,
+    RelSet,
     Symbolic,
     Value,
 )
@@ -561,7 +561,7 @@ async def _load_record[
     ref_fks: dict[str, Hashable] = {}
 
     for rel, target_map in rec_map.rels.items():
-        if isinstance(rel._prop, Link):
+        if isinstance(rel._prop, Ref):
             sub_items = list(target_map.select(data, path_idx).items())
             assert len(sub_items) == 1
 
@@ -616,7 +616,7 @@ async def _load_record[
         )
 
     parent_rel_fks = {}
-    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, BackLink):
+    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, BackRef):
         assert parent_idx is not None
         parent_rel_fks = rec_map.ref._gen_fk_value_map(parent_idx)
 
@@ -648,7 +648,7 @@ async def _load_record[
     rec: Record | None = None
     is_new: bool = True
     if rec_map.rec_type._is_complete_dict(rec_dict):
-        rec = rec_map.rec_type(_db=rec_set._base, **rec_dict)
+        rec = rec_map.rec_type(_db=rec_set.db, **rec_dict)
 
     match_expr = _gen_match_expr(
         rec_set,
@@ -692,7 +692,7 @@ async def _load_record[
 
 
 async def _load_records(
-    db: Base,
+    db: DataBase,
     rec_map: RecMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
@@ -737,7 +737,7 @@ async def _load_records(
                 else:
                     rel_idx = rel
             elif (
-                isinstance(rec_map.ref._ref, RefSet)
+                isinstance(rec_map.ref._ref, RelSet)
                 and rec_map.ref._ref.map_by is not None
             ):
                 if issubclass(rec_map.rec_type, rec_map.ref._ref.map_by.parent_type):
@@ -806,7 +806,9 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
         return {}
 
-    async def load(self, data: Iterable[Dat], db: Base | None = None) -> set[Hashable]:
+    async def load(
+        self, data: Iterable[Dat], db: DataBase | None = None
+    ) -> set[Hashable]:
         """Parse recursive data from a data source.
 
         Args:
@@ -820,7 +822,7 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec, Dat]):
         Returns:
             A Record instance
         """
-        db = db if db is not None else Base()
+        db = db if db is not None else DataBase()
         in_data: InData = {((), ()): dat for dat in data}
         rest_data: RestData = []
         loaded = await _load_records(
