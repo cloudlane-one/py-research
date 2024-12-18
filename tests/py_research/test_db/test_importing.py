@@ -10,8 +10,8 @@ import pytest
 
 from py_research.db import (
     Col,
+    Data,
     DataBase,
-    DataSet,
     DataSource,
     RecMap,
     Record,
@@ -38,7 +38,7 @@ class Search(Record[str]):
 
     term: Col[str] = prop(primary_key=True)
     result_count: Col[int]
-    results: DataSet[Project, SearchResult]
+    results: Data[Project, SearchResult]
 
 
 Assignment = Rel["User", "Task"]
@@ -49,7 +49,7 @@ class Task(RecUUID):
 
     name: Col[str]
     project: Ref[Project]
-    assignees: DataSet[User, Assignment]
+    assignees: Data[User, Assignment]
     status: Col[Literal["todo", "done"]]
 
 
@@ -58,7 +58,7 @@ class User(RecUUID):
 
     name: Col[str]
     age: Col[int]
-    tasks: DataSet[Task, Assignment]
+    tasks: Data[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -83,8 +83,8 @@ class Project(Record[int]):
     end: Col[date]
     status: Col[Literal["planned", "started", "done"]]
     org: Ref[Organization | None]
-    tasks: DataSet[Task] = prop(link_from=Task.project)
-    members: DataSet[User] = prop(link_via=Membership)
+    tasks: Data[Task] = prop(link_from=Task.project)
+    members: Data[User] = prop(link_via=Membership)
 
 
 class Organization(RecUUID):
@@ -93,7 +93,7 @@ class Organization(RecUUID):
     name: Col[str]
     address: Col[str]
     city: Col[str]
-    projects: DataSet[Project] = prop(link_from=Project.org)
+    projects: Data[Project] = prop(link_from=Project.org)
 
 
 @pytest.fixture

@@ -1,17 +1,16 @@
 """Universal relational database interface for python."""
 
-from .base import Attr as Attr
-from .base import AttrSet as AttrSet
-from .base import BackRef as BackRef
+from .base import Array as Array
+from .base import Data as Data
 from .base import DataBase as DataBase
-from .base import DataSet as DataSet
-from .base import Prop as Prop
+from .base import LinkTable as LinkTable
 from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Ref as Ref
 from .base import Rel as Rel
-from .base import RelSet as RelSet
 from .base import Schema as Schema
+from .base import Table as Table
+from .base import Value as Value
 from .conflicts import DataConflictError as DataConflictError
 from .data_source import DataSource as DataSource
 from .data_source import Hash as Hash

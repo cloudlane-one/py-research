@@ -28,14 +28,14 @@ from py_research.telemetry import tqdm
 
 from .base import (
     RW,
-    BackRef,
+    Data,
     DataBase,
-    DataSet,
+    LinkTable,
     One,
     Record,
     Ref,
-    RelSet,
     Symbolic,
+    Table,
     Value,
 )
 from .conflicts import DataConflictPolicy
@@ -154,11 +154,11 @@ type NodeSelector = str | int | TreePath | type[All]
 """Select a node in a hierarchical data structure."""
 
 
-type AttrTarget[Rec: Record] = DataSet[
+type AttrTarget[Rec: Record] = Data[
     Rec, Any, Any, Any, Symbolic, Rec, None, One, None, Value
 ]
 
-type RelTarget[Rec: Record] = DataSet[
+type RelTarget[Rec: Record] = Data[
     Any, Any, Any, Any, Symbolic, Any, None, Any, Rec, Any
 ]
 
@@ -272,14 +272,14 @@ class RecMap[Rec: Record, Dat]:
     @cached_property
     def rels(
         self,
-    ) -> dict[DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], SubMap]:
+    ) -> dict[Data[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], SubMap]:
         """Get all relation mappings."""
         return {
             cast(
-                DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], rel
+                Data[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Record, Any], rel
             ): sel
             for rel, sel in self.full_map.items()
-            if isinstance(rel, DataSet) and isinstance(sel, SubMap)
+            if isinstance(rel, Data) and isinstance(sel, SubMap)
         }
 
     def __hash__(self) -> int:  # noqa: D105
@@ -357,7 +357,7 @@ class SubMap(RecMap, DataSelect):
 class RefMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    ref: DataSet[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Rec2, Any]
+    ref: Data[Rec, Any, Any, RW, Symbolic, Rec, Any, Any, Rec2, Any]
     """Relation to use for mapping."""
 
     rel: RecMap | None = None
@@ -382,11 +382,11 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
-        case DataSet() | RefMap() | str() | Index():
+        case Data() | RefMap() | str() | Index():
             return {All: push_map}
-        case Iterable() if has_type(push_map, Iterable[DataSet | RefMap]):
+        case Iterable() if has_type(push_map, Iterable[Data | RefMap]):
             return {
-                k.name if isinstance(k, DataSet) else k.ref.name: True for k in push_map
+                k.name if isinstance(k, Data) else k.ref.name: True for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -411,11 +411,11 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
         **{
             (
                 target
-                if isinstance(target, DataSet | Index)
+                if isinstance(target, Data | Index)
                 else getattr(rec, _get_selector_name(sel))
             ): DataSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, DataSet | Index | bool)
+            if isinstance(target, Data | Index | bool)
         },
         **{
             (
@@ -429,9 +429,7 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
             )
             for sel, targets in mapping.items()
             if has_type(targets, RecMap)
-            or (
-                has_type(targets, Iterable[RecMap]) and not isinstance(targets, DataSet)
-            )
+            or (has_type(targets, Iterable[RecMap]) and not isinstance(targets, Data))
             for target in ([targets] if isinstance(targets, RecMap) else targets)
         },
     }
@@ -508,7 +506,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    rec_set: DataSet[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
+    rec_set: Data[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -523,7 +521,7 @@ def _gen_match_expr(
                 for a in rec_set.record_type._attrs.values()
             )
             if isinstance(match_by, str) and match_by == "all"
-            else [match_by] if isinstance(match_by, DataSet) else match_by
+            else [match_by] if isinstance(match_by, Data) else match_by
         )
         return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))
 
@@ -541,7 +539,7 @@ type RestData = list[tuple[RecMap[Record, TreeNode], InData]]
 async def _load_record[
     Rec: Record
 ](
-    rec_set: DataSet[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
+    rec_set: Data[Record, Any, Any, Any, Any, Record, Any, Any, Any, Any],
     ref_data: RefData,
     rec_map: RecMap[Any, Any],
     parent_idx: Hashable | None,
@@ -616,14 +614,14 @@ async def _load_record[
         )
 
     parent_rel_fks = {}
-    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, BackRef):
+    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, LinkTable):
         assert parent_idx is not None
         parent_rel_fks = rec_map.ref._gen_fk_value_map(parent_idx)
 
     attrs = {
         a.name: (a, *list(sel.select(data, path_idx).items())[0])
         for a, sel in rec_map.full_map.items()
-        if isinstance(a, DataSet) and a._attr is not None and a._ref is None
+        if isinstance(a, Data) and a._attr is not None and a._ref is None
     }
 
     ref_data.extend(
@@ -635,7 +633,7 @@ async def _load_record[
             },
         )
         for a, sel in rec_map.full_map.items()
-        if isinstance(a, DataSet) and a._attr is not None and a._ref is not None
+        if isinstance(a, Data) and a._attr is not None and a._ref is not None
     )
 
     rec_dict = {
@@ -737,7 +735,7 @@ async def _load_records(
                 else:
                     rel_idx = rel
             elif (
-                isinstance(rec_map.ref._ref, RelSet)
+                isinstance(rec_map.ref._ref, Table)
                 and rec_map.ref._ref.map_by is not None
             ):
                 if issubclass(rec_map.rec_type, rec_map.ref._ref.map_by.parent_type):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Attr, AttrSet, BackRef, Record, RecUUID, Ref, Rel, RelSet
+from py_research.db import Array, LinkTable, Record, RecUUID, Ref, Rel, Table, Value
 
 
 class SearchResult(Record):
@@ -13,15 +13,15 @@ class SearchResult(Record):
 
     search: Ref[Search] = Ref(primary_key=True)
     result: Ref[Project] = Ref(primary_key=True)
-    score: Attr[float]
+    score: Value[float]
 
 
 class Search(Record[str]):
     """Defined search against the API."""
 
-    term: Attr[str] = Attr(primary_key=True)
-    result_count: Attr[int]
-    results: RelSet[Project, SearchResult] = RelSet(default=True)
+    term: Value[str] = Value(primary_key=True)
+    result_count: Value[int]
+    results: Table[Project, SearchResult] = Table(default=True)
 
 
 Assignment = Rel["User", "Task"]
@@ -30,18 +30,18 @@ Assignment = Rel["User", "Task"]
 class Task(RecUUID):
     """Link search to a result."""
 
-    name: Attr[str]
+    name: Value[str]
     project: Ref[Project]
-    assignees: RelSet[User, Assignment]
-    status: Attr[Literal["todo", "done"]]
+    assignees: Table[User, Assignment]
+    status: Value[Literal["todo", "done"]]
 
 
 class User(RecUUID):
     """A generic user."""
 
-    name: Attr[str]
-    age: Attr[int]
-    tasks: RelSet[Task, Assignment]
+    name: Value[str]
+    age: Value[int]
+    tasks: Table[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -54,27 +54,27 @@ class Membership(RecUUID):
 
     member: Ref[User] = Ref(primary_key=True)
     project: Ref[Project] = Ref(primary_key=True)
-    role: Attr[str] = Attr(default="member")
+    role: Value[str] = Value(default="member")
 
 
 class Project(Record[int]):
     """A generic project record."""
 
-    number: Attr[int] = Attr(primary_key=True)
-    name: Attr[str]
-    start: Attr[date]
-    end: Attr[date]
-    status: Attr[Literal["planned", "started", "done"]]
+    number: Value[int] = Value(primary_key=True)
+    name: Value[str]
+    start: Value[date]
+    end: Value[date]
+    status: Value[Literal["planned", "started", "done"]]
     org: Ref[Organization]
-    tasks: BackRef[Task] = BackRef(to=Task.project)
-    members: RelSet[User, Membership]
+    tasks: LinkTable[Task] = LinkTable(backlink=Task.project)
+    members: Table[User, Membership]
 
 
 class Organization(RecUUID):
     """A generic organization record."""
 
-    name: Attr[str]
-    address: Attr[str]
-    city: Attr[str]
-    projects: BackRef[Project] = BackRef(to=Project.org, default=True)
-    countries: AttrSet[str]
+    name: Value[str]
+    address: Value[str]
+    city: Value[str]
+    projects: LinkTable[Project] = LinkTable(backlink=Project.org, default=True)
+    countries: Array[str]
