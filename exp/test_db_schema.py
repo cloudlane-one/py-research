@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Array, LinkTable, Record, RecUUID, Ref, Rel, Table, Value
+from py_research.db import Array, LinkTable, Record, RecUUID, Ref, Rel, RelTable, Value
 
 
 class SearchResult(Record):
@@ -21,7 +21,7 @@ class Search(Record[str]):
 
     term: Value[str] = Value(primary_key=True)
     result_count: Value[int]
-    results: Table[Project, SearchResult] = Table(default=True)
+    results: RelTable[Project, SearchResult] = RelTable(default=True)
 
 
 Assignment = Rel["User", "Task"]
@@ -32,7 +32,7 @@ class Task(RecUUID):
 
     name: Value[str]
     project: Ref[Project]
-    assignees: Table[User, Assignment]
+    assignees: RelTable[User, Assignment]
     status: Value[Literal["todo", "done"]]
 
 
@@ -41,7 +41,7 @@ class User(RecUUID):
 
     name: Value[str]
     age: Value[int]
-    tasks: Table[Task, Assignment]
+    tasks: RelTable[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -67,7 +67,7 @@ class Project(Record[int]):
     status: Value[Literal["planned", "started", "done"]]
     org: Ref[Organization]
     tasks: LinkTable[Task] = LinkTable(backlink=Task.project)
-    members: Table[User, Membership]
+    members: RelTable[User, Membership]
 
 
 class Organization(RecUUID):

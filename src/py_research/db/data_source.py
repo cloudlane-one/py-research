@@ -34,8 +34,8 @@ from .base import (
     One,
     Record,
     Ref,
+    RelTable,
     Symbolic,
-    Table,
     Value,
 )
 from .conflicts import DataConflictPolicy
@@ -518,7 +518,7 @@ def _gen_match_expr(
         match_cols = (
             list(
                 getattr(rec_set.record_type, a.name)
-                for a in rec_set.record_type._attrs.values()
+                for a in rec_set.record_type._values.values()
             )
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Data) else match_by
@@ -735,7 +735,7 @@ async def _load_records(
                 else:
                     rel_idx = rel
             elif (
-                isinstance(rec_map.ref._ref, Table)
+                isinstance(rec_map.ref._ref, RelTable)
                 and rec_map.ref._ref.map_by is not None
             ):
                 if issubclass(rec_map.rec_type, rec_map.ref._ref.map_by.parent_type):

@@ -8,8 +8,8 @@ from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Ref as Ref
 from .base import Rel as Rel
+from .base import RelTable as RelTable
 from .base import Schema as Schema
-from .base import Table as Table
 from .base import Value as Value
 from .conflicts import DataConflictError as DataConflictError
 from .data_source import DataSource as DataSource

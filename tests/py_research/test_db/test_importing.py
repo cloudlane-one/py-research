@@ -19,8 +19,8 @@ from py_research.db import (
     Ref,
     Rel,
     RelMap,
+    RelTable,
     SubMap,
-    Table,
     prop,
 )
 
@@ -160,7 +160,7 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
-    assert isinstance(db, Table)
+    assert isinstance(db, RelTable)
 
     assert len(db[Search]) == 1
     assert len(db[Project]) == 3
