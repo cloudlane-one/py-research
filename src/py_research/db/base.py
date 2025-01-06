@@ -113,16 +113,16 @@ KeyTt3 = TypeVarTuple("KeyTt3")
 IdxT = TypeVar(
     "IdxT",
     covariant=True,
-    bound="Hashable | Idx",
-    default="NoIdx",
+    bound="Idx | BaseIdx | Hashable",
+    default="BaseIdx",
 )
 IdxT2 = TypeVar(
     "IdxT2",
-    bound="Hashable | Idx",
+    bound="Idx | BaseIdx | Hashable",
 )
 IdxT3 = TypeVar(
     "IdxT3",
-    bound="Hashable | Idx",
+    bound="Idx | BaseIdx | Hashable",
 )
 
 LnT = TypeVar("LnT", bound="Record | None", covariant=True, default=None)
@@ -300,7 +300,7 @@ def _get_pl_schema(attr_map: Mapping[str, Value]) -> pl.Schema:
     """Return the schema of the dataset."""
     return pl.Schema(
         {
-            name: _pl_type_map.get(a.value_origin_type, a.value_origin_type)
+            name: _pl_type_map.get(a.target_type, a.target_type)
             for name, a in attr_map.items()
         }
     )
@@ -484,7 +484,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         return cast(SingleTypeDef[ValT], self._hint_to_typedef(arg))
 
     @cached_property
-    def value_origin_type(self) -> type[ValT]:
+    def target_type(self) -> type[ValT]:
         """Value type of the property."""
         return cast(
             type[ValT],
@@ -493,22 +493,6 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 if isinstance(self.value_type, type)
                 else get_origin(self.value_type) or object
             ),
-        )
-
-    @cached_property
-    def index_type(self) -> type[IdxT]:
-        """Resolve the value type reference."""
-        args = self._generic_args
-        if len(args) == 0:
-            return cast(type[IdxT], object)
-
-        arg = args[self._typearg_map[IdxT]]
-        typedef = cast(SingleTypeDef[IdxT], self._hint_to_typedef(arg))
-
-        return (
-            typedef
-            if isinstance(typedef, type)
-            else cast(type[IdxT], get_origin(typedef)) or object
         )
 
     @cached_property
@@ -561,8 +545,8 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     def fqn(self) -> str:
         """String representation of the relation path."""
         if self._ctx_data is None:
-            if issubclass(self.value_origin_type, Record):
-                return self.value_origin_type._default_table_name()
+            if issubclass(self.target_type, Record):
+                return self.target_type._default_table_name()
             else:
                 return self.name
 
@@ -590,12 +574,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         return cast(
             type[RecT2],
             type(
-                self.value_origin_type.__name__ + "_" + token_hex(5),
-                (self.value_origin_type,),
+                self.target_type.__name__ + "_" + token_hex(5),
+                (self.target_type,),
                 {
                     "_rel": self,
                     "_derivate": True,
-                    "_src_mod": getmodule(self.value_origin_type),
+                    "_src_mod": getmodule(self.target_type),
                 },
             ),
         )
@@ -612,7 +596,6 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 self.db,
                 self._name,
                 self._typehint,
-                self._ctx,
                 self._typevar_map,
                 self._ctx,
                 self._selection,
@@ -743,10 +726,6 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             return (self[key] if key is not None else self).values()[0]
         except KeyError | IndexError:
             return default
-
-    def isin(  # noqa: D102
-        self: Data[ValT2, Any, Any, Any, Any, BaseT2], other: Iterable[ValT2] | slice
-    ) -> sqla.ColumnElement[bool]: ...
 
     def select(
         self,
@@ -917,12 +896,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     ) -> DataBase[CRUD, BackT2 | BackT3]:
         """Extract a new database instance from the current selection."""
         # Get all rec types in the schema.
-        rec_types = {self.record_type, *self.record_type._rel_types}
+        rec_types = {self.target_type, *self.target_type._rel_types}
 
         # Get the entire subdag of this target type.
         all_paths_rels = {
             r
-            for rel in self.record_type._links.values()
+            for rel in self.target_type._links.values()
             for r in self[rel]._get_subdag(rec_types)
         }
 
@@ -952,7 +931,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             selects = [
                 self[rel].select()
                 for rel in all_paths_rels
-                if issubclass(rec, rel.record_type)
+                if issubclass(rec, rel.target_type)
             ]
             replacements[rec] = sqla.union(*selects).select()
 
@@ -1023,6 +1002,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return overlay_db
 
+    def isin(  # noqa: D102
+        self: Data[ValT2, Any, Any, Any, Any, BaseT2], other: Iterable[ValT2] | slice
+    ) -> sqla.ColumnElement[bool]: ...
+
     # 1. DB-level type selection
     @overload
     def __getitem__(
@@ -1033,10 +1016,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     # 2. Top-level prop selection
     @overload
     def __getitem__(
-        self: Data[RecT2, Idx[*KeyTt2], Any, Any, Any, Any],
+        self: Data[RecT2, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
         key: Data[
             ValT3,
-            Idx[*KeyTt3],
+            BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
             CrudT3,
             LnT3,
             RecT2,
@@ -1047,10 +1030,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     # 3. Nested prop selection
     @overload
     def __getitem__(
-        self: Data[RecT2, Idx[*KeyTt2], Any, Any, Any, Any],
+        self: Data[RecT2, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
         key: Data[
             ValT3,
-            Idx[*KeyTt3],
+            BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
             CrudT3,
             LnT3,
             OwnT3,
@@ -1075,35 +1058,41 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     # 6. Key selection, tuple index type, symbolic context
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Symbolic],
+        self: Data[
+            Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Symbolic
+        ],
         key: tuple[*KeyTt2],
     ) -> Data[ValT, IdxT, RU, LnT, OwnT, Symbolic]: ...
 
     # 7. Key selection, scalar index type
     @overload
     def __getitem__(
-        self: Data[Any, Idx[KeyT2], Any, Any, Any, DynBackendID],
+        self: Data[
+            Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, DynBackendID
+        ],
         key: KeyT2,
     ) -> ValT: ...
 
     # 8. Key selection, tuple index type
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, DynBackendID],
+        self: Data[
+            Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, DynBackendID
+        ],
         key: tuple[*KeyTt2],
     ) -> ValT: ...
 
     # 9. Key filtering, scalar index type
     @overload
     def __getitem__(
-        self: Data[Any, Idx[KeyT2], Any, Any, Any],
+        self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any],
         key: list[KeyT2],
     ) -> Data[ValT, IdxT, RU, LnT, OwnT, BaseT]: ...
 
     # 10. Expression / key / slice filtering
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any],
+        self: Data[Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any],
         key: (
             list[tuple[*KeyTt2]] | sqla.ColumnElement[bool] | slice | tuple[slice, ...]
         ),
@@ -1127,7 +1116,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             case type():
                 assert issubclass(
                     key,
-                    self.value_origin_type,
+                    self.target_type,
                 )
                 return copy_and_override(Data[key], self, selection=key)
             case Data():
@@ -1454,7 +1443,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         tables = {
             self.db[rec]._get_sql_base_table(mode="upsert")
-            for rec in self.record_type._record_superclasses
+            for rec in self.target_type._record_superclasses
         }
 
         statements = []
@@ -1676,7 +1665,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             for pk in (
                 [node.index_by]
                 if node.index_by is not None
-                else node.record_type._pk_attrs.values()
+                else node.target_type._pk_attrs.values()
             )
         ]
 
@@ -1689,7 +1678,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 for node in (
                     [rel]
                     if isinstance(rel, Value)
-                    else rel.record_type._values.values()
+                    else rel.target_type._values.values()
                 )
             }
             | set(self._idx_values)
@@ -1743,7 +1732,8 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     ) -> dict[str, sqla.Column]:
         """Columns of this record type's table."""
         registry = orm.registry(
-            metadata=self.db._metadata, type_annotation_map=self.record_type._type_map
+            metadata=self.db._metadata,
+            type_annotation_map=self.target_type._type_map,
         )
 
         return {
@@ -1757,7 +1747,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 index=attr.index,
                 nullable=has_type(None, attr.value_type),
             )
-            for name, attr in self.record_type._class_values.items()
+            for name, attr in self.target_type._class_values.items()
         }
 
     @cached_property
@@ -1771,19 +1761,19 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                     sqla.ForeignKeyConstraint(
                         [fk.name for fk in rt._ref.fk_map.keys()],
                         [rel_table.c[pk.name] for pk in rt._ref.fk_map.values()],
-                        name=f"{self.record_type._get_table_name(self.db._subs)}_{rt._ref.name}_fk",
+                        name=f"{self.target_type._get_table_name(self.db._subs)}_{rt._ref.name}_fk",
                     )
                 )
 
-        for superclass in self.record_type._record_superclasses:
+        for superclass in self.target_type._record_superclasses:
             base_table = self.db[superclass]._get_sql_base_table()
 
             fks.append(
                 sqla.ForeignKeyConstraint(
-                    [pk_name for pk_name in self.record_type._pk_attrs],
-                    [base_table.c[pk_name] for pk_name in self.record_type._pk_attrs],
+                    [pk_name for pk_name in self.target_type._pk_attrs],
+                    [base_table.c[pk_name] for pk_name in self.target_type._pk_attrs],
                     name=(
-                        self.record_type._get_table_name(self.db._subs)
+                        self.target_type._get_table_name(self.db._subs)
                         + "_base_fk_"
                         + gen_str_hash(superclass._get_table_name(self.db._subs), 5)
                     ),
@@ -1801,7 +1791,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         table = base_table
         cols = {col.name: col for col in base_table.columns}
-        for superclass in self.record_type._record_superclasses:
+        for superclass in self.target_type._record_superclasses:
             superclass_table = self.db[superclass]._sql_table
             cols |= {col.key: col for col in superclass_table.columns}
 
@@ -1811,7 +1801,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                     sqla.and_,
                     (
                         base_table.c[pk_name] == superclass_table.c[pk_name]
-                        for pk_name in self.record_type._pk_values
+                        for pk_name in self.target_type._pk_values
                     ),
                 ),
             )
@@ -1832,15 +1822,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         for join in self._gen_joins():
             select = select.join(*join)
 
-        for filt in self._filters:
+        for filt in self._all_filters:
             select = select.where(filt)
 
         return select
-
-    @cached_property
-    def _sql_query(self: Data[Record, Any, Any, Any, Any, Any]) -> sqla.Subquery:
-        """Get select for this recset with stable alias name."""
-        return self._sql_select.subquery(self.fqn + "." + hex(hash(self))[:6])
 
     def _map_prop_type_name(self, name: str) -> type[Data | None]:
         """Map property type name to class."""
@@ -1995,7 +1980,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         idx_names = [
             idx.fqn
             for idx in (
-                self._idx_cols if not base else self.db[self.record_type]._idx_cols
+                self._idx_cols if not base else self.db[self.target_type]._idx_cols
             )
         ]
 
@@ -2018,7 +2003,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         next_rels = set(self._to_symbol()._ref_tables.values())
 
         for backlink_record in backlink_records:
-            next_rels |= backlink_record._backrels_to_rels(self.record_type)
+            next_rels |= backlink_record._backrels_to_rels(self.target_type)
 
         # Filter out already traversed relations
         next_rels = {rel for rel in next_rels if rel not in _traversed}
@@ -2053,13 +2038,13 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                         sqla.and_,
                         (
                             (
-                                _parent[getattr(_parent.record_type, fk.name)]
+                                _parent[getattr(_parent.target_type, fk.name)]
                                 == target[pk]
                                 for fk, pk in target.fk_map.items()
                             )
                             if isinstance(target, Link)
                             else (
-                                target[getattr(target.record_type, fk.name)]
+                                target[getattr(target.target_type, fk.name)]
                                 == _parent[pk]
                                 for fk, pk in target.link.fk_map.items()
                             )
@@ -2111,20 +2096,20 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         if (
             mode != "read"
             and self.db.write_to_overlay is not None
-            and self.record_type not in self.db._subs
+            and self.target_type not in self.db._subs
         ):
             orig_table = self._get_sql_base_table("read")
 
             # Create an empty overlay table for the record type
-            self.db._subs[self.record_type] = sqla.table(
+            self.db._subs[self.target_type] = sqla.table(
                 (
                     (
                         self.db.write_to_overlay
                         + "_"
-                        + self.record_type._default_table_name()
+                        + self.target_type._default_table_name()
                     )
                     if self.db.overlay_type == "name_prefix"
-                    else self.record_type._default_table_name()
+                    else self.target_type._default_table_name()
                 ),
                 schema=(
                     self.db.write_to_overlay
@@ -2133,21 +2118,21 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 ),
             )
 
-        table_name = self.record_type._get_table_name(self.db._subs)
+        table_name = self.target_type._get_table_name(self.db._subs)
 
         if not without_auto_fks and table_name in self.db._metadata.tables:
             # Return the table object from metadata if it already exists.
             # This is necessary to avoid circular dependencies.
             return self.db._metadata.tables[table_name]
 
-        sub = self.db._subs.get(self.record_type)
+        sub = self.db._subs.get(self.target_type)
 
         cols = self._sql_base_cols
         if without_auto_fks:
             cols = {
                 name: col
                 for name, col in cols.items()
-                if name in self.record_type._values
+                if name in self.target_type._values
             }
 
         # Create a partial SQLAlchemy table object from the class definition
@@ -2198,10 +2183,11 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     ) -> sqla.Table:
         metadata = sqla.MetaData()
         registry = orm.registry(
-            metadata=self.db._metadata, type_annotation_map=self.record_type._type_map
+            metadata=self.db._metadata,
+            type_annotation_map=self.target_type._type_map,
         )
 
-        upload_cols = self.record_type._col_attrs | {
+        upload_cols = self.target_type._col_attrs | {
             col.fqn: col.attr for col in self._idx_cols
         }
 
@@ -2219,7 +2205,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             for col_name, a in upload_cols.items()
         ]
 
-        table_name = self.record_type._default_table_name() + "_" + token_hex(5)
+        table_name = self.target_type._default_table_name() + "_" + token_hex(5)
         table = sqla.Table(
             table_name,
             metadata,
@@ -2234,8 +2220,8 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         path = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
 
         recs: list[type[Record]] = [
-            self.record_type,
-            *self.record_type._record_superclasses,
+            self.target_type,
+            *self.target_type._record_superclasses,
         ]
         with open(path, "rb") as file:
             for rec in recs:
@@ -2258,8 +2244,8 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         file = self.db.url.get() if isinstance(self.db.url, HttpFile) else self.db.url
 
         recs: list[type[Record]] = [
-            self.record_type,
-            *self.record_type._record_superclasses,
+            self.target_type,
+            *self.target_type._record_superclasses,
         ]
         with ExcelWorkbook(file) as wb:
             for rec in recs:
@@ -2278,7 +2264,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         record_ids: dict[Hashable, Hashable] | None = None
-        valid_caches = self.db._get_valid_cache_set(self.record_type)
+        valid_caches = self.db._get_valid_cache_set(self.target_type)
 
         match value:
             case sqla.Select():
@@ -2314,7 +2300,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 )
                 value_table.drop(self.db.engine)
 
-                base_idx_cols = list(self.record_type._pk_attrs.keys())
+                base_idx_cols = list(self.target_type._pk_attrs.keys())
                 base_idx_keys = set(
                     value[base_idx_cols].iter_rows()
                     if isinstance(value, pl.DataFrame)
@@ -2451,7 +2437,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         for db, recs in remote_records.items():
             rec_ids = [rec._index for rec in recs.values()]
-            remote_set = db[self.record_type][rec_ids]
+            remote_set = db[self.target_type][rec_ids]
 
             remote_db = (
                 db if all(rec._root for rec in recs.values()) else remote_set.extract()
@@ -2491,15 +2477,19 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
     ) -> None:
         base_recs: list[type[Record]] = [
-            self.record_type,
-            *self.record_type._record_superclasses,
+            self.target_type,
+            *self.target_type._record_superclasses,
         ]
 
         vt_cols = self._get_value_table_cols()
         cols_by_table = {
             self.db[rec]._get_sql_base_table(
                 "upsert" if mode in ("update", "insert", "upsert") else "replace"
-            ): {name: col for name, col in vt_cols.items() if col.record_type is rec}
+            ): {
+                name: col
+                for name, col in vt_cols.items()
+                if col.value_origin_type is rec
+            }
             for rec in base_recs
         }
 
@@ -2985,7 +2975,7 @@ class Link(
         return [
             r
             for r in self._resolved_rec_type._tables.values()
-            if issubclass(self._resolved_rec_type, r.value_origin_type)
+            if issubclass(self._resolved_rec_type, r.target_type)
             and isinstance(r, BackLink)
         ]
 
@@ -3049,9 +3039,8 @@ class Table(
             self._selection = [
                 [
                     r
-                    for r in self.value_origin_type._links.values()
-                    if isinstance(r, Link)
-                    and issubclass(self.ctx_type, r.value_origin_type)
+                    for r in self.target_type._links.values()
+                    if isinstance(r, Link) and issubclass(self.ctx_type, r.target_type)
                 ][0]
             ]
         else:
@@ -3060,23 +3049,23 @@ class Table(
                     r
                     for r in self.rel_type._links.values()
                     if isinstance(r, Link)
-                    and issubclass(self.value_origin_type, r.value_origin_type)
+                    and issubclass(self.target_type, r.target_type)
                 ][0]._prefix(
                     [
                         r
                         for r in self.rel_type._links.values()
                         if isinstance(r, Link)
-                        and issubclass(self.ctx_type, r.value_origin_type)
+                        and issubclass(self.ctx_type, r.target_type)
                     ][0]
                 ),
             ]
 
     @overload
     def __get__(
-        self: Table[Record[*KeyTt2], Any, NoIdx, Any, Any, Any],
+        self: Table[RecT2, Any, BaseIdx, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Table[RecT, LnT, Idx[*KeyTt2], CrudT, RecT4, Symbolic]: ...
+    ) -> Table[RecT, LnT, BaseIdx[RecT2], CrudT, RecT4, Symbolic]: ...
 
     @overload
     def __get__(
@@ -3090,14 +3079,14 @@ class Table(
         self: Table[Any, Any, KeyT2, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Table[RecT, LnT, KeyT2, CrudT, RecT4, Symbolic]: ...
+    ) -> Table[RecT, LnT, Idx[KeyT2], CrudT, RecT4, Symbolic]: ...
 
     @overload
     def __get__(
-        self: Table[Record[*KeyTt2], Any, NoIdx, Any, Any, Any],
+        self: Table[RecT2, Any, BaseIdx, Any, Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Table[RecT, LnT, Idx[*KeyTt2], CrudT, RecT4, DynBackendID]: ...
+    ) -> Table[RecT, LnT, BaseIdx[RecT2], CrudT, RecT4, DynBackendID]: ...
 
     @overload
     def __get__(
@@ -3111,7 +3100,7 @@ class Table(
         self: Table[Any, Any, KeyT2, Any, Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Table[RecT, LnT, KeyT2, CrudT, RecT4, DynBackendID]: ...
+    ) -> Table[RecT, LnT, Idx[KeyT2], CrudT, RecT4, DynBackendID]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -3168,10 +3157,8 @@ class Array(Data[ValT, Idx[KeyT], CrudT, None, OwnT, BaseT]):
                     if not issubclass(self.ctx_type, NoneType)
                     else []
                 ),
-                Value(
-                    _name="index", _typehint=Value[self.index_type], primary_key=True
-                ),
-                Value(_name="value", _typehint=Value[self.value_origin_type]),
+                Value(_name="index", _typehint=Value[Any], primary_key=True),
+                Value(_name="value", _typehint=Value[self.target_type]),
             ],
         )
 
@@ -3187,7 +3174,7 @@ class Array(Data[ValT, Idx[KeyT], CrudT, None, OwnT, BaseT]):
         self: Array[Any, KeyT2, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Array[RecT, KeyT2, CrudT, RecT4, Symbolic]: ...
+    ) -> Array[RecT, Idx[KeyT2], CrudT, RecT4, Symbolic]: ...
 
     @overload
     def __get__(
@@ -3201,7 +3188,7 @@ class Array(Data[ValT, Idx[KeyT], CrudT, None, OwnT, BaseT]):
         self: Array[Any, KeyT2, Any, Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Array[RecT, KeyT2, CrudT, RecT4, DynBackendID]: ...
+    ) -> Array[RecT, Idx[KeyT2], CrudT, RecT4, DynBackendID]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -3537,7 +3524,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
         node_dfs = [
             n.to_df(kind=pd.DataFrame)
             .reset_index()
-            .assign(table=n.record_type._default_table_name())
+            .assign(table=n.target_type._default_table_name())
             for n in node_tables
         ]
         node_df = (
@@ -3590,7 +3577,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.record_type._default_table_name())
+                            == str(left_rel.value_origin_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in left_rel.fk_map.keys()],
                         right_on=[c.name for c in left_rel.fk_map.values()],
@@ -3600,7 +3587,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
                     .merge(
                         node_df.loc[
                             node_df["table"]
-                            == str(left_rel.record_type._default_table_name())
+                            == str(left_rel.value_origin_type._default_table_name())
                         ].dropna(axis="columns", how="all"),
                         left_on=[c.name for c in right_rel.fk_map.keys()],
                         right_on=[c.name for c in right_rel.fk_map.values()],
@@ -3891,17 +3878,17 @@ class RecordMeta(type):
         return {k: r for k, r in cls._props.items() if isinstance(r, Table)}
 
     @property
-    def _arrays(cls) -> dict[str, Array[Any, Any, Any]]:
+    def _arrays(cls) -> dict[str, Array[Any, Any, Any, Record, Symbolic]]:
         return {k: c for k, c in cls._props.items() if isinstance(c, Array)}
 
     @property
-    def _data_values(cls) -> dict[str, Value]:
+    def _data_values(cls) -> dict[str, Value[Any, Any, Any, Record, Symbolic]]:
         return {k: c for k, c in cls._col_values.items() if k not in cls._fk_values}
 
     @property
     def _rel_types(cls) -> set[type[Record]]:
-        return {rel.record_type for rel in cls._links.values()} | {
-            rel_set.value_origin_type for rel_set in cls._tables.values()
+        return {rel.target_type for rel in cls._links.values()} | {
+            rel_set.target_type for rel_set in cls._tables.values()
         }
 
 
@@ -3957,7 +3944,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
                     compare=True,
                     kw_only=True,
                 )
-                for name, _ in cls._refs.items()
+                for name, _ in cls._links.items()
             },
         }
 
@@ -3993,11 +3980,11 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         """Get all direct relations from a target record type to this type."""
         rels: set[Data[Self, Any, Any, Any, RecT2, Symbolic]] = set()
         for ln in cls._links.values():
-            if isinstance(ln, BackLink) and issubclass(ln.link.record_type, target):
+            if isinstance(ln, BackLink) and issubclass(ln.link.target_type, target):
                 rels.add(
                     Data[Self, Any, Any, Any, RecT2, Symbolic](
-                        db=DataBase(Symbolic()),
-                        selection=ln.link,
+                        _db=DataBase(Symbolic()),
+                        _selection=ln.link,
                     )
                 )
 
@@ -4061,7 +4048,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
         self.__post_init__()
 
-        pks = self._table.record_type._pk_attrs
+        pks = self._table.target_type._pk_attrs
         if len(pks) == 1:
             self._index = getattr(self, next(iter(pks)))
         else:
