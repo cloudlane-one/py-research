@@ -1,9 +1,9 @@
 """Universal relational database interface for python."""
 
 from .base import Array as Array
+from .base import BackLink as BackLink
 from .base import Data as Data
 from .base import DataBase as DataBase
-from .base import LinkTable as LinkTable
 from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Ref as Ref

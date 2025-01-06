@@ -28,9 +28,9 @@ from py_research.telemetry import tqdm
 
 from .base import (
     RW,
+    BackLink,
     Data,
     DataBase,
-    LinkTable,
     One,
     Record,
     Ref,
@@ -614,7 +614,7 @@ async def _load_record[
         )
 
     parent_rel_fks = {}
-    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, LinkTable):
+    if isinstance(rec_map, RefMap) and isinstance(rec_map.ref._prop, BackLink):
         assert parent_idx is not None
         parent_rel_fks = rec_map.ref._gen_fk_value_map(parent_idx)
 
@@ -773,7 +773,7 @@ async def _load_records(
             ref_map = RefMap[Record, TreeNode, Record](
                 pull={
                     getattr(rec_type, a.name): a.name
-                    for a in rec_type._col_attrs.values()
+                    for a in rec_type._col_values.values()
                 },
                 ref=rel_tgt,
             )

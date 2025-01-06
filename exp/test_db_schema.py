@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Array, LinkTable, Record, RecUUID, Ref, Rel, RelTable, Value
+from py_research.db import Array, BackLink, Record, RecUUID, Ref, Rel, RelTable, Value
 
 
 class SearchResult(Record):
@@ -66,7 +66,7 @@ class Project(Record[int]):
     end: Value[date]
     status: Value[Literal["planned", "started", "done"]]
     org: Ref[Organization]
-    tasks: LinkTable[Task] = LinkTable(backlink=Task.project)
+    tasks: BackLink[Task] = BackLink(link=Task.project)
     members: RelTable[User, Membership]
 
 
@@ -76,5 +76,5 @@ class Organization(RecUUID):
     name: Value[str]
     address: Value[str]
     city: Value[str]
-    projects: LinkTable[Project] = LinkTable(backlink=Project.org, default=True)
+    projects: BackLink[Project] = BackLink(link=Project.org, default=True)
     countries: Array[str]
