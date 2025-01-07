@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import warnings
-from abc import ABC, abstractmethod
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, dataclass, field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from functools import cache, cached_property, partial, reduce
+from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
 from itertools import chain, groupby
@@ -59,6 +58,7 @@ from sqlalchemy_utils import UUIDType
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
 
+from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.files import HttpFile
 from py_research.hashing import gen_int_hash, gen_str_hash
@@ -461,7 +461,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     _typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
     _record_type: type[Record] | None = None
 
-    @cached_property
+    @cached_prop
     def db(self) -> DataBase[CrudT | CRUD, BaseT]:
         db = self._db
 
@@ -473,7 +473,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return db
 
-    @cached_property
+    @cached_prop
     def value_type(self) -> SingleTypeDef[ValT]:
         """Resolve the value type reference."""
         args = self._generic_args
@@ -483,7 +483,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         arg = args[self._typearg_map[ValT]]
         return cast(SingleTypeDef[ValT], self._hint_to_typedef(arg))
 
-    @cached_property
+    @cached_prop
     def target_type(self) -> type[ValT]:
         """Value type of the property."""
         return cast(
@@ -495,7 +495,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             ),
         )
 
-    @cached_property
+    @cached_prop
     def ctx_type(self) -> type[OwnT]:
         """Link record type."""
         return cast(
@@ -507,7 +507,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             ),
         )
 
-    @cached_property
+    @cached_prop
     def rel_type(self) -> type[LnT]:
         """Link record type."""
         args = self._generic_args
@@ -519,7 +519,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return cast(type[LnT], rec_type)
 
-    @cached_property
+    @cached_prop
     def base_type(self) -> type[BaseT]:
         """Link record type."""
         args = self._generic_args
@@ -528,7 +528,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return cast(type[BaseT], base_type)
 
-    @cached_property
+    @cached_prop
     def root_type(
         self: Data[Any, Any, Any, Any, Record, Any],
     ) -> type[Record]:
@@ -537,11 +537,11 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         assert not issubclass(rec_type, NoneType)
         return rec_type
 
-    @cached_property
+    @cached_prop
     def name(self) -> str:
         return self._name if self._name is not None else token_hex(5)
 
-    @cached_property
+    @cached_prop
     def fqn(self) -> str:
         """String representation of the relation path."""
         if self._ctx_data is None:
@@ -569,7 +569,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             else Data(_db=self.db, _ctx=self._ctx)
         )
 
-    @cached_property
+    @cached_prop
     def rec(self: Data[RecT2, Any, Any, Any, Any, Any]) -> type[RecT2]:
         return cast(
             type[RecT2],
@@ -584,7 +584,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             ),
         )
 
-    @cached_property
+    @cached_prop
     def rel(self: Data[Record, Any, Any, RecT2, Any, Any]) -> type[RecT2]:
         """Reference props of the relation record type."""
         assert len(self._selection) == 1
@@ -1572,7 +1572,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return
 
-    @cached_property
+    @cached_prop
     def _data_type(self) -> type[Data] | type[None]:
         """Resolve the property type reference."""
         hint = self._typehint
@@ -1591,7 +1591,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         else:
             return NoneType
 
-    @cached_property
+    @cached_prop
     def _generic_type(self) -> SingleTypeDef | UnionType:
         """Resolve the generic property type reference."""
         hint = self._typehint or Data
@@ -1600,13 +1600,13 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return generic
 
-    @cached_property
+    @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef | UnionType | TypeVar, ...]:
         """Resolve the generic property type reference."""
         args = get_args(self._generic_type)
         return tuple(self._hint_to_typedef(hint) for hint in args)
 
-    @cached_property
+    @cached_prop
     def _ctx_data(self) -> Data[Record, Any, Any, Any, Any, BaseT] | None:
         """Parent reference of the property."""
         return (
@@ -1615,7 +1615,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             else Data(_db=self.db, _ctx=self._ctx) if self._ctx is not None else None
         )
 
-    @cached_property
+    @cached_prop
     def _ctx_module(self) -> ModuleType | None:
         """Get the module of the context."""
         if issubclass(self.ctx_type, NoneType):
@@ -1623,14 +1623,14 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return self.ctx_type._src_mod or getmodule(self.ctx_type)
 
-    @cached_property
+    @cached_prop
     def _prop_path(self) -> PropPath[Record, Self]:
         if self._ctx_data is None:
             return (self,)
 
         return (*self._ctx_data._prop_path, self)
 
-    @cached_property
+    @cached_prop
     def _link_path(self) -> list[LinkItem]:
         return list(
             chain(
@@ -1641,7 +1641,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             )
         )
 
-    @cached_property
+    @cached_prop
     def _join_dict(self) -> JoinDict:
         """Dict representation of the relation tree."""
         tree: JoinDict = {}
@@ -1658,18 +1658,20 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
     @property
     def _idx_values(self) -> list[Value[Any, Any, Any, Any, BaseT]]:
         return [
-            copy_and_override(Value[Any, Any, Any, Any, BaseT], pk, _db=self.db)
+            copy_and_override(
+                Value[Any, Any, Any, Any, BaseT], pk._add_ctx(node), _db=self.db
+            )
             for rel in self._selection
             for node in rel._link_path
             if isinstance(node, BackLink)
             for pk in (
                 [node.index_by]
                 if node.index_by is not None
-                else node.target_type._pk_attrs.values()
+                else node.target_type._pk_values.values()
             )
         ]
 
-    @cached_property
+    @cached_prop
     def _value_sets(self) -> list[set[Value[Any, Any, Any, Any, BaseT]]]:
         """List of columns in the dataset."""
         return [
@@ -1678,19 +1680,19 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
                 for node in (
                     [rel]
                     if isinstance(rel, Value)
-                    else rel.target_type._values.values()
+                    else [v._add_ctx(rel) for v in rel.target_type._values.values()]
                 )
             }
             | set(self._idx_values)
             for rel in self._selection
         ]
 
-    @cached_property
+    @cached_prop
     def _abs_join_dict(self) -> JoinDict:
         """Path from base record type to this Rel."""
         return reduce(lambda x, y: {y: x}, reversed(self._link_path), self._join_dict)
 
-    @cached_property
+    @cached_prop
     def _filter_merge(
         self: Data[Record, Any, Any, Any, Any, Any]
     ) -> tuple[list[sqla.ColumnElement[bool]], list[SelItem]]:
@@ -1714,19 +1716,19 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             ]
         )
 
-    @cached_property
+    @cached_prop
     def _full_selection(self) -> list[SelItem]:
         """Get the relation merges for this table."""
         return self._selection + self._filter_merge[1]
 
-    @cached_property
+    @cached_prop
     def _all_filters(self) -> list[sqla.ColumnElement[bool]]:
         """Get the SQL filters for this table."""
         return self._filter_merge[0] + (
             self._ctx_data._all_filters if self._ctx_data is not None else []
         )
 
-    @cached_property
+    @cached_prop
     def _sql_base_cols(
         self: Data[Record, Any, Any, Any, Any, Any]
     ) -> dict[str, sqla.Column]:
@@ -1750,28 +1752,29 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             for name, attr in self.target_type._class_values.items()
         }
 
-    @cached_property
-    def _sql_base_fks(self) -> list[sqla.ForeignKeyConstraint]:
+    @cached_prop
+    def _sql_base_fks(
+        self: Data[Record, Any, Any, Any, Any, Any]
+    ) -> list[sqla.ForeignKeyConstraint]:
         fks: list[sqla.ForeignKeyConstraint] = []
 
-        for rt in self._ref_tables.values():
-            if isinstance(rt._ref, Ref):
-                rel_table = rt._get_sql_base_table()
-                fks.append(
-                    sqla.ForeignKeyConstraint(
-                        [fk.name for fk in rt._ref.fk_map.keys()],
-                        [rel_table.c[pk.name] for pk in rt._ref.fk_map.values()],
-                        name=f"{self.target_type._get_table_name(self.db._subs)}_{rt._ref.name}_fk",
-                    )
+        for rt in self.target_type._links.values():
+            rel_table = rt._get_sql_base_table()
+            fks.append(
+                sqla.ForeignKeyConstraint(
+                    [fk.name for fk in rt.fk_map.keys()],
+                    [rel_table.c[pk.name] for pk in rt.fk_map.values()],
+                    name=f"{self.target_type._get_table_name(self.db._subs)}_{rt.name}_fk",
                 )
+            )
 
         for superclass in self.target_type._record_superclasses:
             base_table = self.db[superclass]._get_sql_base_table()
 
             fks.append(
                 sqla.ForeignKeyConstraint(
-                    [pk_name for pk_name in self.target_type._pk_attrs],
-                    [base_table.c[pk_name] for pk_name in self.target_type._pk_attrs],
+                    [pk_name for pk_name in self.target_type._pk_values],
+                    [base_table.c[pk_name] for pk_name in self.target_type._pk_values],
                     name=(
                         self.target_type._get_table_name(self.db._subs)
                         + "_base_fk_"
@@ -1782,7 +1785,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
 
         return fks
 
-    @cached_property
+    @cached_prop
     def _sql_table(
         self: Data[Record, Any, Any, Any, Any, Any],
     ) -> sqla.FromClause:
@@ -1812,12 +1815,25 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             .subquery()
         )
 
+    @overload
     @property
-    def _sql_select(self: Data[Record, Any, Any, Any, Any, Any]) -> sqla.Select:
+    def _sql_select(self) -> sqla.Select: ...
+
+    @overload
+    @property
+    def _sql_select(self) -> sqla.Select: ...
+
+    @property
+    def _sql_select(self) -> sqla.Select:
         """Get select for this recset with stable alias name."""
         select = sqla.select(
-            *(self._sql_table.c[col.name].label(col.fqn) for col in self._query_cols)
+            *(
+                col._sql_col.label(col.fqn)
+                for col_set in self._value_sets
+                for col in col_set
+            )
         ).select_from(self._sql_table)
+        # TODO: Make better @cached_prop decorator, exchange all and replace this select_from
 
         for join in self._gen_joins():
             select = select.join(*join)
@@ -1890,13 +1906,15 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
             self._ctx_data is not None and self._ctx_data._is_ancestor(other)
         )
 
-    def _prefix(
+    def _add_ctx(
         self,
         left: Data[Record, Any, Any, Any, Any, Any],
     ) -> Self:
         """Prefix this reltable with a reltable or record type."""
         return reduce(
-            lambda x, y: copy_and_override(type(y), y, _ctx=x, _db=x.db),
+            lambda x, y: copy_and_override(
+                type(y), y, _ctx=copy_and_override(type(x), x, _db=y.db)
+            ),
             self._prop_path,
             left,
         )
@@ -2021,7 +2039,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         }
 
     def _gen_joins(
-        self: Data[Record, Any, Any, Any, Any, Any],
+        self,
         _subtree: JoinDict | None = None,
         _parent: Data[Any, Any, Any, Any, Any] | None = None,
     ) -> list[SqlJoin]:
@@ -2064,7 +2082,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, OwnT, BaseT]):
         **kw: Any,
     ) -> sqla.ColumnElement | None:
         if isinstance(element, Value):
-            prefixed = element._prefix(self)
+            prefixed = element._add_ctx(self)
             reflist.add(prefixed)
             return prefixed
 
@@ -2802,13 +2820,23 @@ class Value(
         if self.pub_status is Public:
             self._selection = [cast(Value[Any, Any, Public, Any, Any], self)]
 
-    @cached_property
+    @cached_prop
     def name(self) -> str:
         """Property name."""
         if self.alias is not None:
             return self.alias
 
         return super().name
+
+    @property
+    def key(self) -> str:  # pyright: ignore[reportIncompatibleVariableOverride]
+        """Property name."""
+        return self.name
+
+    @cached_prop
+    def _sql_col(self) -> sqla.ColumnElement:
+        assert self._ctx_data is not None
+        return self._ctx_data._sql_table.c[self.name]
 
     @overload
     def __get__(
@@ -2926,7 +2954,7 @@ class Link(
             )
         ]
 
-    @cached_property
+    @cached_prop
     def fk_map(self: Link[Any, Any, Record, BaseT]) -> bidict[
         Value[Any, Any, Any, Record, Symbolic],
         Value[Any, Any, Any, Record, Symbolic],
@@ -3007,7 +3035,7 @@ class Link(
             _typehint=Link[self._resolved_rec_type, Any, Any, Any],
         )._get(instance, owner)
 
-    @cached_property
+    @cached_prop
     def _resolved_rec_type(self) -> type[Record]:
         rec_type = extract_nullable_type(self.value_type)
         assert rec_type is not None and issubclass(rec_type, Record)
@@ -3050,7 +3078,7 @@ class Table(
                     for r in self.rel_type._links.values()
                     if isinstance(r, Link)
                     and issubclass(self.target_type, r.target_type)
-                ][0]._prefix(
+                ][0]._add_ctx(
                     [
                         r
                         for r in self.rel_type._links.values()
@@ -3114,7 +3142,9 @@ class Table(
 
 
 @dataclass(kw_only=True, eq=False)
-class BackLink(Table[RecT, None, IdxT, CrudT, ParT, BaseT]):
+class BackLink(
+    Table[RecT, None, IdxT, CrudT, ParT, BaseT], Generic[RecT, IdxT, CrudT, ParT, BaseT]
+):
     """Backlink record set."""
 
     link: Link[ParT, Any, RecT, Symbolic]
@@ -3136,7 +3166,7 @@ class Array(Data[ValT, Idx[KeyT], CrudT, None, OwnT, BaseT]):
         BaseT: 4,
     }
 
-    @cached_property
+    @cached_prop
     def dyn_record_type(self) -> type[DynRecord]:
         """Generate a dynamic record type."""
         return dynamic_record_type(
@@ -3301,18 +3331,18 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
         if self.write_to_overlay is not None and self.overlay_type == "db_schema":
             self._ensure_sqla_schema_exists(self.write_to_overlay)
 
-    @cached_property
+    @cached_prop
     def _selection(self) -> list[SelItem]:
         return []
 
-    @cached_property
+    @cached_prop
     def db_id(self) -> str:
         """Return the unique database ID."""
         if isinstance(self.backend, Symbolic):
             return "symbolic"
         return self.backend or gen_str_hash(self.url) or token_hex(5)
 
-    @cached_property
+    @cached_prop
     def backend_type(
         self,
     ) -> Literal["sql-connection", "sqlite-file", "excel-file", "in-memory"]:
@@ -3339,7 +3369,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
             case None:
                 return "in-memory"
 
-    @cached_property
+    @cached_prop
     def engine(self) -> sqla.engine.Engine:
         """SQLA Engine for this DB."""
         # Create engine based on backend type
@@ -3625,7 +3655,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
             )
         )
 
-    @cached_property
+    @cached_prop
     def _schema_types(
         self,
     ) -> Mapping[type[Record], Literal[True] | Require | str | sqla.TableClause]:
@@ -3640,7 +3670,7 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
 
         return types
 
-    @cached_property
+    @cached_prop
     def _assoc_types(self) -> set[type[Record]]:
         """Set of all association tables in this DB."""
         assoc_types = set()
@@ -4056,7 +4086,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
         return
 
-    @cached_property
+    @cached_prop
     def _table(self) -> Data[Self, BaseIdx, CRUD, None, Any]:
         if not self._connected:
             self._db[type(self)] |= self

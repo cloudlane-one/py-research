@@ -1,5 +1,7 @@
 """On-the-fly, file-based caching of function return values."""
 
+from __future__ import annotations
+
 import datetime
 import json
 import pickle
@@ -7,14 +9,25 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar, cast, overload
+from typing import (
+    Any,
+    Concatenate,
+    Generic,
+    Literal,
+    ParamSpec,
+    Self,
+    cast,
+    final,
+    overload,
+)
 
 import numpy as np
 import pandas as pd
 import yaml
 from bs4 import BeautifulSoup, Tag
+from typing_extensions import TypeVar
 
-from py_research.data import gen_id
+from py_research.data import copy_and_override, gen_id
 from py_research.files import ensure_dir_exists
 from py_research.reflect.runtime import (
     get_calling_module,
@@ -297,3 +310,104 @@ def get_cache(
         ensure_dir_exists(root_path / (module_name or "root") / (name or "")),
         max_cache_time,
     )
+
+
+S = TypeVar("S")
+S2 = TypeVar("S2")
+P = ParamSpec("P")
+P2 = ParamSpec("P2")
+R = TypeVar("R", default="NoFunc")
+R2 = TypeVar("R2")
+M = TypeVar("M", Literal[True], Literal[False], default=Literal[False])
+M2 = TypeVar("M2", Literal[True], Literal[False])
+
+
+@final
+class NoFunc:
+    """Dummy type to indicate that no function has been provided."""
+
+    pass
+
+
+@final
+class NoResult:
+    """Dummy type to indicate that no result is available."""
+
+    pass
+
+
+@dataclass
+class cached_prop(Generic[S, P, R, M]):  # noqa: N801
+    """A cached property decorator which is optionally mutable."""
+
+    getter: Callable[Concatenate[S, P], R] | None = None
+    mutable: M | Literal[False] = False
+
+    _owner: type[S] | None = None
+    _cached_result: R | NoResult = NoResult()
+
+    @overload
+    def __call__(
+        self: cached_prop[Any, Any, NoFunc, M2],
+        getter: Callable[Concatenate[S2, P2], R2],
+    ) -> cached_prop[S2, P2, R2, M2]: ...
+
+    @overload
+    def __call__(self, obj: S, *args: P.args, **kwargs: P.kwargs) -> R: ...
+
+    def __call__(  # noqa: D102
+        self: cached_prop[Any, Any, Any, Any], *args: Any, **kwargs: Any
+    ) -> cached_prop[Any, Any, Any, Any] | R:
+        if self.getter is None:
+            return copy_and_override(cached_prop[Any, Any, Any], self, getter=args[0])
+
+        if not isinstance(self._cached_result, NoResult):
+            return self._cached_result
+
+        return self.getter(args[0], *args[:-1], **kwargs)
+
+    @overload
+    def __get__(self, instance: None, owner: None) -> Self: ...
+
+    @overload
+    def __get__(self, instance: None, owner: type[S2]) -> cached_prop[S2, P, R, M]: ...
+
+    @overload
+    def __get__(self, instance: S, owner: type[S]) -> R: ...
+
+    def __get__(  # noqa: D105
+        self, instance: S | None, owner: type[S] | None = None
+    ) -> cached_prop[Any, Any, Any, Any] | R:
+        if owner is None or instance is None:
+            return self
+
+        self._owner = owner
+
+        assert self.getter is not None
+        return cast(Callable[[S], R], self.getter)(instance)
+
+    def __set__(  # noqa: D105
+        self: cached_prop[Any, Any, Any, Literal[True]], instance: S, value: R
+    ) -> None:
+        self._cached_result = NoResult()
+
+
+def cached_method(
+    func: Callable[Concatenate[S, P], R]
+) -> Callable[Concatenate[S, P], R]:
+    """Decorator to cache method results on the instance level."""
+
+    @wraps(func)
+    def wrapper(self: S, *args: P.args, **kwargs: P.kwargs) -> R:
+        if not hasattr(self, f"__{func.__name__}_cache"):
+            setattr(self, f"__{func.__name__}_cache", {})
+
+        cache = getattr(self, f"__{func.__name__}_cache")
+        key = (args, frozenset(kwargs.items()))
+
+        if key not in cache:
+            cache[key] = func(self, *args, **kwargs)
+
+        return cache[key]
+
+    return wrapper
