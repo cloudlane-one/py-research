@@ -17,7 +17,7 @@ from py_research.db import (
     Record,
     RecUUID,
     Ref,
-    Rel,
+    Relation,
     RelMap,
     RelTable,
     SubMap,
@@ -41,7 +41,7 @@ class Search(Record[str]):
     results: Data[Project, SearchResult]
 
 
-Assignment = Rel["User", "Task"]
+Assignment = Relation["User", "Task"]
 
 
 class Task(RecUUID):

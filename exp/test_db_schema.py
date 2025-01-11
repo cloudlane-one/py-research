@@ -5,7 +5,16 @@ from __future__ import annotations
 from datetime import date
 from typing import Literal
 
-from py_research.db import Array, BackLink, Record, RecUUID, Ref, Rel, RelTable, Value
+from py_research.db import (
+    Array,
+    BackLink,
+    Record,
+    RecUUID,
+    Ref,
+    Relation,
+    RelTable,
+    Value,
+)
 
 
 class SearchResult(Record):
@@ -24,7 +33,7 @@ class Search(Record[str]):
     results: RelTable[Project, SearchResult] = RelTable(default=True)
 
 
-Assignment = Rel["User", "Task"]
+Assignment = Relation["User", "Task"]
 
 
 class Task(RecUUID):

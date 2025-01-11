@@ -7,7 +7,7 @@ from .base import DataBase as DataBase
 from .base import Record as Record
 from .base import RecUUID as RecUUID
 from .base import Ref as Ref
-from .base import Rel as Rel
+from .base import Relation as Relation
 from .base import RelTable as RelTable
 from .base import Schema as Schema
 from .base import Value as Value
