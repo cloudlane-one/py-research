@@ -366,12 +366,12 @@ class RefMap[Rec: Record, Dat, Rec2: Record](RecMap[Rec, Dat]):
     def __post_init__(self) -> None:  # noqa: D105
         self.rec_type = self.ref.record_type
         if self.rel is not None:
-            self.rel.rec_type = self.ref.rel_type
+            self.rel.rec_type = self.ref.relation_type
 
     @cached_property
     def rel_map(self) -> RefMap | None:
         """Get the link map."""
-        if issubclass(self.ref.rel_type, Record) and self.rel is not None:
+        if issubclass(self.ref.relation_type, Record) and self.rel is not None:
             return copy_and_override(RefMap, self.rel, ref=self.ref.rels)
 
         return None
@@ -746,7 +746,7 @@ async def _load_records(
                     rel = (
                         rel
                         if isinstance(rel, Record)
-                        else db[rec_map.ref.rel_type][rel]
+                        else db[rec_map.ref.relation_type][rel]
                     )
                     mapped_idx = getattr(rel, rec_map.ref._ref.map_by.name)
 
