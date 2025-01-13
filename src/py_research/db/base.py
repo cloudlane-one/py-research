@@ -95,7 +95,7 @@ RecT2 = TypeVar("RecT2", bound="Record")
 RecT3 = TypeVar("RecT3", bound="Record")
 RecT4 = TypeVar("RecT4", bound="Record")
 
-OwnT = TypeVar("OwnT", default=Any, bound=Record)
+OwnT = TypeVar("OwnT", default=Any, bound="Record")
 
 CtxT = TypeVar("CtxT", bound="Ctx| None", covariant=True, default=None)
 CtxT2 = TypeVar("CtxT2", bound="Ctx | None")
@@ -465,7 +465,9 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     _typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
 
     _filters: list[
-        sqla.ColumnElement[bool] | tuple[slice | list[Hashable] | Hashable, ...]
+        sqla.ColumnElement[bool]
+        | list[tuple[Hashable, ...]]
+        | tuple[slice | Hashable, ...]
     ] = field(default_factory=list)
     _tuple_selection: tuple[Data[Any, Any, Any, Any, Any, BaseT], ...] | None = None
 
@@ -612,7 +614,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     ) -> sqla.Select:
         """Return select statement for this dataset."""
         select = sqla.select(
-            *(col._sql_col.label(col.fqn) for col in self._abs_idx_values),
+            *(col._sql_col.label(col.fqn) for col in self._abs_idx_cols),
             *(
                 (val._sql_col.label(val.fqn) for val in self._abs_cols)
                 if not index_only
@@ -671,7 +673,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
         df = self.to_df(index_only=True)
-        if len(self._idx_cols) == 1:
+        if len(self._abs_idx_cols) == 1:
             return [tup[0] for tup in df.iter_rows()]
 
         return list(df.iter_rows())
@@ -683,17 +685,19 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         if isinstance(dfs, pl.DataFrame):
             dfs = (dfs,)
 
-        val_selection = [val._owner_type for val in self.selection]
+        selection = (
+            list(self._tuple_selection) if self._tuple_selection is not None else [self]
+        )
 
         valid_caches = {
-            rt: self.db._get_valid_cache_set(rt)
-            for rt in val_selection
-            if isinstance(rt, type)
+            sel.record_type: self.db._get_valid_cache_set(sel.record_type)
+            for sel in selection
+            if isinstance(sel, Table)
         }
         instance_maps = {
-            rt: self.db._get_instance_map(rt)
-            for rt in val_selection
-            if isinstance(rt, type)
+            sel.record_type: self.db._get_instance_map(sel.record_type)
+            for sel in selection
+            if isinstance(sel, Table)
         }
 
         vals = []
@@ -701,10 +705,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             rows = cast(tuple[dict[str, Any], ...], rows)
 
             val_list = []
-            for sel, row in zip(val_selection, rows):
-                if isinstance(sel, type):
-                    assert issubclass(sel, Record)
-                    rec_type = sel
+            for sel, row in zip(selection, rows):
+                if isinstance(sel, Table):
+                    rec_type = sel.record_type
+                    assert issubclass(rec_type, Record)
 
                     new_rec = rec_type(**row)
 
@@ -807,7 +811,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         """Download selection."""
         select = type(self).select(self, index_only=index_only)
 
-        idx_cols = [idx.fqn for idx in self._abs_idx_values]
+        idx_cols = [idx.fqn for idx in self._abs_idx_cols]
 
         merged_df = None
         if kind is pd.DataFrame:
@@ -824,13 +828,14 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
         name_map = [
             {col.fqn: col.name for col in col_set}
-            for col_set in self._abs_value_sets.values()
+            for col_set in self._abs_col_sets.values()
         ]
 
-        return cast(
+        df_tuple = cast(
             tuple[DfT, ...],
             (merged_df[list(cols.keys())].rename(cols) for cols in name_map),
         )
+        return df_tuple[0] if len(df_tuple) == 1 else df_tuple
 
     @overload
     def extract(
@@ -991,14 +996,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     # 1. DB-level type selection
     @overload
     def __getitem__(
-        self: DataBase[Any, Any],
+        self: Data[Any, NoIdx, Any, None, None, Any],
         key: type[RecT3],
     ) -> Data[RecT3, BaseIdx[RecT3], CrudT, None, None, BaseT]: ...
 
     # 2. Top-level prop selection
     @overload
     def __getitem__(
-        self: Data[RecT2, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
+        self: Data[
+            RecT2 | None, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any
+        ],
         key: Data[
             ValT3,
             BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
@@ -1012,7 +1019,9 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     # 3. Nested prop selection
     @overload
     def __getitem__(
-        self: Data[RecT2, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
+        self: Data[
+            RecT2 | None, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any
+        ],
         key: Data[
             ValT3,
             BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
@@ -1070,18 +1079,23 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[
             Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, DynBackendID
         ],
-        key: list[KeyT2],
+        key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
 
-    # 9. Expression / key / slice filtering
+    # 9. Key / slice filtering
     @overload
     def __getitem__(
         self: Data[
             Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, DynBackendID
         ],
-        key: (
-            list[tuple[*KeyTt2]] | sqla.ColumnElement[bool] | slice | tuple[slice, ...]
-        ),
+        key: list[tuple[*KeyTt2]] | tuple[slice, ...],
+    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+
+    # 10. Expression filtering
+    @overload
+    def __getitem__(
+        self: Data[Any, Any, Any, Any, Any, DynBackendID],
+        key: sqla.ColumnElement[bool],
     ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
 
     # Implementation:
@@ -1104,28 +1118,33 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
                     key,
                     self.target_type,
                 )
-                return copy_and_override(Data[key], self, selection=key)
+                return copy_and_override(Table, self, _typehint=Table[key])
             case Data():
-                return self._suffix(key)
+                return key._add_ctx(self)
             case list() | slice() | Hashable() | sqla.ColumnElement():
-                if not isinstance(key, list | sqla.ColumnElement) and not has_type(
-                    key, tuple[slice, ...]
+                if len(self._abs_idx_cols) > 1 and not isinstance(
+                    key, tuple | list | sqla.ColumnElement
                 ):
-                    if not isinstance(key, slice):
-                        assert (
-                            self._single_key is None or key == self._single_key
-                        ), "Cannot select multiple single record keys"
-
-                    key = cast(Sequence[slice | list[Hashable] | Hashable], [key])
+                    key = (key,)
 
                 key_set = copy_and_override(
                     type(self),
                     self,
-                    filters=[*self.filters, key],
+                    _filters=[
+                        *self._filters,
+                        cast(
+                            sqla.ColumnElement[bool]
+                            | list[tuple[Hashable, ...]]
+                            | tuple[slice | Hashable, ...],
+                            key,
+                        ),
+                    ],
                 )
 
-                if key_set._single_key is not None and isinstance(
-                    self.db.backend, Symbolic
+                if (
+                    not isinstance(key, list | sqla.ColumnElement)
+                    and not has_type(key, tuple[slice, ...])
+                    and not isinstance(self.db.backend, Symbolic)
                 ):
                     try:
                         return list(iter(key_set))[0]
@@ -1156,7 +1175,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     @overload
     def __imatmul__(
@@ -1175,16 +1194,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     def __imatmul__(
         self: Data[Any, Any, RU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
         """Aligned assignment."""
         self._mutate(other, mode="update")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT],
+            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
             self,
         )
 
@@ -1205,7 +1224,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     @overload
     def __iadd__(
@@ -1224,16 +1243,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     def __iadd__(
         self: Data[Any, Any, CR, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
         """Aligned assignment."""
         self._mutate(other, mode="insert")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT],
+            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
             self,
         )
 
@@ -1254,7 +1273,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     @overload
     def __ior__(
@@ -1273,16 +1292,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     def __ior__(
         self: Data[Any, Any, CRU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
         """Aligned assignment."""
         self._mutate(other, mode="upsert")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT],
+            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
             self,
         )
 
@@ -1303,7 +1322,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     @overload
     def __iand__(
@@ -1322,16 +1341,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     def __iand__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, BaseT] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
         """Aligned assignment."""
         self._mutate(other, mode="replace")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT],
+            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
             self,
         )
 
@@ -1352,7 +1371,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     @overload
     def __isub__(
@@ -1371,12 +1390,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
 
     def __isub__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[CtxT], BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
         """Aligned assignment."""
         raise NotImplementedError("Subtraction not supported yet.")
 
@@ -1836,7 +1855,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         return path
 
     @property
-    def _abs_idx_values(self) -> list[Value[Any, Any, Any, Any, BaseT]]:
+    def _abs_idx_cols(self) -> list[Value[Any, Any, Any, Any, BaseT]]:
         indexes: list[Value[Any, Any, Any, Any, BaseT]] = []
 
         for node in self._abs_link_path:
@@ -1874,6 +1893,22 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         }
 
     @cached_prop
+    def _abs_col_sets(
+        self: Data[tuple, Any, Any, Any, Any, Any]
+    ) -> dict[
+        Data[Any, Any, Any, Any, Any, Any], set[Value[Any, Any, Any, Any, BaseT]]
+    ]:
+        return {
+            sel: {
+                copy_and_override(
+                    Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self._ctx
+                )
+                for v in sel._abs_cols
+            }
+            for sel in self.tuple_selection
+        }
+
+    @cached_prop
     def _abs_values_per_base(
         self: Data[Record | None, Any, Any, Any, Any, Any],
     ) -> dict[
@@ -1897,16 +1932,34 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         list[sqla.ColumnElement[bool]], list[Table[Any, Any, Any, Any, Any, BaseT]]
     ]:
         sql_filt = [f for f in self._filters if isinstance(f, sqla.ColumnElement)]
-        key_filt = [f for f in self._filters if not isinstance(f, sqla.ColumnElement)]
-        key_filt = (
-            [
-                (idx.isin(val) if isinstance(val, list | slice) else idx == val)
-                for f in key_filt
-                for idx, val in zip(self._abs_idx_values, f)
-            ]
-            if len(key_filt) > 0
-            else []
-        )
+
+        key_filt = [
+            (
+                reduce(
+                    sqla.and_,
+                    (
+                        (idx.isin(filt) if isinstance(filt, slice) else idx == filt)
+                        for idx, filt in zip(self._abs_idx_cols, key_filt)
+                    ),
+                )
+                if isinstance(key_filt, tuple)
+                else reduce(
+                    sqla.or_,
+                    (
+                        reduce(
+                            sqla.and_,
+                            (
+                                (idx == filt)
+                                for idx, filt in zip(self._abs_idx_cols, single_filt)
+                            ),
+                        )
+                        for single_filt in key_filt
+                    ),
+                )
+            )
+            for key_filt in self._filters
+            if not isinstance(key_filt, sqla.ColumnElement)
+        ]
 
         filters = [
             *sql_filt,
@@ -2380,7 +2433,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         if isinstance(df, pd.DataFrame) and any(
             name is None for name in df.index.names
         ):
-            idx_names = [col.fqn for col in self._abs_idx_values]
+            idx_names = [col.fqn for col in self._abs_idx_cols]
             df.index.set_names(idx_names, inplace=True)
 
         value_table = self._gen_upload_table()
@@ -2423,7 +2476,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     ) -> pl.DataFrame:
         col_data = [
             tuple(
-                *(idx if len(self._abs_idx_values) > 1 else tuple(idx)),
+                *(idx if len(self._abs_idx_cols) > 1 else tuple(idx)),
                 *(
                     v
                     for val in (vals if len(self._selection) > 1 else [vals])
@@ -2436,7 +2489,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         ]
 
         col_map = {
-            **{col.fqn: col for col in self._abs_idx_values},
+            **{col.fqn: col for col in self._abs_idx_cols},
             **{
                 col.fqn: col for v_set in self._abs_value_sets.values() for col in v_set
             },
