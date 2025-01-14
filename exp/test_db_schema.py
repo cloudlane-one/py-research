@@ -8,11 +8,11 @@ from typing import Literal
 from py_research.db import (
     Array,
     BackLink,
+    Link,
     Record,
     RecUUID,
-    Ref,
     Relation,
-    RelTable,
+    Table,
     Value,
 )
 
@@ -20,8 +20,8 @@ from py_research.db import (
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Ref[Search] = Ref(primary_key=True)
-    result: Ref[Project] = Ref(primary_key=True)
+    search: Link[Search] = Link(primary_key=True)
+    result: Link[Project] = Link(primary_key=True)
     score: Value[float]
 
 
@@ -30,7 +30,7 @@ class Search(Record[str]):
 
     term: Value[str] = Value(primary_key=True)
     result_count: Value[int]
-    results: RelTable[Project, SearchResult] = RelTable(default=True)
+    results: Table[Project, SearchResult] = Table(default=True)
 
 
 Assignment = Relation["User", "Task"]
@@ -40,8 +40,8 @@ class Task(RecUUID):
     """Link search to a result."""
 
     name: Value[str]
-    project: Ref[Project]
-    assignees: RelTable[User, Assignment]
+    project: Link[Project]
+    assignees: Table[User, Assignment]
     status: Value[Literal["todo", "done"]]
 
 
@@ -50,7 +50,7 @@ class User(RecUUID):
 
     name: Value[str]
     age: Value[int]
-    tasks: RelTable[Task, Assignment]
+    tasks: Table[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -58,11 +58,11 @@ class User(RecUUID):
         return all(task.status == "done" for task in self.tasks)
 
 
-class Membership(RecUUID):
+class Membership(Relation["User", "Project"]):
     """Link user to a project."""
 
-    member: Ref[User] = Ref(primary_key=True)
-    project: Ref[Project] = Ref(primary_key=True)
+    member: Link[User] = Link(primary_key=True)
+    project: Link[Project] = Link(primary_key=True)
     role: Value[str] = Value(default="member")
 
 
@@ -74,9 +74,9 @@ class Project(Record[int]):
     start: Value[date]
     end: Value[date]
     status: Value[Literal["planned", "started", "done"]]
-    org: Ref[Organization]
+    org: Link[Organization]
     tasks: BackLink[Task] = BackLink(link=Task.project)
-    members: RelTable[User, Membership]
+    members: Table[User, Membership]
 
 
 class Organization(RecUUID):

@@ -10,7 +10,7 @@ from decimal import Decimal
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
-from itertools import chain, groupby
+from itertools import groupby
 from pathlib import Path
 from secrets import token_hex
 from types import ModuleType, NoneType, UnionType, new_class
@@ -42,7 +42,6 @@ import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.dialects.sqlite as sqlite
 import sqlalchemy.orm as orm
 import sqlalchemy.sql.visitors as sqla_visitors
-import sqlalchemy.util as sqla_util
 import yarl
 from bidict import bidict
 from cloudpathlib import CloudPath
@@ -58,7 +57,7 @@ from sqlalchemy_utils import UUIDType
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
 
-from py_research.caching import cached_method, cached_prop
+from py_research.caching import cached_prop
 from py_research.data import copy_and_override
 from py_research.files import HttpFile
 from py_research.hashing import gen_int_hash, gen_str_hash
@@ -73,106 +72,27 @@ from py_research.reflect.types import (
     is_subtype,
 )
 
-ValT = TypeVar("ValT", covariant=True)
-ValT2 = TypeVar("ValT2")
-ValT3 = TypeVar("ValT3")
-ValT4 = TypeVar("ValT4")
-ValTt = TypeVarTuple("ValTt")
-ValTt2 = TypeVarTuple("ValTt2")
-ValTt3 = TypeVarTuple("ValTt3")
-
-CrudT = TypeVar("CrudT", bound="C | R", default="CRUD", covariant=True)
-CrudT2 = TypeVar("CrudT2", bound="C | R")
-CrudT3 = TypeVar("CrudT3", bound="C | R")
-
-RwT = TypeVar("RwT", bound="C | R", default="RU", covariant=True)
-RwT2 = TypeVar("RwT2", bound="C | R")
-RwT3 = TypeVar("RwT3", bound="C | R")
-
-
 RecT = TypeVar("RecT", bound="Record", covariant=True, default=Any)
 RecT2 = TypeVar("RecT2", bound="Record")
 RecT3 = TypeVar("RecT3", bound="Record")
 RecT4 = TypeVar("RecT4", bound="Record")
 
-OwnT = TypeVar("OwnT", default=Any, bound="Record")
-
-CtxT = TypeVar("CtxT", bound="Ctx| None", covariant=True, default=None)
-CtxT2 = TypeVar("CtxT2", bound="Ctx | None")
-CtxT3 = TypeVar("CtxT3", bound="Ctx | None")
-
-ParT = TypeVar("ParT", contravariant=True, bound="Record", default=Any)
-
-
-KeyT = TypeVar("KeyT", bound="Hashable | NoIdx", default=Any)
-KeyT2 = TypeVar("KeyT2", bound="Hashable | NoIdx")
-KeyT3 = TypeVar("KeyT3", bound="Hashable | NoIdx")
-KeyTt = TypeVarTuple("KeyTt")
-KeyTt2 = TypeVarTuple("KeyTt2")
-KeyTt3 = TypeVarTuple("KeyTt3")
-
-IdxT = TypeVar(
-    "IdxT",
-    covariant=True,
-    bound="Idx | BaseIdx",
-    default="BaseIdx",
-)
-IdxT2 = TypeVar(
-    "IdxT2",
-    bound="Idx | BaseIdx",
-)
-IdxT3 = TypeVar(
-    "IdxT3",
-    bound="Idx | BaseIdx",
-)
+RefT = TypeVar("RefT", bound="Record | None", covariant=True)
+RefT2 = TypeVar("RefT2", bound="Record | None")
 
 LnT = TypeVar("LnT", bound="Record | None", covariant=True, default=None)
 LnT2 = TypeVar("LnT2", bound="Record | None")
 LnT3 = TypeVar("LnT3", bound="Record | None")
 
-RefT = TypeVar("RefT", bound="Record | None", covariant=True)
-RefT2 = TypeVar("RefT2", bound="Record | None")
+OwnT = TypeVar("OwnT", default=Any, bound="Record")
+ParT = TypeVar("ParT", contravariant=True, bound="Record", default=Any)
 
-BaseT = TypeVar(
-    "BaseT",
-    bound="LiteralString | Symbolic | None",
-    covariant=True,
-    default=None,
-)
-BaseT2 = TypeVar(
-    "BaseT2",
-    bound="LiteralString | Symbolic | None",
-)
-BaseT3 = TypeVar(
-    "BaseT3",
-    bound="LiteralString | Symbolic | None",
+
+type Ordinal = (
+    bool | int | float | Decimal | datetime | date | time | timedelta | UUID | str
 )
 
-BackT = TypeVar(
-    "BackT",
-    bound="LiteralString | None",
-    covariant=True,
-    default=None,
-)
-BackT2 = TypeVar(
-    "BackT2",
-    bound="LiteralString | None",
-)
-BackT3 = TypeVar(
-    "BackT3",
-    bound="LiteralString | None",
-)
-
-PubT = TypeVar("PubT", bound="Public | Private", default="Public")
-
-OrdT = TypeVar("OrdT", bound="Ordinal")
-
-
-DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
-
-Params = ParamSpec("Params")
-
-type Ordinal = bool | int | float | Decimal | datetime | date | time | timedelta | UUID | str
+OrdT = TypeVar("OrdT", bound=Ordinal)
 
 
 @final
@@ -187,6 +107,53 @@ class Keep:
     """Demark unchanged status."""
 
     __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+
+
+type Input[Val, Key: Hashable, RKey: Hashable] = pd.DataFrame | pl.DataFrame | Iterable[
+    Val | RKey
+] | Mapping[Key, Val | RKey] | sqla.Select | Val | RKey
+
+ValT = TypeVar("ValT", covariant=True)
+ValT2 = TypeVar("ValT2")
+ValT3 = TypeVar("ValT3")
+ValTt = TypeVarTuple("ValTt")
+ValTt2 = TypeVarTuple("ValTt2")
+ValTt3 = TypeVarTuple("ValTt3")
+
+KeyT = TypeVar("KeyT", bound=Hashable, default=Any)
+KeyT2 = TypeVar("KeyT2", bound=Hashable)
+KeyT3 = TypeVar("KeyT3", bound=Hashable)
+KeyTt = TypeVarTuple("KeyTt")
+KeyTt2 = TypeVarTuple("KeyTt2")
+KeyTt3 = TypeVarTuple("KeyTt3")
+
+type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
+
+
+class Idx[*K]:
+    """Define the custom index type of a dataset."""
+
+
+@final
+class BaseIdx[R: Record]:
+    """Singleton to mark dataset as having the record type's base index."""
+
+    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+
+
+type NoIdx = Idx[()]
+
+
+IdxT = TypeVar(
+    "IdxT",
+    covariant=True,
+    bound=Idx | BaseIdx,
+    default=BaseIdx,
+)
+IdxT2 = TypeVar(
+    "IdxT2",
+    bound=Idx | BaseIdx,
+)
 
 
 class C:
@@ -218,36 +185,11 @@ class CRUD(CRU):
     """Singleton to allow creation, reading, updating, and deleting of records."""
 
 
-@final
-class Symbolic:
-    """Local backend."""
+CrudT = TypeVar("CrudT", bound=C | R, default=CRUD, covariant=True)
+CrudT2 = TypeVar("CrudT2", bound=C | R)
+CrudT3 = TypeVar("CrudT3", bound=C | R)
 
-
-type DynBackendID = LiteralString | None
-
-
-type Input[
-    Val: Hashable, Key: Hashable, RKey: Hashable
-] = pd.DataFrame | pl.DataFrame | Iterable[Val | RKey] | Mapping[
-    Key, Val | RKey
-] | sqla.Select | Val | RKey
-
-
-class Idx(Generic[*KeyTt]):
-    """Define the custom index type of a dataset."""
-
-
-@final
-class BaseIdx(Generic[RecT]):
-    """Singleton to mark dataset as having the record type's base index."""
-
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
-
-
-type NoIdx = Idx[()]
-
-
-type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
+RwT = TypeVar("RwT", bound=C | R, default=RU, covariant=True)
 
 
 @final
@@ -258,6 +200,46 @@ class Ctx(Generic[ParT]):
     record_type: type[ParT]
 
 
+CtxT = TypeVar("CtxT", bound="Ctx| None", covariant=True, default=None)
+CtxT2 = TypeVar("CtxT2", bound="Ctx | None")
+CtxT3 = TypeVar("CtxT3", bound="Ctx | None")
+
+
+@final
+class Symbolic:
+    """Local backend."""
+
+
+type DynBackendID = LiteralString | None
+
+
+BaseT = TypeVar(
+    "BaseT",
+    bound=DynBackendID | Symbolic,
+    covariant=True,
+    default=None,
+)
+BaseT2 = TypeVar(
+    "BaseT2",
+    bound=DynBackendID | Symbolic,
+)
+
+BackT = TypeVar(
+    "BackT",
+    bound=DynBackendID,
+    covariant=True,
+    default=None,
+)
+BackT2 = TypeVar(
+    "BackT2",
+    bound=DynBackendID,
+)
+BackT3 = TypeVar(
+    "BackT3",
+    bound=DynBackendID,
+)
+
+
 @final
 class Public:
     """Demark public status of attribute."""
@@ -266,6 +248,14 @@ class Public:
 @final
 class Private:
     """Demark private status of attribute."""
+
+
+PubT = TypeVar("PubT", bound="Public | Private", default="Public")
+
+
+DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
+
+Params = ParamSpec("Params")
 
 
 type LinkItem = Table[Record | None, None, Any, Any, Any, Any]
@@ -444,9 +434,16 @@ def _prop_type_name_map() -> dict[str, type[Data]]:
     return {cls.__name__: cls for cls in get_subclasses(Data) if cls is not Data}
 
 
+def _map_prop_type_name(name: str) -> type[Data | None]:
+    """Map property type name to class."""
+    name_map = _prop_type_name_map()
+    matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
+    return matches[0] if len(matches) == 1 else NoneType
+
+
 @dataclass(kw_only=True, eq=False)
 class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
-    """Relational data."""
+    """Relational dataset."""
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
@@ -473,6 +470,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def db(self) -> DataBase[CrudT | CRUD, BaseT]:
+        """Database, which this dataset belongs to."""
         db = self._db
 
         if db is None and isinstance(self.base_type, NoneType):
@@ -487,6 +485,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def ctx(
         self: Data[Any, Any, Any, Any, Ctx[RecT2], Any]
     ) -> Table[RecT2, Any, Any, Any, Any, BaseT]:
+        """Context table of this dataset."""
         assert self._ctx is not None
         return (
             cast(Table[RecT2, Any, Any, Any, Any, BaseT], self._ctx)
@@ -496,11 +495,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def name(self) -> str:
+        """Defined name or generated identifier of this dataset."""
         return self._name if self._name is not None else token_hex(5)
 
     @cached_prop
     def value_type(self) -> SingleTypeDef[ValT]:
-        """Resolve the value type reference."""
+        """Value typehint of this dataset."""
         args = self._generic_args
         if len(args) == 0:
             return cast(type[ValT], object)
@@ -510,7 +510,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def target_type(self) -> type[ValT]:
-        """Value type of the property."""
+        """Value type of this dataset."""
         return cast(
             type[ValT],
             (
@@ -522,14 +522,14 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def record_type(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
-        """Value type of the property."""
+        """Record target type of this dataset."""
         t = extract_nullable_type(self.value_type)
         assert t is not None and issubclass(t, Record)
         return t
 
     @cached_prop
     def relation_type(self) -> type[LnT]:
-        """Link record type."""
+        """Relation record type, if any."""
         args = self._generic_args
         rec = args[self._typearg_map[LnT]]
         rec_type = self._hint_to_type(rec)
@@ -541,7 +541,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def base_type(self) -> type[BaseT]:
-        """Link record type."""
+        """Base type of this dataset."""
         args = self._generic_args
         base = args[self._typearg_map[BaseT]]
         base_type = self._hint_to_type(base)
@@ -550,7 +550,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def fqn(self) -> str:
-        """String representation of the relation path."""
+        """Fully qualified name of this dataset based on relational path."""
         if self._ctx_table is None:
             if issubclass(self.target_type, Record):
                 return self.target_type._default_table_name()
@@ -568,7 +568,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def rel(
         self: Data[Any, Any, Any, RecT2, Ctx[RecT3], Any]
     ) -> BackLink[RecT2, Any, Any, RecT3, BaseT]:
-        """Reference props of the relation record type."""
+        """Table pointing to the relations of this dataset, if any."""
         link = (
             self.relation_type._from  # type: ignore
             if issubclass(self.relation_type, BacklinkRecord)
@@ -586,6 +586,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def rec(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
+        """Path-aware accessor to the record type of this dataset."""
         return cast(
             type[RecT2],
             type(
@@ -603,6 +604,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def tuple_selection(
         self: Data[tuple, Any, Any, Any, Any, Any]
     ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
+        """Tuple-selection of data in the sub-grpah, if any."""
         assert self._tuple_selection is not None
         return self._tuple_selection
 
@@ -616,7 +618,9 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         select = sqla.select(
             *(
                 col._sql_col.label(col_name)
-                for col_name, col in self._total_cols.items()
+                for col_name, col in (
+                    self._total_cols if not index_only else self._abs_idx_cols
+                ).items()
             ),
         ).select_from(self._prop_path[0]._sql_table)
 
@@ -676,9 +680,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
         return list(df.iter_rows())
 
-    def values(  # noqa: D102
+    def values(
         self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
     ) -> Sequence[ValT2]:
+        """Iterable over this dataset's values."""
         dfs = self.to_df()
         if isinstance(dfs, pl.DataFrame):
             dfs = (dfs,)
@@ -792,7 +797,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         kind: type[DfT] | None = None,
         index_only: bool = False,
     ) -> DfT:
-        """Download selection."""
+        """Load dataset as dataframe."""
         select = type(self).select(self, index_only=index_only)
 
         merged_df = None
@@ -825,7 +830,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: type[DfT] | None = None,
     ) -> DfT | tuple[DfT, ...]:
-        """Download selection."""
+        """Load tuple-valued dataset as tuple of dataframes."""
         merged_df = self.to_df(kind=kind)
 
         name_map = [
@@ -880,7 +885,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         to_db: DataBase[CRUD, BackT3] | None = None,
         overlay_type: OverlayType = "name_prefix",
     ) -> DataBase[CRUD, BackT2 | BackT3]:
-        """Extract a new database instance from the current selection."""
+        """Extract a new database instance from the current dataset."""
         assert isinstance(self, Table)
 
         # Get all rec types in the schema.
@@ -990,9 +995,10 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
         return overlay_db
 
-    def isin(  # noqa: D102
+    def isin(
         self: Data[ValT2, Any, Any, Any, Any, BaseT2], other: Iterable[ValT2] | slice
     ) -> sqla.ColumnElement[bool]:
+        """Test values of this dataset for membership in the given iterable."""
         return (
             self._sql_col.between(other.start, other.stop)
             if isinstance(other, slice)
@@ -1075,7 +1081,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def __getitem__(
         self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Symbolic],
         key: KeyT2,
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, Symbolic]: ...
+    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
 
     # 8. Key selection, tuple index type, symbolic context
     @overload
@@ -1084,7 +1090,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Symbolic
         ],
         key: tuple[*KeyTt2],
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, Symbolic]: ...
+    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
 
     # 9. Key selection, scalar index type
     @overload
@@ -1106,7 +1112,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     # Implementation:
 
-    def __getitem__(  # noqa: D105
+    def __getitem__(
         self: Data[Any, Any, Any, Any, Any, Any],
         key: (
             type[Record]
@@ -1118,6 +1124,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             | Hashable
         ),
     ) -> Data[Any, Any, Any, Any, Any, Any] | ValT:
+        """Select into the relational subgraph or filte ron the current level."""
         match key:
             case type():
                 assert issubclass(
@@ -1255,7 +1262,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, CR, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
     ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
-        """Aligned assignment."""
+        """Inserting assignment."""
         self._mutate(other, mode="insert")
         return cast(
             Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
@@ -1304,7 +1311,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, CRU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
     ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
-        """Aligned assignment."""
+        """Upserting assignment."""
         self._mutate(other, mode="upsert")
         return cast(
             Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
@@ -1353,7 +1360,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, BaseT] | Input[Any, Any, Any],
     ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
-        """Aligned assignment."""
+        """Replacing assignment."""
         self._mutate(other, mode="replace")
         return cast(
             Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
@@ -1402,7 +1409,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
     ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
-        """Aligned assignment."""
+        """Idempotent deletion."""
         raise NotImplementedError("Subtraction not supported yet.")
 
     # 1. Type deletion
@@ -1530,6 +1537,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self,
         other: Data[ValT2, Any, Any, Any, Any, BaseT],
     ) -> Data[tuple, IdxT, CrudT, LnT, CtxT, BaseT]:
+        """Align and merge this dataset with another into a tuple-valued dataset."""
         return copy_and_override(
             Data[tuple, IdxT, CrudT, LnT, CtxT, BaseT],
             self,
@@ -1563,31 +1571,31 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @overload
     def __get__(
-        self: Data[Any, IdxT, Any, Any, Any, Any],
-        instance: None,
-        owner: type[RecT4],
-    ) -> Data[RecT, IdxT, CrudT, LnT, Ctx[RecT4], Symbolic]: ...
-
-    @overload
-    def __get__(
-        self: Data[Record[*KeyTt2], Any, Any, None, Any, Any],
-        instance: None,
-        owner: type[RecT4],
-    ) -> Data[RecT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
-
-    @overload
-    def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[RecT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[RecT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+
+    @overload
+    def __get__(
+        self: Data[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
+        instance: None,
+        owner: type[RecT4],
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+
+    @overload
+    def __get__(
+        self: Data[Any, IdxT, Any, Any, Any, Any],
+        instance: None,
+        owner: type[RecT4],
+    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
@@ -1598,31 +1606,31 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @overload
     def __get__(
-        self: Data[Any, IdxT, Any, Any, Any, Any],
-        instance: RecT4,
-        owner: type[RecT4],
-    ) -> Data[RecT, IdxT, CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
-
-    @overload
-    def __get__(
-        self: Data[Record[*KeyTt2], Any, Any, None, Any, Any],
-        instance: RecT4,
-        owner: type[RecT4],
-    ) -> Data[RecT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
-
-    @overload
-    def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[RecT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[RecT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+
+    @overload
+    def __get__(
+        self: Data[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
+        instance: RecT4,
+        owner: type[RecT4],
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+
+    @overload
+    def __get__(
+        self: Data[Any, IdxT, Any, Any, Any, Any],
+        instance: RecT4,
+        owner: type[RecT4],
+    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -1632,6 +1640,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         instance: object | None,
         owner: type | None,
     ) -> Data[Any, Any, Any, Any, Any, Any] | ValT:
+        """Get the value of this dataset when used as property."""
         owner = self._ctx_type.record_type if self._ctx_type is not None else owner
 
         if owner is not None and issubclass(owner, Record):
@@ -1699,6 +1708,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         instance: Any,
         value: Any,
     ) -> None:
+        """Set the value of this dataset when used as property."""
         if value is Keep:
             return
 
@@ -1723,9 +1733,13 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
         return
 
+    def __len__(self: Data[Any, Any, Any, Any, Any, DynBackendID]) -> int:
+        """Get the number of items in the dataset."""
+        return len(list(iter(self)))
+
     @cached_prop
     def _data_type(self) -> type[Data] | type[None]:
-        """Resolve the property type reference."""
+        """Resolve the data container type reference."""
         hint = self._typehint
 
         if hint is None:
@@ -1738,7 +1752,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
             return base
         elif isinstance(hint, str):
-            return self._map_prop_type_name(hint)
+            return _map_prop_type_name(hint)
         else:
             return NoneType
 
@@ -1753,13 +1767,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef | UnionType | TypeVar, ...]:
-        """Resolve the generic property type reference."""
         args = get_args(self._generic_type)
         return tuple(self._hint_to_typedef(hint) for hint in args)
 
     @cached_prop
     def _ctx_type(self) -> CtxT:
-        """Link record type."""
+        """Context record type."""
         return (
             cast(CtxT, Ctx(self._ctx.target_type))
             if isinstance(self._ctx, Data)
@@ -1768,7 +1781,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def _ctx_table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT] | None:
-        """Parent reference of the property."""
+        """Context table."""
         return (
             self._ctx
             if isinstance(self._ctx, Table)
@@ -1777,7 +1790,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def _ctx_module(self) -> ModuleType | None:
-        """Get the module of the context."""
+        """Module of the context record type."""
         if self._ctx_type is None:
             return None
 
@@ -1813,7 +1826,6 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def _rel_to(
         self: Data[RefT2, Any, Any, RecT2, Ctx, Any]
     ) -> Link[RefT2, Any, RecT2, BaseT] | None:
-        """Reference props of the relation record type."""
         links = (
             [self.relation_type._to]  # type: ignore
             if issubclass(self.relation_type, Relation)
@@ -2124,7 +2136,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         _subtree: JoinDict | None = None,
         _parent: Table[Record | None, Any, Any, Any, Any, Any] | None = None,
     ) -> list[SqlJoin]:
-        """Extract join operations from the relation tree."""
+        """Extract join operations from the relational tree."""
         joins: list[SqlJoin] = []
         _subtree = _subtree if _subtree is not None else self._total_join_dict
         _parent = _parent if _parent is not None else self._prop_path[0]
@@ -2260,12 +2272,6 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             .subquery()
         )
 
-    def _map_prop_type_name(self, name: str) -> type[Data | None]:
-        """Map property type name to class."""
-        name_map = _prop_type_name_map()
-        matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
-        return matches[0] if len(matches) == 1 else NoneType
-
     def _hint_to_typedef(
         self, hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef
     ) -> SingleTypeDef:
@@ -2320,7 +2326,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def _has_ancestor(
         self, other: Table[Record | None, Any, Any, Any, Any, BaseT]
     ) -> bool:
-        """Check if other is ancestor of this data."""
+        """Check if ``other`` is ancestor of this data."""
         return other is self._ctx or (
             self._ctx_table is not None and self._ctx_table._has_ancestor(other)
         )
@@ -2329,12 +2335,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self,
         left: Data[Record | None, Any, Any, Any, Any, Any],
     ) -> Self:
-        """Prefix this reltable with a reltable or record type."""
+        """Prefix this dataset with another table as context."""
         return cast(
             Self,
             reduce(
                 lambda x, y: copy_and_override(
-                    type(y), y, _ctx=copy_and_override(Table[Record | None, Any, Any, Any, Any, Any], x, _db=y.db)  # type: ignore
+                    cast(type[Data[Record, Any, Any, Any, Any, BaseT]], type(y)),
+                    y,
+                    _ctx=copy_and_override(
+                        Table[Record | None, Any, Any, Any, Any, Any], x, _db=y.db
+                    ),
                 ),
                 self._prop_path,
                 left,
@@ -2393,7 +2403,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         mode: Literal["read", "replace", "upsert"] = "read",
         without_auto_fks: bool = False,
     ) -> sqla.Table:
-        """Return a SQLAlchemy table object for this schema."""
+        """Return the base SQLAlchemy table object for this data's record type."""
         orig_table: sqla.Table | None = None
 
         if (
@@ -3090,7 +3100,7 @@ class Value(
     Data[ValT, NoIdx, RwT, None, Ctx[ParT], BaseT],
     Generic[ValT, RwT, PubT, ParT, BaseT],
 ):
-    """Record attribute."""
+    """Single-value attribute or column."""
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
@@ -3132,6 +3142,8 @@ class Table(
     Data[RefT, IdxT, CrudT, LnT, CtxT, BaseT],
     Generic[RefT, LnT, CrudT, IdxT, CtxT, BaseT],
 ):
+    """Record set."""
+
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
         LnT: 1,
@@ -3147,6 +3159,8 @@ class Link(
     Table[RefT, None, CrudT, NoIdx, Ctx[ParT], BaseT],
     Generic[RefT, CrudT, ParT, BaseT],
 ):
+    """Link to a single record."""
+
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
         CrudT: 1,
@@ -3166,7 +3180,7 @@ class Link(
 @dataclass(kw_only=True, eq=False)
 class BackLink(
     Table[RecT, None, CrudT, IdxT, Ctx[ParT], BaseT],
-    Generic[RecT, IdxT, CrudT, ParT, BaseT],
+    Generic[RecT, CrudT, IdxT, ParT, BaseT],
 ):
     """Backlink record set."""
 
@@ -3178,7 +3192,7 @@ class Array(
     Data[ValT, Idx[KeyT], CrudT, "ArrayRecord[ValT, KeyT, OwnT]", Ctx[OwnT], BaseT],
     Generic[ValT, KeyT, CrudT, OwnT, BaseT],
 ):
-    """Record attribute set."""
+    """Set / array of scalar values."""
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
@@ -3206,7 +3220,7 @@ class Array(
 
 @dataclass
 class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
-    """Database."""
+    """Database connection."""
 
     backend: BaseT = None  # pyright: ignore[reportAssignmentType]
     """Unique name to identify this database's backend by."""
@@ -4194,16 +4208,14 @@ class DynRecord(Record, metaclass=DynRecordMeta):
 a = DynRecord
 
 
-def dynamic_record_type[
-    RecT: Record
-](
-    base: type[RecT],
+def dynamic_record_type(
+    base: type[RecT2],
     name: str,
     props: Iterable[Data[Any, Any, Any, Any, Any, Any]] = [],
-) -> type[RecT]:
+) -> type[RecT2]:
     """Create a dynamically defined record type."""
     return cast(
-        type[RecT],
+        type[RecT2],
         new_class(
             name,
             (base,),
@@ -4238,20 +4250,20 @@ class RecHashed(Record[int]):
         )
 
 
-class BacklinkRecord(Record[KeyT], Generic[KeyT, RecT]):
+class BacklinkRecord(Record[KeyT2], Generic[KeyT2, RecT2]):
     """Dynamically defined record type."""
 
     _template = True
 
-    _from: Link[RecT]
+    _from: Link[RecT2]
 
 
-class ArrayRecord(BacklinkRecord[KeyT, RecT], Generic[ValT, KeyT, RecT]):
-    """Dynamically defined record type."""
+class ArrayRecord(BacklinkRecord[KeyT2, RecT2], Generic[ValT, KeyT2, RecT2]):
+    """Dynamically defined scalar record type."""
 
     _template = True
 
-    _id: Value[KeyT] = Value(primary_key=True)
+    _id: Value[KeyT2] = Value(primary_key=True)
     _value: Value[ValT]
 
 
@@ -4264,7 +4276,7 @@ class Relation(RecHashed, BacklinkRecord[int, RecT2], Generic[RecT2, RecT3]):
 
 
 class IndexedRelation(Relation[RecT2, RecT3], Generic[RecT2, RecT3, KeyT]):
-    """Automatically defined relation record type."""
+    """Automatically defined relation record type with index substitution."""
 
     _template = True
 

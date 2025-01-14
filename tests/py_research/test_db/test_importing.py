@@ -9,36 +9,36 @@ from typing import Literal, reveal_type
 import pytest
 
 from py_research.db import (
-    Col,
-    Data,
+    Array,
+    BackLink,
     DataBase,
     DataSource,
+    Link,
     RecMap,
     Record,
     RecUUID,
-    Ref,
+    RefMap,
     Relation,
-    RelMap,
-    RelTable,
     SubMap,
-    prop,
+    Table,
+    Value,
 )
 
 
 class SearchResult(Record):
     """Link search to a result."""
 
-    search: Ref[Search] = prop(primary_key="fk")
-    result: Ref[Project] = prop(primary_key="fk")
-    score: Col[float]
+    search: Link[Search] = Link(primary_key=True)
+    result: Link[Project] = Link(primary_key=True)
+    score: Value[float]
 
 
 class Search(Record[str]):
     """Defined search against the API."""
 
-    term: Col[str] = prop(primary_key=True)
-    result_count: Col[int]
-    results: Data[Project, SearchResult]
+    term: Value[str] = Value(primary_key=True)
+    result_count: Value[int]
+    results: Table[Project, SearchResult] = Table(default=True)
 
 
 Assignment = Relation["User", "Task"]
@@ -47,18 +47,18 @@ Assignment = Relation["User", "Task"]
 class Task(RecUUID):
     """Link search to a result."""
 
-    name: Col[str]
-    project: Ref[Project]
-    assignees: Data[User, Assignment]
-    status: Col[Literal["todo", "done"]]
+    name: Value[str]
+    project: Link[Project]
+    assignees: Table[User, Assignment]
+    status: Value[Literal["todo", "done"]]
 
 
 class User(RecUUID):
     """A generic user."""
 
-    name: Col[str]
-    age: Col[int]
-    tasks: Data[Task, Assignment]
+    name: Value[str]
+    age: Value[int]
+    tasks: Table[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -66,34 +66,35 @@ class User(RecUUID):
         return all(task.status == "done" for task in self.tasks)
 
 
-class Membership(RecUUID):
+class Membership(Relation["User", "Project"]):
     """Link user to a project."""
 
-    member: Ref[User] = prop(primary_key="fk")
-    project: Ref[Project] = prop(primary_key="fk")
-    role: Col[str] = prop(default="member")
+    member: Link[User] = Link(primary_key=True)
+    project: Link[Project] = Link(primary_key=True)
+    role: Value[str] = Value(default="member")
 
 
 class Project(Record[int]):
     """A generic project record."""
 
-    number: Col[int] = prop(primary_key=True)
-    name: Col[str]
-    start: Col[date]
-    end: Col[date]
-    status: Col[Literal["planned", "started", "done"]]
-    org: Ref[Organization | None]
-    tasks: Data[Task] = prop(link_from=Task.project)
-    members: Data[User] = prop(link_via=Membership)
+    number: Value[int] = Value(primary_key=True)
+    name: Value[str]
+    start: Value[date]
+    end: Value[date]
+    status: Value[Literal["planned", "started", "done"]]
+    org: Link[Organization]
+    tasks: BackLink[Task] = BackLink(link=Task.project)
+    members: Table[User, Membership]
 
 
 class Organization(RecUUID):
     """A generic organization record."""
 
-    name: Col[str]
-    address: Col[str]
-    city: Col[str]
-    projects: Data[Project] = prop(link_from=Project.org)
+    name: Value[str]
+    address: Value[str]
+    city: Value[str]
+    projects: BackLink[Project] = BackLink(link=Project.org, default=True)
+    countries: Array[str]
 
 
 @pytest.fixture
@@ -111,18 +112,18 @@ def data_source() -> DataSource:
         push={
             "resultCount": Search.result_count,
             "search": Search.term,
-            "results": RelMap(
+            "results": RefMap(
                 rel=Search.results,
                 push={
                     "project_name": Project.name,
                     "project_start": Project.start,
                     "project_end": Project.end,
                     "project_status": Project.status,
-                    "tasks": RelMap(
+                    "tasks": RefMap(
                         rel=Project.tasks,
                         push={
                             "task_name": Task.name,
-                            "task_assignees": RelMap(
+                            "task_assignees": RefMap(
                                 rel=Task.assignees,
                                 push=User.name,
                                 match_by=User.name,
@@ -130,7 +131,7 @@ def data_source() -> DataSource:
                             "task_status": Task.status,
                         },
                     ),
-                    "members": RelMap(
+                    "members": RefMap(
                         rel=Project.members,
                         push={User.name, User.age},
                         link=RecMap(
@@ -160,7 +161,7 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     rec = data_source.load(nested_db_dict, db)
 
     assert isinstance(rec, Search)
-    assert isinstance(db, RelTable)
+    assert isinstance(db, Table)
 
     assert len(db[Search]) == 1
     assert len(db[Project]) == 3
