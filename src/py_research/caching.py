@@ -7,7 +7,7 @@ import json
 import pickle
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from functools import wraps
+from functools import cached_property, wraps
 from pathlib import Path
 from typing import (
     Any,
@@ -342,9 +342,15 @@ class cached_prop(Generic[S, P, R, M]):  # noqa: N801
 
     getter: Callable[Concatenate[S, P], R] | None = None
     mutable: M | Literal[False] = False
+    name: str | None = None
 
-    _owner: type[S] | None = None
-    _cached_result: R | NoResult = NoResult()
+    @cached_property
+    def cache_name(self) -> str:  # noqa: D102
+        assert self.name is not None
+        return f"__cached_prop_{self.name}"
+
+    def __set_name__(self, owner: type[S], name: str) -> None:  # noqa: D105
+        self.name = name
 
     @overload
     def __call__(
@@ -359,10 +365,8 @@ class cached_prop(Generic[S, P, R, M]):  # noqa: N801
         self: cached_prop[Any, Any, Any, Any], *args: Any, **kwargs: Any
     ) -> cached_prop[Any, Any, Any, Any] | R:
         if self.getter is None:
+            assert isinstance(args[0], Callable)
             return copy_and_override(cached_prop[Any, Any, Any], self, getter=args[0])
-
-        if not isinstance(self._cached_result, NoResult):
-            return self._cached_result
 
         return self.getter(args[0], *args[:-1], **kwargs)
 
@@ -381,15 +385,19 @@ class cached_prop(Generic[S, P, R, M]):  # noqa: N801
         if owner is None or instance is None:
             return self
 
-        self._owner = owner
+        if not hasattr(instance, self.cache_name):
+            assert self.getter is not None
+            instance.__dict__[self.cache_name] = cast(Callable[[S], R], self.getter)(
+                instance
+            )
 
-        assert self.getter is not None
-        return cast(Callable[[S], R], self.getter)(instance)
+        return instance.__dict__[self.cache_name]
 
     def __set__(  # noqa: D105
         self: cached_prop[Any, Any, Any, Literal[True]], instance: S, value: R
     ) -> None:
-        self._cached_result = NoResult()
+        assert self.mutable
+        instance.__dict__[self.cache_name] = value
 
 
 def cached_method(

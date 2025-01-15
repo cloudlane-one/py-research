@@ -20,7 +20,7 @@ from typing import (
 
 from beartype.door import is_bearable, is_subhint
 
-T = TypeVar("T")
+T = TypeVar("T", covariant=True)
 T_cov = TypeVar("T_cov", covariant=True)
 U_cov = TypeVar("U_cov", covariant=True)
 
@@ -30,7 +30,7 @@ _AnnotationScanType = Union[
 
 
 @runtime_checkable
-class GenericProtocol(Protocol[T]):
+class GenericProtocol(Protocol[T]):  # type: ignore
     """protocol for generic types.
 
     this since Python.typing _GenericAlias is private

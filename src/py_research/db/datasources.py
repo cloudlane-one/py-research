@@ -642,7 +642,7 @@ async def _load_record[
     rec: Record | None = None
     is_new: bool = True
     if rec_map.rec_type._is_complete_dict(rec_dict):
-        rec = rec_map.rec_type(_db=rec_set.db, **rec_dict)
+        rec = rec_map.rec_type(_database=rec_set.db, **rec_dict)
 
     match_expr = _gen_match_expr(
         rec_set,
