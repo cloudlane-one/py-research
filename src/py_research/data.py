@@ -62,7 +62,7 @@ def copy_and_override(
         obj_fields = {
             f: (
                 v
-                if v != f.default
+                if v is not MISSING
                 else obj_fields.get(
                     f,
                     (

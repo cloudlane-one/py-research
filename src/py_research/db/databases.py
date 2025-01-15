@@ -1458,12 +1458,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         self._mutate([], mode="replace")
 
-    def __eq__(  # pyright: ignore[reportIncompatibleMethodOverride]  # noqa: D105
+    @overload
+    def __eq__(  # noqa: D105
         self: Data[Any, IdxT2, Any, Any, Ctx, BaseT2],
+        other: Any | Data[Any, IdxT2, Any, Any, Any, BaseT2],
+    ) -> sqla.ColumnElement[bool]: ...
+
+    @overload
+    def __eq__(  # noqa: D105
+        self,
+        other: Any,
+    ) -> bool: ...
+
+    def __eq__(  # noqa: D105
+        self: Data[Any, Any, Any, Any, Any, Any],
         other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
-    ) -> sqla.ColumnElement[bool]:
+    ) -> sqla.ColumnElement[bool] | bool:
+        if self._ctx is None:
+            return hash(self) == hash(other)
+
         if isinstance(other, Data):
             return self._sql_col == other._sql_col
+
         return self._sql_col == other
 
     def __neq__(  # noqa: D105
@@ -1640,49 +1656,53 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Get the value of this dataset when used as property."""
         owner = self._ctx_type.record_type if self._ctx_type is not None else owner
 
-        if owner is not None and issubclass(owner, Record):
-            if isinstance(instance, Record):
-                if isinstance(self, Value):
-                    if (
-                        self.pub_status is Public
-                        and instance._connected
-                        and instance._index
-                        not in instance._db._get_valid_cache_set(owner)
-                    ):
-                        instance._update_dict()
+        if (
+            owner is not None
+            and issubclass(owner, Record)
+            and isinstance(instance, owner)
+        ):
+            if isinstance(self, Value):
+                if (
+                    self.pub_status is Public
+                    and instance._connected
+                    and instance._index not in instance._db._get_valid_cache_set(owner)
+                ):
+                    instance._update_dict()
 
-                    value = (
-                        self.getter(instance)
-                        if self.getter is not None
-                        else instance.__dict__.get(self.name, Undef)
-                    )
-
-                    if value is Undef:
-                        if self.default_factory is not None:
-                            value = self.default_factory()
-                        else:
-                            value = self.default
-
-                        assert (
-                            value is not Undef
-                        ), f"Property value for `{self.name}` could not be fetched."
-                        setattr(instance, self.name, value)
-
-                    return value
-                else:
-                    self_ref = cast(
-                        Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
-                        getattr(owner, self.name),
-                    )
-                    return instance._db[type(instance)][self_ref][instance._index]
-
-            if instance is None:
-                return copy_and_override(
-                    Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
-                    self,
-                    _db=DataBase(backend=Symbolic()),
-                    _ctx=Ctx(owner),
+                value = (
+                    self.getter(instance)
+                    if self.getter is not None
+                    else instance.__dict__.get(self.name, Undef)
                 )
+
+                if value is Undef:
+                    if self.default_factory is not None:
+                        value = self.default_factory()
+                    else:
+                        value = self.default
+
+                    assert (
+                        value is not Undef
+                    ), f"Property value for `{self.name}` could not be fetched."
+                    setattr(instance, self.name, value)
+
+                return value
+            else:
+                self_ref = cast(
+                    Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
+                    getattr(owner, self.name),
+                )
+                return instance._db[type(instance)][self_ref][instance._index]
+
+        # # Commented out to have context association done only upon record class
+        # # initialization. Thereby subclasses won't override superclasses as context.
+        # if owner is not None and issubclass(owner, Record) and instance is None:
+        #     return copy_and_override(
+        #         Data[ValT, NoIdx, R, RelT, Ctx, Symbolic],
+        #         self,
+        #         _db=symbol_db,
+        #         _ctx=Ctx(owner),
+        #     )
 
         return self
 
@@ -1782,7 +1802,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return (
             self._ctx
             if isinstance(self._ctx, Table)
-            else Table(_db=self.db, _ctx=self._ctx) if self._ctx is not None else None
+            else (
+                Table(_db=self.db, _typehint=Table[self._ctx.record_type])
+                if self._ctx is not None
+                else None
+            )
         )
 
     @cached_prop
@@ -3772,6 +3796,10 @@ class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
             self.db.url.set(file)
 
 
+symbol_db = DataBase[R, Symbolic](backend=Symbolic())
+"""Database for all symbolic data instances."""
+
+
 class RecordMeta(type):
     """Metaclass for record types."""
 
@@ -3790,23 +3818,29 @@ class RecordMeta(type):
         if "_src_mod" not in cls.__dict__:
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
+        # Construct prelimiary symbolic data instances for all class annotations.
         props = {
             name: Data[Any, Any, Any, Any, Ctx, Symbolic](
                 _typehint=hint,
-                _db=DataBase(backend=Symbolic()),
-                _ctx=Ctx(cast(type[Record], cls)),
+                _db=symbol_db,
+                _ctx=Ctx(cast(type["Record"], cls)),
+                _name=name,
             )
             for name, hint in get_annotations(cls).items()
         }
+
+        # Filter out all non-Data annotations.
         props = {
             name: prop
             for name, prop in props.items()
             if is_subtype(prop._data_type, Data)
         }
 
+        # Merge data definitions from annotations with those from the class body.
         for prop_name, prop in props.items():
             prop_type = cast(
-                type[Data[Any, Any, Any, Any, Ctx[Record], Symbolic]], prop._data_type
+                type[Data[Any, Any, Any, Any, Ctx["Record"], Symbolic]],
+                prop._data_type,
             )
 
             if prop_name in cls.__dict__:
@@ -3815,18 +3849,15 @@ class RecordMeta(type):
                     cls.__dict__[prop_name],
                     _name=prop._name,
                     _typehint=prop._typehint,
-                    _ctx=Ctx(cast(type[Record], cls)),
+                    _ctx=prop._ctx,
                 )
             else:
-                prop = prop_type(
-                    _name=prop._name,
-                    _typehint=prop._typehint,
-                    _ctx=Ctx(cast(type[Record], cls)),
-                )
+                prop = copy_and_override(prop_type, prop)
 
             setattr(cls, prop_name, prop)
             props[prop_name] = prop
 
+        # Construct list of Record superclasses and apply template superclasses.
         cls._record_superclasses = []
         super_types: Iterable[type | GenericProtocol] = (
             cls.__dict__["__orig_bases__"]
@@ -3834,27 +3865,31 @@ class RecordMeta(type):
             else cls.__bases__
         )
         for c in super_types:
+            # Get proper origin class of generic supertype.
             orig = get_origin(c) if not isinstance(c, type) else c
+
+            # Handle typevar substitutions.
             if orig is not c and hasattr(orig, "__parameters__"):
                 typevar_map = dict(zip(getattr(orig, "__parameters__"), get_args(c)))
             else:
                 typevar_map = {}
 
+            # Skip root Record class and non-Record classes.
             if not isinstance(orig, RecordMeta) or orig._is_root_class:
                 continue
 
+            # Apply template classes.
             if orig._template or cls._derivate:
-                for prop_name, prop in orig._class_props.items():
-                    if prop_name in cls.__dict__:
+                for prop_name, super_prop in orig._class_props.items():
+                    if prop_name in props:
                         prop = copy_and_override(
-                            type(props[prop_name]), (prop, props[prop_name])
+                            type(props[prop_name]), (super_prop, props[prop_name])
                         )
                     else:
                         prop = copy_and_override(
-                            type(prop),
-                            props.get(prop_name, prop),
+                            type(super_prop),
+                            super_prop,
                             _typevar_map=typevar_map,
-                            _ctx=Ctx(cast(type[Record], cls)),
                         )
 
                     setattr(cls, prop_name, prop)
@@ -4220,9 +4255,7 @@ class DynRecordMeta(RecordMeta):
         cls: type[Record], name: str
     ) -> Value[Any, Any, Any, Any, Symbolic]:
         """Get dynamic attribute by dynamic name."""
-        return Value(
-            _db=DataBase(Symbolic()), _typehint=Value[cls], _ctx=Ctx(cls), _name=name
-        )
+        return Value(_db=symbol_db, _typehint=Value[cls], _ctx=Ctx(cls), _name=name)
 
     def __getattr__(
         cls: type[Record], name: str
@@ -4230,9 +4263,7 @@ class DynRecordMeta(RecordMeta):
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
-        return Value(
-            _db=DataBase(Symbolic()), _typehint=Value[cls], _ctx=Ctx(cls), _name=name
-        )
+        return Value(_db=symbol_db, _typehint=Value[cls], _ctx=Ctx(cls), _name=name)
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):
