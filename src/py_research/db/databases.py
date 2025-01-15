@@ -80,11 +80,11 @@ RecT4 = TypeVar("RecT4", bound="Record")
 RefT = TypeVar("RefT", bound="Record | None", covariant=True)
 RefT2 = TypeVar("RefT2", bound="Record | None")
 
-LnT = TypeVar("LnT", bound="Record | None", covariant=True, default=None)
-LnT2 = TypeVar("LnT2", bound="Record | None")
-LnT3 = TypeVar("LnT3", bound="Record | None")
+RelT = TypeVar("RelT", bound="Record | None", covariant=True, default=None)
+RelT2 = TypeVar("RelT2", bound="Record | None")
+RelT3 = TypeVar("RelT3", bound="Record | None")
 
-OwnT = TypeVar("OwnT", default=Any, bound="Record")
+OwnT = TypeVar("OwnT", bound="Record", default=Any)
 ParT = TypeVar("ParT", contravariant=True, bound="Record", default=Any)
 
 
@@ -442,20 +442,17 @@ def _map_prop_type_name(name: str) -> type[Data | None]:
 
 
 @dataclass(kw_only=True, eq=False)
-class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
+class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     """Relational dataset."""
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
-        IdxT: 1,
-        CrudT: 2,
-        LnT: 3,
-        CtxT: 4,
+        RelT: 3,
         BaseT: 5,
     }
 
     _db: DataBase[CrudT | CRUD, BaseT] | None = None
-    _ctx: CtxT | Table[Record, Any, R, Any, Any, BaseT] | None = None
+    _ctx: CtxT | Table[Record | None, Any, R, Any, Any, BaseT] | None = None
 
     _name: str | None = None
     _typehint: str | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]] | None = None
@@ -528,16 +525,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         return t
 
     @cached_prop
-    def relation_type(self) -> type[LnT]:
+    def relation_type(self) -> type[RelT]:
         """Relation record type, if any."""
         args = self._generic_args
-        rec = args[self._typearg_map[LnT]]
+        rec = args[self._typearg_map[RelT]]
         rec_type = self._hint_to_type(rec)
 
         if not issubclass(rec_type, Record):
-            return cast(type[LnT], NoneType)
+            return cast(type[RelT], NoneType)
 
-        return cast(type[LnT], rec_type)
+        return cast(type[RelT], rec_type)
 
     @cached_prop
     def base_type(self) -> type[BaseT]:
@@ -1022,11 +1019,11 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             ValT3,
             BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
             CrudT3,
-            LnT3,
+            RelT3,
             Ctx[RecT2],
             Symbolic,
         ],
-    ) -> Data[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT3, LnT3, Ctx[RecT2], BaseT]: ...
+    ) -> Data[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT3, RelT3, Ctx[RecT2], BaseT]: ...
 
     # 3. Nested prop selection
     @overload
@@ -1038,7 +1035,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             ValT3,
             BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
             CrudT3,
-            LnT3,
+            RelT3,
             CtxT3,
             Symbolic,
         ],
@@ -1046,7 +1043,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         ValT3,
         Idx[*KeyTt2, *tuple[Any, ...], *KeyTt3],
         CrudT3,
-        LnT3,
+        RelT3,
         CtxT3,
         BaseT,
     ]: ...
@@ -1058,7 +1055,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, DynBackendID
         ],
         key: list[KeyT2] | slice,
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 5. Key / slice filtering
     @overload
@@ -1067,21 +1064,21 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, DynBackendID
         ],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 6. Expression filtering
     @overload
     def __getitem__(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         key: sqla.ColumnElement[bool],
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 7. Key selection, scalar index type, symbolic context
     @overload
     def __getitem__(
         self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Symbolic],
         key: KeyT2,
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 8. Key selection, tuple index type, symbolic context
     @overload
@@ -1090,7 +1087,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Symbolic
         ],
         key: tuple[*KeyTt2],
-    ) -> Data[ValT, IdxT, RU, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 9. Key selection, scalar index type
     @overload
@@ -1188,7 +1185,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __imatmul__(
@@ -1207,16 +1204,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __imatmul__(
         self: Data[Any, Any, RU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Aligned assignment."""
         self._mutate(other, mode="update")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
         )
 
@@ -1237,7 +1234,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __iadd__(
@@ -1256,16 +1253,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __iadd__(
         self: Data[Any, Any, CR, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Inserting assignment."""
         self._mutate(other, mode="insert")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
         )
 
@@ -1286,7 +1283,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __ior__(
@@ -1305,16 +1302,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __ior__(
         self: Data[Any, Any, CRU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Upserting assignment."""
         self._mutate(other, mode="upsert")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
         )
 
@@ -1335,7 +1332,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __iand__(
@@ -1354,16 +1351,16 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __iand__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, BaseT] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Replacing assignment."""
         self._mutate(other, mode="replace")
         return cast(
-            Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT],
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
         )
 
@@ -1384,7 +1381,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT, Any, Any, Any, Any, BaseT]
             | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __isub__(
@@ -1403,12 +1400,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
             Data[ValT2, Any, Any, Any, Any, BaseT]
             | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
         ),
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __isub__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Idempotent deletion."""
         raise NotImplementedError("Subtraction not supported yet.")
 
@@ -1462,23 +1459,23 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self._mutate([], mode="replace")
 
     def __eq__(  # pyright: ignore[reportIncompatibleMethodOverride]  # noqa: D105
-        self: Data[Any, IdxT2, Any, Any, Any, BaseT2],
-        other: Any | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[Any, IdxT2, Any, Any, Ctx, BaseT2],
+        other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
             return self._sql_col == other._sql_col
         return self._sql_col == other
 
     def __neq__(  # noqa: D105
-        self: Data[Any, IdxT2, Any, Any, Any, BaseT2],
-        other: Any | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[Any, IdxT2, Any, Any, Ctx, BaseT2],
+        other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
             return self._sql_col != other._sql_col
         return self._sql_col != other
 
     def __lt__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
@@ -1486,7 +1483,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         return self._sql_col < other
 
     def __lte__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
@@ -1494,7 +1491,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         return self._sql_col <= other
 
     def __gt__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
@@ -1502,7 +1499,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         return self._sql_col > other
 
     def __gte__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
@@ -1513,33 +1510,33 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def __matmul__(
         self: Data[tuple, Any, Any, Any, Any, Any],
         other: Data[tuple, Any, Any, Any, Any, Any],
-    ) -> Data[tuple, IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[tuple, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __matmul__(
         self: Data[ValT2, Any, Any, Any, Any, Any],
         other: Data[tuple[*ValTt3], Any, Any, Any, Any, Any],
-    ) -> Data[tuple[ValT2, *ValTt3], IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[tuple[ValT2, *ValTt3], IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __matmul__(
         self: Data[tuple[*ValTt2], Any, Any, Any, Any, Any],
         other: Data[ValT3, Any, Any, Any, Any, Any],
-    ) -> Data[tuple[*ValTt2, ValT3], IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[tuple[*ValTt2, ValT3], IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
     def __matmul__(
         self: Data[ValT2, Any, Any, Any, Any, Any],
         other: Data[ValT3, Any, Any, Any, Any, Any],
-    ) -> Data[tuple[ValT2, ValT3], IdxT, CrudT, LnT, CtxT, BaseT]: ...
+    ) -> Data[tuple[ValT2, ValT3], IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     def __matmul__(
         self,
         other: Data[ValT2, Any, Any, Any, Any, BaseT],
-    ) -> Data[tuple, IdxT, CrudT, LnT, CtxT, BaseT]:
+    ) -> Data[tuple, IdxT, CrudT, RelT, CtxT, BaseT]:
         """Align and merge this dataset with another into a tuple-valued dataset."""
         return copy_and_override(
-            Data[tuple, IdxT, CrudT, LnT, CtxT, BaseT],
+            Data[tuple, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
             _tuple_selection=(
                 *(
@@ -1574,28 +1571,28 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, Idx[KeyT2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Data[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
-        self: Data[Any, IdxT, Any, Any, Any, Any],
+        self: Data[Any, Any, Any, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[RecT4], Symbolic]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
@@ -1609,28 +1606,28 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[KeyT2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, Idx[KeyT2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Data[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[ValT, Idx[*KeyTt2], CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
-        self: Data[Any, IdxT, Any, Any, Any, Any],
+        self: Data[Any, Any, Any, Any, Any, Any],
         instance: RecT4,
         owner: type[RecT4],
-    ) -> Data[ValT, IdxT, CrudT, LnT, Ctx[RecT4], DynBackendID]: ...
+    ) -> Data[ValT, IdxT, CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -1674,14 +1671,14 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
                     return value
                 else:
                     self_ref = cast(
-                        Data[ValT, NoIdx, CrudT, LnT, Ctx, Symbolic],
+                        Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
                         getattr(owner, self.name),
                     )
                     return instance._db[type(instance)][self_ref][instance._index]
 
             if instance is None:
                 return copy_and_override(
-                    Data[ValT, NoIdx, CrudT, LnT, Ctx, Symbolic],
+                    Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
                     self,
                     _db=DataBase(backend=Symbolic()),
                     _ctx=Ctx(owner),
@@ -1774,7 +1771,7 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
     def _ctx_type(self) -> CtxT:
         """Context record type."""
         return (
-            cast(CtxT, Ctx(self._ctx.target_type))
+            cast(CtxT, Ctx(self._ctx.record_type))
             if isinstance(self._ctx, Data)
             else self._ctx if self._ctx else cast(CtxT, None)
         )
@@ -1885,8 +1882,9 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
                         indexes.append(
                             copy_and_override(
                                 Value[Any, Any, Any, Any, BaseT],
-                                pk._add_ctx(node),
+                                pk,
                                 _db=self.db,
+                                _ctx=node,
                             )
                         )
 
@@ -1898,14 +1896,18 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     @cached_prop
     def _abs_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
-        cols = {
-            copy_and_override(
-                Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self._ctx
-            )
-            for v in (
-                (v for sel in self.tuple_selection for v in sel._abs_cols.values())
-                if has_type(self, Data[tuple, Any, Any, Any, Ctx, Any])
-                else (
+        cols = (
+            {
+                v._add_ctx(self._ctx_table)
+                for sel in self.tuple_selection
+                for v in sel._abs_cols.values()
+            }
+            if has_type(self, Data[tuple, Any, Any, Any, Ctx, Any])
+            else {
+                copy_and_override(
+                    Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self._ctx
+                )
+                for v in (
                     self.record_type._values.values()
                     if has_type(self, Data[Record | None, Any, Any, Any, Any, Any])
                     else (
@@ -1914,8 +1916,8 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
                         else (self,)
                     )
                 )
-            )
-        }
+            }
+        )
 
         return (
             {col.fqn: col for col in cols}
@@ -2333,9 +2335,12 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
 
     def _add_ctx(
         self,
-        left: Data[Record | None, Any, Any, Any, Any, Any],
+        left: Data[Record | None, Any, Any, Any, Any, Any] | None,
     ) -> Self:
         """Prefix this dataset with another table as context."""
+        if left is None:
+            return self
+
         return cast(
             Self,
             reduce(
@@ -2491,6 +2496,26 @@ class Data(Generic[ValT, IdxT, CrudT, LnT, CtxT, BaseT]):
                 )
 
         return table
+
+    def _gen_idx_value_map(self, idx: Any) -> dict[str, Hashable]:
+        idx_names = list(self._abs_idx_cols.keys())
+
+        if len(idx_names) == 1:
+            return {idx_names[0]: idx}
+
+        assert isinstance(idx, tuple) and len(idx) == len(idx_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, idx)}
+
+    def _gen_fk_value_map(
+        self: Data[Record | None, Any, Any, None, Any, Any], val: Any
+    ) -> dict[str, Hashable]:
+        fk_names = [col.name for col in self._fk_map.keys()]
+
+        if len(fk_names) == 1:
+            return {fk_names[0]: val}
+
+        assert isinstance(val, tuple) and len(val) == len(fk_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(fk_names, val)}
 
     def _values_to_df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
@@ -3104,7 +3129,6 @@ class Value(
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
-        CrudT: 1,
         BaseT: 4,
     }
 
@@ -3137,17 +3161,26 @@ class Value(
         return super().name
 
 
+# Redefine IdxT in an attempt to fix randomly occuring type error,
+# in which IdxT isn't recognized as a type variable below anymore.
+TdxT = TypeVar(
+    "TdxT",
+    covariant=True,
+    bound=Idx | BaseIdx,
+    default=BaseIdx,
+)
+
+
 @dataclass(kw_only=True, eq=False)
 class Table(
-    Data[RefT, IdxT, CrudT, LnT, CtxT, BaseT],
-    Generic[RefT, LnT, CrudT, IdxT, CtxT, BaseT],
+    Data[RefT, TdxT, CrudT, RelT, CtxT, BaseT],
+    Generic[RefT, RelT, CrudT, TdxT, CtxT, BaseT],
 ):
     """Record set."""
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
-        LnT: 1,
-        CrudT: 2,
+        RelT: 1,
         BaseT: 5,
     }
 
@@ -3163,7 +3196,6 @@ class Link(
 
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
-        CrudT: 1,
         BaseT: 3,
     }
 
@@ -3179,10 +3211,15 @@ class Link(
 
 @dataclass(kw_only=True, eq=False)
 class BackLink(
-    Table[RecT, None, CrudT, IdxT, Ctx[ParT], BaseT],
-    Generic[RecT, CrudT, IdxT, ParT, BaseT],
+    Table[RecT, None, CrudT, TdxT, Ctx[ParT], BaseT],
+    Generic[RecT, CrudT, TdxT, ParT, BaseT],
 ):
     """Backlink record set."""
+
+    _typearg_map: ClassVar[dict[TypeVar, int]] = {
+        ValT: 0,
+        BaseT: 4,
+    }
 
     link: Data[ParT, NoIdx, Any, None, Ctx[RecT], Symbolic]
 
@@ -3197,7 +3234,6 @@ class Array(
     _typearg_map: ClassVar[dict[TypeVar, int]] = {
         ValT: 0,
         KeyT: 1,
-        CrudT: 2,
         BaseT: 4,
     }
 

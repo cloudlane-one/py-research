@@ -113,18 +113,18 @@ def data_source() -> DataSource:
             "resultCount": Search.result_count,
             "search": Search.term,
             "results": RefMap(
-                rel=Search.results,
+                ref=Search.results,
                 push={
                     "project_name": Project.name,
                     "project_start": Project.start,
                     "project_end": Project.end,
                     "project_status": Project.status,
                     "tasks": RefMap(
-                        rel=Project.tasks,
+                        ref=Project.tasks,
                         push={
                             "task_name": Task.name,
                             "task_assignees": RefMap(
-                                rel=Task.assignees,
+                                ref=Task.assignees,
                                 push=User.name,
                                 match_by=User.name,
                             ),
@@ -132,9 +132,9 @@ def data_source() -> DataSource:
                         },
                     ),
                     "members": RefMap(
-                        rel=Project.members,
+                        ref=Project.members,
                         push={User.name, User.age},
-                        link=RecMap(
+                        rel=RecMap(
                             push={
                                 Membership.role,
                             },

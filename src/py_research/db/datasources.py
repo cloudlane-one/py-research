@@ -734,11 +734,12 @@ async def _load_records(
                 rec_map.ref.relation_type, IndexedRelation
             ):
                 assert rel is not None
-                rel = (
-                    rel
-                    if isinstance(rel, Record)
-                    else db[rec_map.ref.relation_type][rel]
-                )
+                if isinstance(rel, Record):
+                    rel = rel
+                else:
+                    assert isinstance(rel, int)
+                    rel = db[rec_map.ref.relation_type][rel]
+
                 mapped_idx = getattr(rel, rec_map.ref.relation_type._rel_id.name)  # type: ignore
 
                 rel_idx = (
