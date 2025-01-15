@@ -142,9 +142,6 @@ class BaseIdx[R: Record]:
     __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
-type NoIdx = Idx[()]
-
-
 IdxT = TypeVar(
     "IdxT",
     covariant=True,
@@ -262,9 +259,9 @@ Params = ParamSpec("Params")
 type LinkItem = Table[Record | None, None, Any, Any, Any, Any]
 
 type PropPath[RootT: Record, LeafT] = tuple[
-    Table[RootT, Any, Any, Any, None, Any]
+    Table[RootT, None, Any, Any, None, Any]
 ] | tuple[
-    Table[RootT, Any, Any, Any, None, Any],
+    Table[RootT, None, Any, Any, None, Any],
     *tuple[Table[Record | None, Any, Any, Any, Ctx, Any], ...],
     Data[LeafT, Any, Any, Any, Ctx, Any],
 ]
@@ -495,40 +492,46 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
     @cached_prop
+    def path(self) -> PropPath[Record, ValT]:
+        if self._ctx_table is None:
+            assert issubclass(self.target_type, Record)
+            return (cast(Table[Record, Any, Any, Any, None, Any], self),)
+
+        return cast(PropPath[Record, ValT], (*self._ctx_table.path, self))
+
+    @cached_prop
     def name(self) -> str:
         """Defined name or generated identifier of this dataset."""
         return self._name if self._name is not None else token_hex(5)
 
     @property
-    def value_type(self) -> SingleTypeDef[ValT]:
+    def value_type(self) -> SingleTypeDef[ValT] | UnionType:
         """Value typehint of this dataset."""
         return self._get_typearg(ValT)
 
     @cached_prop
     def target_type(self) -> type[ValT]:
         """Value type of this dataset."""
+        t = self._get_typearg(ValT, remove_null=True)
+
         return cast(
             type[ValT],
-            (
-                self.value_type
-                if isinstance(self.value_type, type)
-                else get_origin(self.value_type) or object
-            ),
+            (t if isinstance(t, type) else get_origin(t) or object),
         )
 
     @cached_prop
     def record_type(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
         """Record target type of this dataset."""
-        t = extract_nullable_type(self.value_type)
-        assert t is not None and issubclass(t, Record)
+        t = self.target_type
+        assert issubclass(t, Record)
         return t
 
     @cached_prop
     def relation_type(self) -> type[RelT]:
         """Relation record type, if any."""
         rec = self._get_typearg(RelT)
-        rec_type = self._hint_to_type(rec)
 
+        rec_type = self._hint_to_type(rec)
         if not issubclass(rec_type, Record):
             return cast(type[RelT], NoneType)
 
@@ -539,7 +542,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Base type of this dataset."""
         base = self._get_typearg(BaseT)
         base_type = self._hint_to_type(base)
-
         return cast(type[BaseT], base_type)
 
     @cached_prop
@@ -575,9 +577,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
         index_by = self.index_by if isinstance(self, Table) else None
 
-        return cast(
-            BackLink[RecT2, Any, Any, RecT3, BaseT],
-            BackLink(_db=self.db, _ctx=self.ctx, link=link, index_by=index_by),
+        return BackLink[RecT2, Any, Any, RecT3, BaseT](
+            _db=self.db,
+            _ctx=self.ctx,
+            _typehint=BackLink[self.relation_type],
+            link=cast(Link[Any, Any, Any, Any], link),
+            index_by=index_by,
         )
 
     @cached_prop
@@ -1005,7 +1010,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     # 1. DB-level type selection
     @overload
     def __getitem__(
-        self: Data[Any, NoIdx, Any, None, None, Any],
+        self: Data[Any, Idx[()], Any, None, None, Any],
         key: type[RecT3],
     ) -> Data[RecT3, BaseIdx[RecT3], CrudT, None, None, BaseT]: ...
 
@@ -1608,7 +1613,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @overload
     def __get__(
-        self: Data[Any, NoIdx, Any, Any, Any, Any],
+        self: Data[Any, Idx[()], Any, Any, Any, Any],
         instance: Record,
         owner: type[Record],
     ) -> ValT: ...
@@ -1685,7 +1690,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 return value
             else:
                 self_ref = cast(
-                    Data[ValT, NoIdx, CrudT, RelT, Ctx, Symbolic],
+                    Data[ValT, Idx[()], CrudT, RelT, Ctx, Symbolic],
                     getattr(owner, self.name),
                 )
                 return instance._db[type(instance)][self_ref][instance._index]
@@ -1694,7 +1699,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         # # initialization. Thereby subclasses won't override superclasses as context.
         # if owner is not None and issubclass(owner, Record) and instance is None:
         #     return copy_and_override(
-        #         Data[ValT, NoIdx, R, RelT, Ctx, Symbolic],
+        #         Data[ValT, Idx[()], R, RelT, Ctx, Symbolic],
         #         self,
         #         _db=symbol_db,
         #         _ctx=Ctx(owner),
@@ -1706,7 +1711,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def __set__(
         self,
         instance: Record,
-        value: Data[ValT, NoIdx, Any, Any, Any, Any] | ValT | type[Keep],
+        value: Data[ValT, Idx[()], Any, Any, Any, Any] | ValT | type[Keep],
     ) -> None: ...
 
     @overload
@@ -1782,8 +1787,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef, ...]:
-        args = get_args(self._generic_type)
-        return tuple(self._hint_to_typedef(hint) for hint in args)
+        return get_args(self._generic_type)
 
     @cached_prop
     def _ctx_type(self) -> CtxT:
@@ -1833,14 +1837,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         assert len(original_owners) == 1
         return original_owners[0]
 
-    @cached_prop
-    def _prop_path(self) -> PropPath[Record, ValT]:
-        if self._ctx_table is None:
-            assert issubclass(self.target_type, Record)
-            return (cast(Table[Record, Any, Any, Any, None, Any], self),)
-
-        return cast(PropPath[Record, ValT], (*self._ctx_table._prop_path, self))
-
     @property
     def _home_table(self) -> Data[Record | None, Any, Any, Any, Any, BaseT]:
         if Data._has_type(self, Data[Record | None, Any, Any, Any, Any, Any]):
@@ -1854,7 +1850,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @property
     def _root_table(self) -> Data[Record | None, Any, Any, None, None, BaseT]:
-        return self._prop_path[0]
+        return self.path[0]
 
     @property
     def _idx_cols(
@@ -1897,14 +1893,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def _abs_link_path(self) -> list[LinkItem]:
         path: list[LinkItem] = []
 
-        for p in self._prop_path:
+        for p in self.path:
             if issubclass(p.relation_type, Record):
                 p = cast(Table[Record, Record, Any, Any, Any, Any], p)
                 if p._rel_to is not None:
                     path.extend([p.rel, p._rel_to])
                 else:
                     path.append(p.rel)
-            else:
+            elif issubclass(p.target_type, Record):
                 path.append(cast(Table[Record, None, Any, Any, Any, Any], p))
 
         return path
@@ -2116,7 +2112,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         for rel in self._total_joins:
             subtree = tree
-            for node in rel._abs_link_path:
+            for node in rel._abs_link_path[1:]:
                 if node not in subtree:
                     subtree[node] = {}
                 subtree = subtree[node]
@@ -2124,7 +2120,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return tree
 
     @cached_prop
-    def _fk_map(self: Data[Record | None, NoIdx, Any, None, Ctx, Any]) -> bidict[
+    def _fk_map(self: Data[Record | None, Idx[()], Any, None, Ctx, Any]) -> bidict[
         Value[Any, Any, Any, Any, Symbolic],
         Value[Any, Any, Any, Any, Symbolic],
     ]:
@@ -2141,7 +2137,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return bidict(
                 {
                     Value[Any, Any, Any, Any, Symbolic](
-                        _name=f"{self.name}_{pk.name}",
+                        _name=f"{to_rec._default_table_name()}_{pk.name}",
                         _typehint=pk._typehint,
                         init=False,
                         index=self.index if isinstance(self, Link) else False,
@@ -2171,12 +2167,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def _sql_joins(
         self,
         _subtree: JoinDict | None = None,
-        _parent: Table[Record | None, Any, Any, Any, Any, Any] | None = None,
+        _parent: Data[Record | None, Any, Any, Any, Any, Any] | None = None,
     ) -> list[SqlJoin]:
         """Extract join operations from the relational tree."""
         joins: list[SqlJoin] = []
         _subtree = _subtree if _subtree is not None else self._total_join_dict
-        _parent = _parent if _parent is not None else self._prop_path[0]
+        _parent = _parent if _parent is not None else self._root_table
 
         for target, next_subtree in _subtree.items():
             joins.append(
@@ -2244,7 +2240,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         fks: list[sqla.ForeignKeyConstraint] = []
 
         for rt in self.record_type._links.values():
-            rel_table = rt._get_sql_base_table()
+            rel_table = self[rt]._get_sql_base_table()
             fks.append(
                 sqla.ForeignKeyConstraint(
                     [fk.name for fk in rt._fk_map.keys()],
@@ -2282,6 +2278,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> sqla.FromClause:
         """Recursively join all bases of this record to get the full data."""
         base_table = self._get_sql_base_table("read")
+        if len(self.record_type._record_superclasses) == 0:
+            return base_table
 
         table = base_table
         cols = {col.name: col for col in base_table.columns}
@@ -2316,24 +2314,33 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         tmpl = Data[Any, Any, Any, Any, Any, Any](_typehint=type_)
 
         return has_type(obj, type_) and all(
-            is_subtype(
-                obj._get_typearg(t),
+            not isinstance(obj_type := obj._get_typearg(t), Undef)
+            and is_subtype(
+                obj_type,
                 tmpl._get_typearg(t),
             )
             for t in tmpl._typearg_map.keys()
         )
 
-    def _get_typearg(self, typevar: TypeVar) -> SingleTypeDef:
+    def _get_typearg(
+        self, typevar: TypeVar, remove_null: bool = False
+    ) -> SingleTypeDef | UnionType:
         """Get the type argument for a type variable."""
+        assert len(self._generic_args) > 0
+
         typearg = self._typearg_map[typevar]
         if isinstance(typearg, int):
-            return self._generic_args[typearg]
+            return self._hint_to_typedef(
+                self._generic_args[typearg], remove_null=remove_null
+            )
 
         return typearg
 
     def _hint_to_typedef(
-        self, hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef
-    ) -> SingleTypeDef:
+        self,
+        hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
+        remove_null: bool = False,
+    ) -> SingleTypeDef | UnionType:
         typedef = hint
 
         if isinstance(typedef, str):
@@ -2353,10 +2360,20 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
 
         if isinstance(typedef, UnionType):
-            union_types: set[type] = {
-                get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
-            }
-            typedef = get_lowest_common_base(union_types)
+            if remove_null:
+                union_types: set[type] = {
+                    get_origin(union_arg) or union_arg
+                    for union_arg in get_args(typedef)
+                }
+                union_types = {
+                    t
+                    for t in union_types
+                    if t is not None and not issubclass(t, NoneType)
+                }
+                assert len(union_types) == 1
+                return next(iter(union_types))
+
+            return typedef
 
         return cast(SingleTypeDef, typedef)
 
@@ -2367,11 +2384,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if isinstance(hint, type):
             return hint
 
-        typedef = (
-            self._hint_to_typedef(hint)
-            if isinstance(hint, UnionType | TypeVar)
-            else hint
-        )
+        typedef = self._hint_to_typedef(hint) if isinstance(hint, TypeVar) else hint
         orig = get_origin(typedef)
 
         if orig is None or orig is Literal:
@@ -2407,11 +2420,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 lambda x, y: copy_and_override(
                     cast(type[Data[Record, Any, Any, Any, Any, BaseT]], type(y)),
                     y,
-                    _ctx=copy_and_override(
-                        Table[Record | None, Any, Any, Any, Any, Any], x, _db=y.db
-                    ),
+                    _db=x.db,
+                    _ctx=x if not isinstance(x, DataBase) else None,
                 ),
-                self._prop_path,
+                self.path,
                 left,
             ),
         )
@@ -3191,14 +3203,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
 @dataclass(kw_only=True, eq=False)
 class Value(
-    Data[ValT, NoIdx, RwT, None, Ctx[ParT], BaseT],
+    Data[ValT, Idx[()], RwT, None, Ctx[ParT], BaseT],
     Generic[ValT, RwT, PubT, ParT, BaseT],
 ):
     """Single-value attribute or column."""
 
     _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
         ValT: 0,
-        IdxT: NoIdx,
+        IdxT: Idx[()],
         CrudT: 1,
         RelT: NoneType,
         CtxT: Ctx,
@@ -3270,14 +3282,14 @@ class Table(
 
 @dataclass(kw_only=True, eq=False)
 class Link(
-    Table[RefT, None, CrudT, NoIdx, Ctx[ParT], BaseT],
+    Table[RefT, None, CrudT, Idx[()], Ctx[ParT], BaseT],
     Generic[RefT, CrudT, ParT, BaseT],
 ):
     """Link to a single record."""
 
     _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
         ValT: 0,
-        IdxT: NoIdx,
+        IdxT: Idx[()],
         CrudT: 1,
         RelT: NoneType,
         CtxT: Ctx[Any],
@@ -3310,7 +3322,7 @@ class BackLink(
         BaseT: 4,
     }
 
-    link: Data[ParT, NoIdx, Any, None, Ctx[RecT], Symbolic]
+    link: Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
 
 
 @dataclass(eq=False)
@@ -3347,7 +3359,7 @@ class Array(
 
 
 @dataclass
-class DataBase(Data[Any, NoIdx, CrudT, None, None, BaseT]):
+class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
     """Database connection."""
 
     backend: BaseT = None  # pyright: ignore[reportAssignmentType]
@@ -4143,7 +4155,12 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
     ) -> set[BackLink[RecT2, Any, Any, Self, Symbolic]]:
         """Get all direct relations from a target record type to this type."""
         return {
-            BackLink(link=cast(Link[Self, Any, RecT2, Symbolic], ln), _ctx=Ctx(cls))
+            BackLink(
+                link=cast(Link[Self, Any, RecT2, Symbolic], ln),
+                _ctx=Ctx(cls),
+                _typehint=BackLink[target],
+                _db=symbol_db,
+            )
             for ln in target._links.values()
             if issubclass(cls, ln.target_type)
         }

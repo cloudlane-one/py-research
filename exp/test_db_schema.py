@@ -33,7 +33,7 @@ class Search(Record[str]):
     results: Table[Project, SearchResult] = Table(default=True)
 
 
-Assignment = Relation["User", "Task"]
+type Assignment = Relation["User", "Task"]
 
 
 class Task(RecUUID):

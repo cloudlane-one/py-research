@@ -33,9 +33,9 @@ from .databases import (
     Ctx,
     Data,
     DataBase,
+    Idx,
     IndexedRelation,
     Link,
-    NoIdx,
     Record,
     Symbolic,
     Table,
@@ -156,9 +156,9 @@ type NodeSelector = str | int | TreePath | type[All]
 """Select a node in a hierarchical data structure."""
 
 
-type ValueTarget[Rec: Record] = Data[Any, NoIdx, Any, Any, Ctx[Rec], Symbolic]
+type ValueTarget[Rec: Record] = Data[Any, Idx[()], Any, Any, Ctx[Rec], Symbolic]
 
-type RecordTarget[Rec: Record] = Data[Rec, NoIdx, Any, Any, Ctx, Symbolic]
+type RecordTarget[Rec: Record] = Data[Rec, Idx[()], Any, Any, Ctx, Symbolic]
 
 type PropTarget[Rec: Record] = ValueTarget[Rec] | RecordTarget[Rec]
 

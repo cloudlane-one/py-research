@@ -368,7 +368,7 @@ class cached_prop(Generic[S, P, R, M]):  # noqa: N801
             assert isinstance(args[0], Callable)
             return copy_and_override(cached_prop[Any, Any, Any], self, getter=args[0])
 
-        return self.getter(args[0], *args[:-1], **kwargs)
+        return self.getter(args[0], *args[1:], **kwargs)
 
     @overload
     def __get__(self, instance: None, owner: None) -> Self: ...
