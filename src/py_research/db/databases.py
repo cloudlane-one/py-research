@@ -1664,7 +1664,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             if isinstance(self, Value):
                 if (
                     self.pub_status is Public
-                    and instance._connected
+                    and instance._published
                     and instance._index not in instance._db._get_valid_cache_set(owner)
                 ):
                     instance._update_dict()
@@ -1736,7 +1736,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 else:
                     instance.__dict__[self.name] = value
 
-            if not isinstance(self, Value) or self.pub_status is Public:
+            if not isinstance(self, Value) or (
+                self.pub_status is Public and instance._published
+            ):
                 owner = type(instance)
                 sym_rel: Data[Any, Any, Any, Any, Any, Symbolic] = getattr(
                     owner, self.name
@@ -2787,9 +2789,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             db: dict(recs)
             for db, recs in groupby(
                 sorted(
-                    values.items(), key=lambda x: x[1]._connected and x[1]._db.db_id
+                    values.items(), key=lambda x: x[1]._published and x[1]._db.db_id
                 ),
-                lambda x: None if not x[1]._connected else x[1]._db,
+                lambda x: None if not x[1]._published else x[1]._db,
             )
         }
 
@@ -4103,7 +4105,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         pub_status=Private,
         default_factory=lambda: DataBase[CRUD, DynBackendID](),
     )
-    _connected: Value[bool, CRUD, Private] = Value(pub_status=Private, default=False)
+    _published: Value[bool, CRUD, Private] = Value(pub_status=Private, default=False)
     _root: Value[bool, CRUD, Private] = Value(pub_status=Private, default=True)
     _index: Value[tuple[*KeyTt], CRUD, Private] = Value(pub_status=Private, init=False)
 
@@ -4148,9 +4150,9 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
     @cached_prop
     def _table(self) -> Table[Self, Any, CRUD, BaseIdx[Self], None, DynBackendID]:
-        if not self._connected:
+        if not self._published:
             self._db[type(self)] |= self
-            self._connected = True
+            self._published = True
 
         data = self._db[type(self)]
         assert isinstance(data, Table)
@@ -4161,7 +4163,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
     def __hash__(self) -> int:
         """Identify the record by database and id."""
-        return gen_int_hash((self._db if self._connected else None, self._index))
+        return gen_int_hash((self._db if self._published else None, self._index))
 
     def __eq__(self, value: Hashable) -> bool:
         """Check if the record is equal to another record."""
