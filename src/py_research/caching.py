@@ -114,7 +114,7 @@ class FileCache:
 
         last_cached = sorted(all_cached, key=self.__get_date_from_filename)[-1]
         extension = last_cached.name.split(".")[-1]
-        return_type = get_return_type(func) or type
+        return_type = get_return_type(func) or object
 
         cached_result = None
         if is_subtype(return_type, str) and extension == "txt":

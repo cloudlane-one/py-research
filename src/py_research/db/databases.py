@@ -43,6 +43,7 @@ import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.dialects.sqlite as sqlite
 import sqlalchemy.orm as orm
 import sqlalchemy.sql.visitors as sqla_visitors
+import sqlparse
 import yarl
 from bidict import bidict
 from cloudpathlib import CloudPath
@@ -67,8 +68,6 @@ from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
     GenericProtocol,
     SingleTypeDef,
-    extract_nullable_type,
-    get_lowest_common_base,
     has_type,
     is_subtype,
 )
@@ -452,12 +451,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         BaseT: 5,
     }
 
-    _db: DataBase[CrudT | CRUD, BaseT] | None = None
-    _ctx: CtxT | Data[Record | None, Any, R, Any, Any, BaseT] | None = None
-
     _name: str | None = None
     _typehint: str | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]] | None = None
     _typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
+
+    _db: DataBase[CrudT | CRUD, BaseT] | None = None
+    _ctx: CtxT | Data[Record | None, Any, R, Any, Any, BaseT] | None = None
 
     _filters: list[
         sqla.ColumnElement[bool]
@@ -493,6 +492,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @cached_prop
     def path(self) -> PropPath[Record, ValT]:
+        """Relational path of this dataset."""
         if self._ctx_table is None:
             assert issubclass(self.target_type, Record)
             return (cast(Table[Record, Any, Any, Any, None, Any], self),)
@@ -640,6 +640,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Return select statement for this dataset."""
         return self.select.subquery()
 
+    @property
+    def select_str(self) -> str:
+        """Return select statement for this dataset."""
+        return sqlparse.format(
+            str(self.select.compile(self.db.engine)),
+            reindent=True,
+            keyword_case="upper",
+        )
+
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash(
             (
@@ -731,6 +740,31 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             vals.append(tuple(val_list) if len(val_list) > 1 else val_list[0])
 
         return vals
+
+    @overload
+    def items(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[
+            ValT2, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, DynBackendID
+        ],
+    ) -> Iterable[tuple[KeyT2, ValT2]]: ...
+
+    @overload
+    def items(
+        self: Data[
+            ValT2,
+            BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2],
+            Any,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+    ) -> Iterable[tuple[tuple[*KeyTt2], ValT2]]: ...
+
+    def items(
+        self: Data[Any, Any, Any, Any, Any, DynBackendID],
+    ) -> Iterable[tuple[Any, Any]]:
+        """Iterable over this dataset's items."""
+        return zip(self.keys(), self.values())
 
     @overload
     def get(
@@ -1131,7 +1165,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             case type():
                 return Table(_db=self.db, _typehint=Table[key])
             case Data():
-                return key._add_ctx(self)
+                return (
+                    key._add_ctx(self._ctx_table)
+                    if self._ctx_table is not None
+                    else copy_and_override(
+                        type(key),
+                        key,
+                        _db=self.db,
+                    )
+                )
             case list() | slice() | Hashable() | sqla.ColumnElement():
                 if not isinstance(key, tuple | list | sqla.ColumnElement):
                     key = (key,)
@@ -2079,21 +2121,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             for v in (
                 (v for sel in self.tuple_selection for v in sel._abs_joins)
                 if Data._has_type(self, Data[tuple, Any, Any, Any, Ctx, Any])
-                else (
-                    (() if self._ctx is None else (self,))
-                    if Data._has_type(
-                        self, Data[Record | None, Any, Any, Any, Any, Any]
-                    )
-                    else (
-                        (self.rel,)
-                        if Data._has_type(self, Data[Any, Any, Any, Record, Ctx, Any])
-                        else (
-                            (self.ctx,)
-                            if Data._has_type(self, Data[Any, Any, Any, Any, Ctx, Any])
-                            else ()
-                        )
-                    )
-                )
+                else (self,)
             )
         ]
 
@@ -2421,7 +2449,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     cast(type[Data[Record, Any, Any, Any, Any, BaseT]], type(y)),
                     y,
                     _db=x.db,
-                    _ctx=x if not isinstance(x, DataBase) else None,
+                    _ctx=x,
                 ),
                 self.path,
                 left,
