@@ -13,10 +13,12 @@ from .databases import Relation as Relation
 from .databases import Schema as Schema
 from .databases import Table as Table
 from .databases import Value as Value
+from .datasources import ArrayMap as ArrayMap
 from .datasources import DataSource as DataSource
 from .datasources import Hash as Hash
-from .datasources import RecMap as RecMap
-from .datasources import RefMap as RefMap
+from .datasources import IdxMap as IdxMap
 from .datasources import SelIndex as SelIndex
 from .datasources import SubMap as SubMap
+from .datasources import SubTableMap as SubTableMap
+from .datasources import TableMap as TableMap
 from .datasources import Transform as Transform
