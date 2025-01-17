@@ -258,18 +258,32 @@ class TableMap[Rec: Record, Dat]:
     conflicts: DataConflictPolicy = "collect"
     """Which policy to use if import conflicts occur for this record table."""
 
-    rec_type: type[Rec] | type[Record] = field(init=False, repr=False, default=Record)
+    target_type: type[Rec] | None = None
+    """Record type to use for this mapping."""
+
+    @property
+    def record_type(self) -> type[Rec]:
+        """Get the record type."""
+        assert self.target_type is not None
+        return self.target_type
 
     @cached_property
     def full_map(self) -> _PullMapping[Rec]:
         """Get the full mapping."""
         return {
             **(
-                _push_to_pull_map(self.rec_type, self.push)
+                _push_to_pull_map(self.record_type, self.push)
                 if self.push is not None
                 else {}
             ),
-            **{k: DataSelect.parse(v) for k, v in (self.pull or {}).items()},
+            **{
+                tgt: (
+                    copy_and_override(SubMap, sel, target_type=tgt.record_type)
+                    if isinstance(sel, SubMap) and isinstance(tgt, Data)
+                    else DataSelect.parse(sel)
+                )
+                for tgt, sel in (self.pull or {}).items()
+            },
         }
 
     @cached_property
@@ -383,9 +397,9 @@ class SubTableMap[Rec: Record, Dat, Rec2: Record](TableMap[Rec, Dat]):
     """Mapping to optional attributes of the relation record."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        self.rec_type = self.target.record_type
+        self.target_type = self.target.record_type
         if self.rel_map is not None:
-            self.rel_map.rec_type = self.target.relation_type
+            self.rel_map.target_type = self.target.relation_type
 
     @cached_property
     def sub_rel_map(self) -> SubTableMap | None:
@@ -442,7 +456,9 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
                 if isinstance(target, SubTableMap) and target.target is not None
                 else getattr(rec, _get_selector_name(sel))
             ): (
-                copy_and_override(SubMap, target, sel=sel)
+                copy_and_override(
+                    SubMap, target, sel=sel, target_type=target.record_type
+                )
                 if isinstance(target, SubTableMap)
                 else DataSelect.parse(sel)
             )
@@ -656,8 +672,8 @@ async def _load_record[
 
     rec: Record | None = None
     is_new: bool = True
-    if table_map.rec_type._is_complete_dict(rec_dict):
-        rec = table_map.rec_type(_database=rec_set.db, **rec_dict)
+    if table_map.record_type._is_complete_dict(rec_dict):
+        rec = table_map.record_type(_database=rec_set.db, **rec_dict)
 
     match_expr = _gen_match_expr(
         rec_set,
@@ -740,7 +756,7 @@ async def _load_records(
     in_data: InData,
     rest_data: RestData,
 ) -> dict[Hashable, Record | Hashable]:
-    rec_set = db[table_map.rec_type]
+    rec_set = db[table_map.record_type]
     lazy_data: LazyData = []
 
     async def _load_rec_from_item(
@@ -756,7 +772,7 @@ async def _load_records(
             in_data.items(),
             _sliding_batch_map(in_data.items(), _load_rec_from_item),
         ),
-        desc=f"Async-loading `{table_map.rec_type.__name__}`",
+        desc=f"Async-loading `{table_map.record_type.__name__}`",
         total=len(in_data),
     )
 
@@ -827,7 +843,7 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
     """Root record type to load."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        self.rec_type = self.target
+        self.target_type = self.target
 
     @cached_property
     def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
@@ -862,5 +878,5 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
             loaded |= await _load_records(db, table_map, tree_data, rest_rest)
             assert all(len(v[1]) == 0 for v in rest_rest)
 
-        db[self.rec_type] |= loaded
+        db[self.record_type] |= loaded
         return set(loaded.keys())

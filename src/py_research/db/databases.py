@@ -1980,7 +1980,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     copy_and_override(
                         Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self
                     )
-                    for v in self.record_type._values.values()
+                    for v in self.record_type._col_values.values()
                 }
                 if Data._has_type(self, Data[Record | None, Any, Any, Any, Any, Any])
                 else {
@@ -4265,7 +4265,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
             self._index = cast(tuple[*KeyTt], tuple(getattr(self, pk) for pk in pks))
 
         if self._database is not None and not self._published:
-            self._table[[self._index]]._mutate(self)
+            self._db[type(self)] |= self
             self._published = True
 
         return
@@ -4279,11 +4279,11 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
     @cached_prop
     def _table(self) -> Table[Self, Any, CRUD, BaseIdx[Self], None, DynBackendID]:
+        table = self._db[type(self)]
         if not self._published:
-            self._db[type(self)] |= self
+            table |= self
             self._published = True
 
-        table = self._db[type(self)]
         assert isinstance(table, Table)
         return table
 
@@ -4304,6 +4304,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         name_keys: Literal[False] = ...,
         include: set[type[Data]] | None = ...,
         with_fks: bool = ...,
+        with_private: bool = ...,
     ) -> dict[Data, Any]: ...
 
     @overload
@@ -4312,6 +4313,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         name_keys: Literal[True],
         include: set[type[Data]] | None = ...,
         with_fks: bool = ...,
+        with_private: bool = ...,
     ) -> dict[str, Any]: ...
 
     def _to_dict(
@@ -4319,6 +4321,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         name_keys: bool = True,
         include: set[type[Data[Any, Any, Any, Any, Any, Any]]] | None = None,
         with_fks: bool = True,
+        with_private: bool = False,
     ) -> dict[Data, Any] | dict[str, Any]:
         """Convert the record to a dictionary."""
         include_types: tuple[type[Data[Any, Any, Any, Any, Any, Any]], ...] = (
@@ -4329,6 +4332,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
             p if not name_keys else p.name: getattr(self, p.name)
             for p in (type(self)._props if with_fks else type(self)._props).values()
             if isinstance(p, include_types)
+            and (not isinstance(p, Value) or p.pub_status is Public or with_private)
         }
 
         return cast(dict, vals)
