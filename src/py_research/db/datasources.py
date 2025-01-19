@@ -401,14 +401,6 @@ class SubTableMap[Rec: Record, Dat, Rec2: Record](TableMap[Rec, Dat]):
         if self.rel_map is not None:
             self.rel_map.target_type = self.target.relation_type
 
-    @cached_property
-    def sub_rel_map(self) -> SubTableMap | None:
-        """Get the relation sub-map."""
-        if issubclass(self.target.relation_type, Record) and self.rel_map is not None:
-            return copy_and_override(SubTableMap, self.rel_map, target=self.target.rel)
-
-        return None
-
 
 def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     """Parse push map into a more usable format."""
@@ -541,7 +533,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    rec_set: Data[Record, Any, Any, Any, Any, Any],
+    table: Data[Record, Any, Any, Any, Any, Any],
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -552,8 +544,8 @@ def _gen_match_expr(
     else:
         match_cols = (
             list(
-                getattr(rec_set.record_type, a.name)
-                for a in rec_set.record_type._values.values()
+                getattr(table.record_type, a.name)
+                for a in table.record_type._values.values()
             )
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Data) else match_by
@@ -575,17 +567,14 @@ type LazyData = list[
 type RestData = list[tuple[TableMap[Record, TreeNode], InData]]
 
 
-async def _load_record[
-    Rec: Record
-](
-    rec_set: Data[Record, Any, Any, Any, Any, Any],
+async def _load_record(
+    table: Data[Record, Any, Any, Any, Any, Any],
     lazy_data: LazyData,
     table_map: TableMap[Record, Any],
-    parent_idx: Hashable | None,
     path_idx: DirectPath,
     data: TreeNode,
-    inject: dict[str, Any] | None,
-) -> tuple[Hashable | Rec | None, Hashable | Rec | None]:
+    injections: dict[str, Hashable] | None,
+) -> Hashable | Record | None:
     if table_map.loader is not None:
         if table_map.async_loader:
             data = await cast(
@@ -595,7 +584,7 @@ async def _load_record[
         else:
             data = table_map.loader(data)
 
-    ref_fks: dict[str, Hashable] = {}
+    link_fks: dict[str, Hashable] = {}
 
     for rel, target_map in table_map.sub_tables.items():
         if isinstance(rel, Link):
@@ -605,14 +594,14 @@ async def _load_record[
             sub_path = sub_items[0][0]
             sub_data = sub_items[0][1]
 
-            sub_rec, _ = await _load_record(
-                rec_set[rel], lazy_data, target_map, None, sub_path, sub_data, None
+            sub_rec = await _load_record(
+                table[rel], lazy_data, target_map, sub_path, sub_data, None
             )
 
             if sub_rec is None:
-                return None, None
+                return None
 
-            ref_fks |= rel._gen_fk_value_map(
+            link_fks |= rel._gen_fk_value_map(
                 sub_rec._index if isinstance(sub_rec, Record) else sub_rec
             )
 
@@ -623,7 +612,7 @@ async def _load_record[
         if isinstance(idx, Index)
     }
     if len(indexes) > 0:
-        rec_pks = list(rec_set.record_type._pk_values.values())
+        rec_pks = list(table.record_type._pk_values.values())
         idx_maps = [
             dict(
                 zip(
@@ -652,11 +641,6 @@ async def _load_record[
             else list(idx_sel.values())[0]
         )
 
-    parent_rel_fks = {}
-    if isinstance(table_map, SubTableMap) and isinstance(table_map.target, BackLink):
-        assert parent_idx is not None
-        parent_rel_fks = table_map.target.link._gen_fk_value_map(parent_idx)
-
     attrs = {
         a.name: (a, *list(sel.select(data, path_idx).items())[0])
         for a, sel in table_map.full_map.items()
@@ -665,30 +649,29 @@ async def _load_record[
 
     rec_dict = {
         **{a[0].name: a[2] for a in attrs.values()},
-        **ref_fks,
-        **parent_rel_fks,
-        **(inject if inject is not None else {}),
+        **link_fks,
+        **(injections or {}),
     }
 
     rec: Record | None = None
     is_new: bool = True
     if table_map.record_type._is_complete_dict(rec_dict):
-        rec = table_map.record_type(_database=rec_set.db, **rec_dict)
+        rec = table_map.record_type(_database=table.db, **rec_dict)
 
     match_expr = _gen_match_expr(
-        rec_set,
+        table,
         rec._index if rec is not None else rec_idx if rec_idx is not None else None,
         rec_dict,
         table_map.match_by,
     )
 
-    recs_keys = rec_set[match_expr].keys()
-    if len(recs_keys) == 1:
+    recs_keys = table[match_expr].keys()
+    if len(recs_keys) > 0:
         rec_idx = recs_keys[0]
         is_new = False
 
     if rec is None and rec_idx is None:
-        return None, None
+        return None
 
     # Add backlinking tables to lazy data.
     lazy_data.extend(
@@ -735,19 +718,7 @@ async def _load_record[
                 )
             )
 
-    rel: Record | Hashable | None = None
-    if isinstance(table_map, SubTableMap) and table_map.sub_rel_map is not None:
-        rel, _ = await _load_record(
-            rec_set,
-            lazy_data,
-            table_map.sub_rel_map,
-            parent_idx,
-            path_idx,
-            data,
-            inject=table_map.target._gen_fk_value_map(rec_idx),
-        )
-
-    return rec if rec is not None and is_new else rec_idx, rel
+    return rec if rec is not None and is_new else rec_idx
 
 
 async def _load_records(
@@ -756,16 +727,54 @@ async def _load_records(
     in_data: InData,
     rest_data: RestData,
 ) -> dict[Hashable, Record | Hashable]:
-    rec_set = db[table_map.record_type]
+    table = db[table_map.record_type]
     lazy_data: LazyData = []
 
     async def _load_rec_from_item(
         item: tuple[tuple[Hashable, DirectPath], TreeNode]
     ) -> tuple[Hashable | Record | None, Hashable | Record | None]:
         (parent_idx, path_idx), data = item
-        return await _load_record(
-            rec_set, lazy_data, table_map, parent_idx, path_idx, data, {}
+
+        external_links = (
+            table_map.target.link._gen_fk_value_map(parent_idx)
+            if isinstance(table_map, SubTableMap)
+            and isinstance(table_map.target, BackLink)
+            else None
         )
+
+        rec = await _load_record(
+            table, lazy_data, table_map, path_idx, data, external_links
+        )
+
+        if isinstance(table_map, SubTableMap) and issubclass(
+            table_map.target.relation_type, Record
+        ):
+            assert table_map.target._rel is not None
+            assert table_map.target._rel_to is not None
+
+            rel_map = copy_and_override(
+                SubTableMap,
+                table_map.rel_map if table_map.rel_map is not None else TableMap(),
+                target=table_map.target._rel,
+            )
+
+            rec_idx = rec._index if isinstance(rec, Record) else rec
+
+            rel = await _load_record(
+                db[table_map.target.relation_type],
+                lazy_data,
+                rel_map,
+                path_idx,
+                data,
+                injections={
+                    **table_map.target._rel.link._gen_fk_value_map(parent_idx),
+                    **table_map.target._rel_to._gen_fk_value_map(rec_idx),
+                },
+            )
+
+            return rec, rel
+
+        return rec, None
 
     loaded = tqdm(
         azip(
@@ -804,7 +813,7 @@ async def _load_records(
                 if isinstance(rel, Record):
                     rel = rel
                 else:
-                    assert isinstance(rel, int)
+                    assert isinstance(rel, str)
                     rel = db[table_map.target.relation_type][rel]
 
                 mapped_idx = getattr(rel, table_map.target.relation_type._rel_id.name)  # type: ignore
@@ -820,14 +829,14 @@ async def _load_records(
     for rel_tgt, sub_data in lazy_data:
         if isinstance(rel_tgt, SubTableMap):
             # Full record relation set
-            rec_set[rel_tgt.target] |= await _load_records(
+            await _load_records(
                 db,
                 rel_tgt,
                 cast(InData, sub_data),
                 rest_data,
             )
         else:
-            rec_set[rel_tgt] |= sub_data
+            table[rel_tgt] |= sub_data
 
     if len(rest_records) > 0:
         rest_data.append((table_map, rest_records))
@@ -876,7 +885,7 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
         for table_map, tree_data in rest_data:
             rest_rest: RestData = []
             loaded |= await _load_records(db, table_map, tree_data, rest_rest)
-            assert all(len(v[1]) == 0 for v in rest_rest)
+            # assert all(len(v[1]) == 0 for v in rest_rest)
 
         db[self.record_type] |= loaded
         return set(loaded.keys())

@@ -55,7 +55,11 @@ class SupportsItems(Protocol[T_cov, U_cov]):
 
 def is_subtype(type_: SingleTypeDef | UnionType, supertype: T) -> TypeGuard[T]:
     """Check if object is of given type hint."""
-    return is_subhint(type_, supertype)
+    return (
+        is_subhint(type_, supertype)
+        if not isinstance(type_, TypeAliasType)
+        else is_subhint(type_.__value__, supertype)
+    )
 
 
 def has_type(obj: Any, type_: SingleTypeDef[T] | UnionType) -> TypeGuard[T]:

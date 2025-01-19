@@ -587,37 +587,20 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             else:
                 return self.name
 
-        fqn = f"{self._ctx_table.fqn}.{self.name}"
+        fqn = f"{self._ctx_table.fqn}_{self.name}"
 
         if len(self._filters) > 0:
-            fqn += f"[{gen_str_hash(self._filters)}]"
+            fqn += "_" + gen_str_hash(self._filters)
 
         return fqn
 
-    @cached_prop
+    @property
     def rel(
         self: Data[Any, Any, Any, RecT2, Ctx[RecT3], Any]
     ) -> BackLink[RecT2, Any, Any, RecT3, BaseT]:
         """Table pointing to the relations of this dataset, if any."""
-        link = (
-            self.relation_type._from  # type: ignore
-            if issubclass(self.relation_type, BacklinkRecord)
-            else [
-                r
-                for r in self.relation_type._links.values()
-                if isinstance(r, Link)
-                and issubclass(self.ctx.record_type, r.record_type)
-            ][0]
-        )
-        index_by = self.index_by if isinstance(self, Table) else None
-
-        return BackLink[RecT2, Any, Any, RecT3, BaseT](
-            _db=self.db,
-            _ctx=self.ctx,
-            _typehint=BackLink[self.relation_type],
-            link=cast(Link[Any, Any, Any, Any], link),
-            index_by=index_by,
-        )
+        assert self._rel is not None
+        return self._rel
 
     @cached_prop
     def rec(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
@@ -1934,6 +1917,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def _idx_cols(
         self: Data[Record | None, Any, Any, Any, Any, Any]
     ) -> list[Value[Any, Any, Public, Any, Symbolic]]:
+        if isinstance(self, Link):
+            return []
+
         if isinstance(self, Table) and self.index_by is not None:
             return (
                 [self.index_by]
@@ -1947,24 +1933,47 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return list(self.record_type._pk_values.values())
 
     @cached_prop
+    def _rel(
+        self: Data[Any, Any, Any, RecT2 | None, Ctx[RecT3], Any]
+    ) -> BackLink[RecT2, Any, Any, RecT3, BaseT] | None:
+        """Table pointing to the relations of this dataset, if any."""
+        if not issubclass(self.relation_type, Record):
+            return None
+
+        link = [
+            r
+            for r in self.relation_type._links.values()
+            if isinstance(r, Link) and issubclass(self.ctx.record_type, r.record_type)
+        ][0]
+        index_by = self.index_by if isinstance(self, Table) else None
+
+        return BackLink[RecT2, Any, Any, RecT3, BaseT](
+            _db=self.db,
+            _ctx=self.ctx,
+            _typehint=BackLink[self.relation_type],
+            link=cast(Link[Any, Any, Any, Any], link),
+            index_by=index_by,
+        )
+
+    @cached_prop
     def _rel_to(
-        self: Data[RefT2, Any, Any, RecT2, Ctx, Any]
+        self: Data[RefT2, Any, Any, RecT2 | None, Ctx, Any]
     ) -> Link[RefT2, Any, RecT2, BaseT] | None:
         links = (
-            [self.relation_type._to]  # type: ignore
-            if issubclass(self.relation_type, Relation)
-            else [
+            [
                 r
                 for r in self.relation_type._links.values()
-                if isinstance(r, Link) and issubclass(self.record_type, r.record_type)
+                if isinstance(r, Link) and issubclass(self.target_type, r.record_type)
             ]
+            if issubclass(self.relation_type, Record)
+            else []
         )
 
         if len(links) != 1:
             return None
 
         return copy_and_override(
-            Link[RefT2, Any, RecT2, BaseT], links[0], _db=self.db, _ctx=self.rel
+            Link[RefT2, Any, RecT2, BaseT], links[0], _db=self.db, _ctx=self._rel
         )
 
     @cached_prop
@@ -2100,6 +2109,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ]:
         sql_filt = [f for f in self._filters if isinstance(f, sqla.ColumnElement)]
 
+        join_set: set[Table[Any, Any, Any, Any, Any, BaseT]] = set()
+        replace_func = partial(self._visit_filter_col, join_set=join_set)
+        sql_filt = [
+            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
+            for f in sql_filt
+        ]
+        merge = list(join_set)
+
         key_filt = [
             (
                 reduce(
@@ -2130,20 +2147,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             if not isinstance(key_filt, sqla.ColumnElement)
         ]
 
-        filters = [
+        return [
             *sql_filt,
             *key_filt,
-        ]
-
-        join_set: set[Table[Any, Any, Any, Any, Any, BaseT]] = set()
-        replace_func = partial(self._visit_filter_col, join_set=join_set, render=False)
-        parsed_filt = [
-            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
-            for f in filters
-        ]
-        merge = list(join_set)
-
-        return parsed_filt, merge
+        ], merge
 
     @cached_prop
     def _abs_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
@@ -2327,7 +2334,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @cached_prop
     def _sql_col(self: Data[Any, Any, Any, Any, Ctx, Any]) -> sqla.ColumnElement:
-        return self.ctx._sql_table.c[self.name]
+        col = sqla.column(self.name, _selectable=self._home_table._sql_table)
+        setattr(col, "_data", self)
+        return col
 
     @cached_prop
     def _sql_table(
@@ -2534,9 +2543,19 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         join_set: set[Table[Any, Any, Any, Any, Any, BaseT]] = set(),
         **kw: Any,
     ) -> sqla.ColumnElement | None:
-        if isinstance(element, Value) and self._ctx_table is not None:
-            prefixed = element._add_ctx(self._ctx_table)
-            join_set.add(prefixed.ctx)
+        if hasattr(element, "_data"):
+            data = cast(
+                Data[Any, Idx[()], Any, None, Ctx, Any], getattr(element, "_data")
+            )
+            prefixed = (
+                data._add_ctx(self._ctx_table)
+                if self._ctx_table is not None
+                else copy_and_override(type(data), data, _db=self.db)
+            )
+
+            if hash(prefixed.ctx) != hash(self._root_table):
+                join_set.add(prefixed.ctx)
+
             return prefixed._sql_col
 
         return None
@@ -2617,7 +2636,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         table = sqla.Table(
             table_name,
             self.db._metadata,
-            *cols.values(),
             *fks,
             schema=(sub.schema if sub is not None else None),
             extend_existing=True,
@@ -3529,7 +3547,10 @@ class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
         """Return the unique database ID."""
         if isinstance(self.backend, Symbolic):
             return "symbolic"
-        return self.backend or gen_str_hash(self.url) or token_hex(5)
+        if self.backend is None:
+            return token_hex(5)
+
+        return gen_str_hash(self.url) if self.url is not None else self.backend
 
     @cached_prop
     def backend_type(
@@ -3573,7 +3594,7 @@ class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
             )
             else (
                 sqla.create_engine(
-                    f"sqlite:///file:{self.db_id}?mode=memory&cache=shared"
+                    f"sqlite:///file:{self.db_id}?uri=true&mode=memory&cache=shared"
                 )
             )
         )
@@ -4526,16 +4547,20 @@ class RecUUID(Record[UUID4]):
     _id: Value[UUID4] = Value(primary_key=True, default_factory=lambda: UUID4(uuid4()))
 
 
-class RecHashed(Record[int]):
+class RecHashed(Record[str]):
     """Record type with a default hashed primary key."""
 
     _template = True
 
-    _id: Value[int] = Value(primary_key=True, init=False)
+    _id: Value[str] = Value(primary_key=True, init=False)
 
     def __post_init__(self) -> None:  # noqa: D105
-        self._id = gen_int_hash(
-            {a.name: getattr(self, a.name) for a in type(self)._values.values()}
+        self._id = gen_str_hash(
+            {
+                a.name: getattr(self, a.name)
+                for a in type(self)._values.values()
+                if a.name != "_id"
+            }
         )
 
 
@@ -4556,7 +4581,7 @@ class ArrayRecord(BacklinkRecord[KeyT2, RecT2], Generic[ValT, KeyT2, RecT2]):
     _value: Value[ValT]
 
 
-class Relation(RecHashed, BacklinkRecord[int, RecT2], Generic[RecT2, RecT3]):
+class Relation(RecHashed, BacklinkRecord[str, RecT2], Generic[RecT2, RecT3]):
     """Automatically defined relation record type."""
 
     _template = True

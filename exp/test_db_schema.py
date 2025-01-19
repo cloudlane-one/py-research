@@ -61,8 +61,6 @@ class User(RecUUID):
 class Membership(Relation["User", "Project"]):
     """Link user to a project."""
 
-    member: Link[User] = Link(primary_key=True)
-    project: Link[Project] = Link(primary_key=True)
     role: Value[str] = Value(default="member")
 
 
