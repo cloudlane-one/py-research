@@ -17,11 +17,9 @@ from py_research.db import (
 )
 
 
-class SearchResult(Record):
+class SearchResult(Relation["Search", "Project"]):
     """Link search to a result."""
 
-    search: Link[Search] = Link(primary_key=True)
-    result: Link[Project] = Link(primary_key=True)
     score: Value[float]
 
 

@@ -12,6 +12,7 @@ from io import BytesIO
 from itertools import groupby
 from pathlib import Path
 from secrets import token_hex
+from sqlite3 import PARSE_DECLTYPES
 from types import ModuleType, NoneType, UnionType, new_class
 from typing import (
     TYPE_CHECKING,
@@ -1231,7 +1232,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @overload
     def __imatmul__(
         self: Data[
-            Record[KeyT2] | Record[*KeyTt2],
+            Record[KeyT2] | Record[*KeyTt2] | None,
             BaseIdx[Record[KeyT3]]
             | Idx[KeyT3]
             | BaseIdx[Record[*KeyTt3]]
@@ -1280,7 +1281,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @overload
     def __iadd__(
         self: Data[
-            Record[KeyT2] | Record[*KeyTt2],
+            Record[KeyT2] | Record[*KeyTt2] | None,
             BaseIdx[Record[KeyT3]]
             | Idx[KeyT3]
             | BaseIdx[Record[*KeyTt3]]
@@ -1329,7 +1330,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @overload
     def __ior__(
         self: Data[
-            Record[KeyT2] | Record[*KeyTt2],
+            Record[KeyT2] | Record[*KeyTt2] | None,
             BaseIdx[Record[KeyT3]]
             | Idx[KeyT3]
             | BaseIdx[Record[*KeyTt3]]
@@ -1378,7 +1379,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @overload
     def __iand__(
         self: Data[
-            Record[KeyT2] | Record[*KeyTt2],
+            Record[KeyT2] | Record[*KeyTt2] | None,
             BaseIdx[Record[KeyT3]]
             | Idx[KeyT3]
             | BaseIdx[Record[*KeyTt3]]
@@ -1427,7 +1428,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @overload
     def __isub__(
         self: Data[
-            Record[KeyT2] | Record[*KeyTt2],
+            Record[KeyT2] | Record[*KeyTt2] | None,
             BaseIdx[Record[KeyT3]]
             | Idx[KeyT3]
             | BaseIdx[Record[*KeyTt3]]
@@ -1927,8 +1928,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 else list(self.index_by)
             )
 
-        if self._ctx is not None and issubclass(self.record_type, IndexedRelation):
-            return [self.record_type._rel_id]  # type: ignore
+        if self._ctx is not None:
+            if issubclass(self.record_type, IndexedRelation):
+                return [self.record_type._rel_id]  # type: ignore
+            elif issubclass(self.record_type, Relation):
+                return [fk for fk in self.record_type._to._fk_map.keys()]  # type: ignore
 
         return list(self.record_type._pk_values.values())
 
@@ -3584,19 +3588,17 @@ class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
         """SQLA Engine for this DB."""
         # Create engine based on backend type
         # For Excel-backends, use sqlite in-memory engine
-        return (
-            sqla.create_engine(
-                self.url if isinstance(self.url, sqla.URL) else str(self.url)
-            )
-            if (
-                self.backend_type == "sql-connection"
-                or self.backend_type == "sqlite-file"
-            )
-            else (
-                sqla.create_engine(
-                    f"sqlite:///file:{self.db_id}?uri=true&mode=memory&cache=shared"
-                )
-            )
+        return sqla.create_engine(
+            (
+                (self.url if isinstance(self.url, sqla.URL) else str(self.url))
+                if self.backend_type in ("sql-connection", "sqlite-file")
+                else f"sqlite:///file:{self.db_id}?uri=true&mode=memory&cache=shared"
+            ),
+            connect_args=(
+                {"detect_types": PARSE_DECLTYPES}
+                if self.backend_type in ("sqlite-file", "in-memory")
+                else {}
+            ),
         )
 
     def describe(self) -> dict[str, str | dict[str, str] | None]:
@@ -4469,6 +4471,10 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         df = table.to_df()
         rec_dict = list(df.iter_rows(named=True))[0]
         self.__dict__.update(rec_dict)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the record."""
+        return f"{type(self).__name__}({self._to_dict(with_fks=False)})"
 
 
 class Schema:

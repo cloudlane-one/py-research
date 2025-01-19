@@ -35,7 +35,6 @@ from .databases import (
     Data,
     DataBase,
     Idx,
-    IndexedRelation,
     Link,
     Record,
     Symbolic,
@@ -533,7 +532,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    table: Data[Record, Any, Any, Any, Any, Any],
+    table: Data[Record | None, Any, Any, Any, Any, Any],
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -568,8 +567,7 @@ type RestData = list[tuple[TableMap[Record, TreeNode], InData]]
 
 
 async def _load_record(
-    table: Data[Record, Any, Any, Any, Any, Any],
-    lazy_data: LazyData,
+    table: Data[Record | None, Any, Any, Any, Any, Any],
     table_map: TableMap[Record, Any],
     path_idx: DirectPath,
     data: TreeNode,
@@ -648,69 +646,25 @@ async def _load_record(
         rec_idx = recs_keys[0]
         is_new = False
 
+    if is_new and table_map.match_by != "index":
+        table |= {rec_idx: rec}
+
     if rec is None and rec_idx is None:
         return None
-
-    # Add backlinking tables to lazy data.
-    lazy_data.extend(
-        (
-            (
-                copy_and_override(SubTableMap, sel, target=tgt)
-                if isinstance(sel, SubMap)
-                else SubTableMap[Record, TreeNode, Record](
-                    pull={
-                        v: v.name
-                        for v in cast(
-                            type[Record], tgt.record_type
-                        )._col_values.values()
-                    },
-                    target=tgt,
-                )
-            ),
-            {
-                (rec_idx, item_path): item_data
-                for item_path, item_data in sel.select(data, path_idx).items()
-            },
-        )
-        for tgt, sel in table_map.full_map.items()
-        if isinstance(tgt, Table)
-    )
-
-    # Add arrays to lazy data.
-    for tgt, sel in table_map.full_map.items():
-        if isinstance(tgt, Array):
-            idx_sel = sel.idx if isinstance(sel, IdxMap) else SelIndex()
-            lazy_data.append(
-                (
-                    tgt,
-                    {
-                        (
-                            (rec_idx if isinstance(rec_idx, tuple) else (rec_idx,)),
-                            (idx if isinstance(idx, tuple) else (idx,)),
-                        ): val
-                        for (_, idx), (_, val) in zip(
-                            idx_sel.select(data, path_idx).items(),
-                            sel.select(data, path_idx).items(),
-                        )
-                    },
-                )
-            )
 
     return rec if rec is not None and is_new else rec_idx
 
 
 async def _load_records(
-    db: DataBase,
+    table: Data[Record | None, Any, Any, Any, Any, Any],
     table_map: TableMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
-) -> dict[tuple[Hashable, DirectPath], Record | Hashable]:
-    table = db[table_map.record_type]
-    lazy_data: LazyData = []
-
-    link_fks: dict[DirectPath, dict[str, Hashable]] = {
-        path_idx: {} for (_, path_idx) in in_data.keys()
-    }
+    injects: dict[DirectPath, dict[str, Hashable]] | None = None,
+) -> dict[tuple[Hashable, Hashable, DirectPath], Record | Hashable]:
+    # Prepare data injections for all records.
+    injects = injects or {}
+    injects |= {path_idx: injects.get(path_idx, {}) for (_, path_idx) in in_data.keys()}
 
     # Preload all forward-linked records.
     for rel, target_map in table_map.sub_tables.items():
@@ -723,63 +677,34 @@ async def _load_records(
             }
 
             link_recs = await _load_records(
-                db,
+                table.db[rel.record_type],
                 target_map,
                 link_data,
                 rest_data,
             )
-            db[rel.record_type] |= link_recs
 
-            for link_idx, path_idx in link_recs.keys():
-                link_fks[path_idx] |= rel._gen_fk_value_map(link_idx)
+            for link_idx, _, path_idx in link_recs.keys():
+                injects[path_idx] |= rel._gen_fk_value_map(link_idx)
 
+    # Define function for async-loading records.
     async def _load_rec_from_item(
         item: tuple[tuple[Hashable, DirectPath], TreeNode]
-    ) -> tuple[Hashable | Record | None, Hashable | Record | None]:
+    ) -> Hashable | Record | None:
         (parent_idx, path_idx), data = item
 
-        injections = link_fks[path_idx]
+        rec_inj = injects[path_idx]
 
         if isinstance(table_map, SubTableMap) and isinstance(
             table_map.target, BackLink
         ):
-            injections |= table_map.target.link._gen_fk_value_map(parent_idx)
+            rec_inj |= table_map.target.link._gen_fk_value_map(parent_idx)
 
-        rec = await _load_record(
-            table, lazy_data, table_map, path_idx, data, injections
-        )
+        rec = await _load_record(table, table_map, path_idx, data, rec_inj)
 
-        if isinstance(table_map, SubTableMap) and issubclass(
-            table_map.target.relation_type, Record
-        ):
-            assert table_map.target._rel is not None
-            assert table_map.target._rel_to is not None
+        return rec
 
-            rel_map = copy_and_override(
-                SubTableMap,
-                table_map.rel_map if table_map.rel_map is not None else TableMap(),
-                target=table_map.target._rel,
-            )
-
-            rec_idx = rec._index if isinstance(rec, Record) else rec
-
-            rel = await _load_record(
-                db[table_map.target.relation_type],
-                lazy_data,
-                rel_map,
-                path_idx,
-                data,
-                injections={
-                    **table_map.target._rel.link._gen_fk_value_map(parent_idx),
-                    **table_map.target._rel_to._gen_fk_value_map(rec_idx),
-                },
-            )
-
-            return rec, rel
-
-        return rec, None
-
-    rel_recs = tqdm(
+    # Queue up all record loading tasks.
+    async_recs = tqdm(
         azip(
             in_data.items(),
             _sliding_batch_map(in_data.items(), _load_rec_from_item),
@@ -788,62 +713,100 @@ async def _load_records(
         total=len(in_data),
     )
 
-    records: dict[tuple[Hashable, DirectPath], Record | Hashable] = {}
+    records: dict[tuple[Hashable, Hashable, DirectPath], Record | Hashable] = {}
     rest_records: InData = {}
 
-    async for ((parent_idx, path_idx), data), (rec, rel) in rel_recs:
+    # Collect all loaded records.
+    async for ((parent_idx, path_idx), data), rec in async_recs:
         if rec is None:
             rest_records[(parent_idx, path_idx)] = data
             continue
 
         rec_idx = rec._index if isinstance(rec, Record) else rec
-        rel_idx = (
-            *(parent_idx if isinstance(parent_idx, tuple) else [parent_idx]),
-            *(rec_idx if isinstance(rec_idx, tuple) else [rec_idx]),
+        records[(rec_idx, parent_idx, path_idx)] = rec
+
+    # Upload main records into the database.
+    table |= {idx: rec for (idx, _, _), rec in records.items()}
+
+    # Load relation records.
+    if isinstance(table_map, SubTableMap) and issubclass(
+        table_map.target.relation_type, Record
+    ):
+        assert table_map.target._rel is not None
+        assert table_map.target._rel_to is not None
+
+        rel_map = copy_and_override(
+            SubTableMap,
+            table_map.rel_map if table_map.rel_map is not None else TableMap(),
+            target=table_map.target._rel,
         )
 
-        if isinstance(table_map, SubTableMap):
-            if table_map.rel_map is not None:
-                if rel is None:
-                    rest_records[(parent_idx, path_idx)] = data
-                    continue
-                else:
-                    rel_idx = rel
-            elif isinstance(table_map.target, Table) and issubclass(
-                table_map.target.relation_type, IndexedRelation
-            ):
-                assert rel is not None
-                if isinstance(rel, Record):
-                    rel = rel
-                else:
-                    assert isinstance(rel, str)
-                    rel = db[table_map.target.relation_type][rel]
+        rel_injects = {
+            path_idx: table_map.target._rel_to._gen_fk_value_map(rec_idx)
+            for rec_idx, _, path_idx in records.keys()
+        }
 
-                mapped_idx = getattr(rel, table_map.target.relation_type._rel_id.name)  # type: ignore
+        await _load_records(
+            table.db[rel_map.target.record_type],
+            rel_map,
+            in_data,
+            rest_data,
+            rel_injects,
+        )
 
-                rel_idx = (
-                    *(parent_idx if isinstance(parent_idx, tuple) else [parent_idx]),
-                    *(mapped_idx if isinstance(mapped_idx, tuple) else [mapped_idx]),
+    # Handle relations with incoming links.
+    for tgt, sel in table_map.full_map.items():
+        if isinstance(tgt, Table):
+            # Load relation table.
+            rel_map = (
+                copy_and_override(SubTableMap, sel, target=tgt)
+                if isinstance(sel, SubMap)
+                else SubTableMap[Record, TreeNode, Record](
+                    pull={
+                        v: v.name
+                        for v in cast(
+                            type[Record], tgt.record_type
+                        )._col_values.values()
+                    },
+                    target=tgt,
                 )
+            )
 
-        records[(rel_idx, path_idx)] = rec
+            rel_data = {
+                (rec_idx, item_path): item_data
+                for (rec_idx, parent_idx, path_idx) in records.keys()
+                for item_path, item_data in sel.select(
+                    in_data[(parent_idx, path_idx)], path_idx
+                ).items()
+            }
 
-    # Load main records into the database
-    table |= {idx: rec for (idx, _), rec in records.items()}
-
-    # Descend into incoming relations after loading the main records
-    for rel_tgt, sub_data in lazy_data:
-        if isinstance(rel_tgt, SubTableMap):
-            # Full record relation set
-            rel_recs = await _load_records(
-                db,
-                rel_tgt,
-                cast(InData, sub_data),
+            await _load_records(
+                table.db[rel_map.target.record_type],
+                rel_map,
+                rel_data,
                 rest_data,
             )
-            table[rel_tgt.target] |= {idx: rec for (idx, _), rec in rel_recs.items()}
-        else:
-            table[rel_tgt] |= sub_data
+
+        elif isinstance(tgt, Array):
+            # Load array data.
+            idx_sel = sel.idx if isinstance(sel, IdxMap) else SelIndex()
+
+            array_data = {}
+            for rec_idx, parent_idx, path_idx in records.keys():
+                data_idx = (parent_idx, path_idx)
+                data = in_data[data_idx]
+                array_data |= {
+                    (
+                        (rec_idx if isinstance(rec_idx, tuple) else (rec_idx,)),
+                        (idx if isinstance(idx, tuple) else (idx,)),
+                    ): val
+                    for (_, idx), (_, val) in zip(
+                        idx_sel.select(data, path_idx).items(),
+                        sel.select(data, path_idx).items(),
+                    )
+                }
+
+                table[tgt] |= array_data
 
     if len(rest_records) > 0:
         rest_data.append((table_map, rest_records))
@@ -884,15 +847,15 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
         db = db if db is not None else DataBase()
         in_data: InData = {((), ()): dat for dat in data}
         rest_data: RestData = []
-        loaded = await _load_records(
-            db, cast(TableMap[Record, TreeNode], self), in_data, rest_data
-        )
+        loaded = await _load_records(db[self.record_type], self, in_data, rest_data)
 
         # Perform second pass to load remaining data
         for table_map, tree_data in rest_data:
             rest_rest: RestData = []
-            loaded |= await _load_records(db, table_map, tree_data, rest_rest)
-            # assert all(len(v[1]) == 0 for v in rest_rest)
+            loaded |= await _load_records(
+                db[table_map.record_type], table_map, tree_data, rest_rest
+            )
+            assert all(len(v[1]) == 0 for v in rest_rest)
 
         db[self.record_type] |= loaded
         return set(loaded.keys())
