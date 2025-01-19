@@ -81,3 +81,41 @@ def extract_nullable_type(type_: SingleTypeDef[T | None] | UnionType) -> type[T]
 
     notna_args = {arg for arg in args if get_origin(arg) is not NoneType}
     return get_lowest_common_base(notna_args) if notna_args else None
+
+
+def get_inheritance_distance(cls: type, base: type) -> int | None:
+    """Return the inheritance distance between two classes.
+
+    Note: Positive direction is from subclass to base class. If arguments are
+    are reversed, the sign will be negative.
+
+    Warning: Untested function.
+
+    Args:
+        cls: The subclass.
+        base: The base class.
+
+    Returns:
+        The signed inheritance distance between the two classes. If the base class is
+        not a base of the subclass, None is returned.
+    """
+    if not isinstance(cls, type) or not isinstance(base, type):
+        return None
+
+    if cls is base:
+        return 0
+
+    if issubclass(cls, base):
+        cls, base, sign = (cls, base, 1)
+    elif issubclass(base, cls):
+        cls, base, sign = (base, cls, -1)
+    else:
+        return None
+
+    distance = 1
+    bases = set(cls.__bases__)
+    while base not in bases and distance < 100:
+        bases = reduce(set.union, (set(b.__bases__) for b in bases))
+        distance += 1
+
+    return distance * sign

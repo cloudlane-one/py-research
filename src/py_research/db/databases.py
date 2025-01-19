@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, dataclass, field
 from datetime import date, datetime, time, timedelta
@@ -33,7 +32,7 @@ from typing import (
     get_origin,
     overload,
 )
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pandas as pd
 import polars as pl
@@ -47,7 +46,6 @@ import sqlparse
 import yarl
 from bidict import bidict
 from cloudpathlib import CloudPath
-from duckdb_engine import DuckDBEngineWarning
 from pandas.api.types import (
     is_bool_dtype,
     is_datetime64_dtype,
@@ -55,7 +53,6 @@ from pandas.api.types import (
     is_numeric_dtype,
     is_string_dtype,
 )
-from sqlalchemy_utils import UUIDType
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
 
@@ -71,6 +68,11 @@ from py_research.reflect.types import (
     has_type,
     is_subtype,
 )
+
+
+class UUID4(str):
+    """UUID4 string."""
+
 
 RecT = TypeVar("RecT", bound="Record", covariant=True, default=Any)
 RecT2 = TypeVar("RecT2", bound="Record")
@@ -89,7 +91,7 @@ ParT = TypeVar("ParT", contravariant=True, bound="Record", default=Any)
 
 
 type Ordinal = (
-    bool | int | float | Decimal | datetime | date | time | timedelta | UUID | str
+    bool | int | float | Decimal | datetime | date | time | timedelta | UUID4 | str
 )
 
 OrdT = TypeVar("OrdT", bound=Ordinal)
@@ -286,19 +288,51 @@ class Agg(Generic[RecT]):
     map: AggMap[RecT]
 
 
-_pl_type_map: dict[type, pl.DataType | type] = {
-    UUID: pl.String,
+_pl_type_map: dict[
+    Any, pl.DataType | type | Callable[[SingleTypeDef | UnionType], pl.DataType]
+] = {
+    **{
+        t: t
+        for t in (
+            int,
+            float,
+            complex,
+            str,
+            bool,
+            datetime,
+            date,
+            time,
+            timedelta,
+            bytes,
+        )
+    },
+    Literal: lambda t: pl.Enum([str(a) for a in get_args(t)]),
+    UUID4: pl.String,
 }
 
 
-def _get_pl_schema(attr_map: Mapping[str, Value[Any, Any, Any, Any, Any]]) -> pl.Schema:
+def _get_pl_schema(
+    col_map: Mapping[str, Value[Any, Any, Any, Any, Any]]
+) -> dict[str, pl.DataType | type | None]:
     """Return the schema of the dataset."""
-    return pl.Schema(
-        {
-            name: _pl_type_map.get(a.target_type, a.target_type)
-            for name, a in attr_map.items()
-        }
-    )
+    exact_matches = {
+        name: (_pl_type_map.get(col.value_type), col) for name, col in col_map.items()
+    }
+    matches = {
+        name: (
+            (match, col.value_type)
+            if match is not None
+            else (_pl_type_map.get(col.target_type), col.value_type)
+        )
+        for name, (match, col) in exact_matches.items()
+    }
+
+    return {
+        name: (
+            match if isinstance(match, pl.DataType | type | None) else match(match_type)
+        )
+        for name, (match, match_type) in matches.items()
+    }
 
 
 def _pd_to_py_dtype(c: pd.Series | pl.Series) -> type | None:
@@ -453,7 +487,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     _name: str | None = None
     _typehint: str | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]] | None = None
-    _typevar_map: dict[TypeVar, SingleTypeDef] = field(default_factory=dict)
+    _typevar_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
 
     _db: DataBase[CrudT | CRUD, BaseT] | None = None
     _ctx: CtxT | Data[Record | None, Any, R, Any, Any, BaseT] | None = None
@@ -1875,7 +1909,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             *direct_owner._record_superclasses,
         ]
 
-        original_owners = [base for base in all_bases if self.name in base._class_props]
+        original_owners = [
+            base for base in all_bases if self.name in base._get_class_props()
+        ]
         assert len(original_owners) == 1
         return original_owners[0]
 
@@ -2152,37 +2188,30 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         Value[Any, Any, Any, Any, Symbolic],
         Value[Any, Any, Any, Any, Symbolic],
     ]:
-        """Map source foreign keys to target cols."""
-        if not isinstance(self, Link) or self.fks is None:
-            from_rec: type[Record]
-            to_rec: type[Record]
-            from_rec, to_rec = (
-                (self.ctx.record_type, self.record_type)
-                if isinstance(self, Link)
-                else (self.record_type, self.ctx.record_type)
-            )
+        """Map source link foreign keys to target cols."""
+        fks = self.fks if isinstance(self, Link) else None
 
-            return bidict(
-                {
-                    Value[Any, Any, Any, Any, Symbolic](
-                        _name=f"{to_rec._default_table_name()}_{pk.name}",
-                        _typehint=pk._typehint,
-                        init=False,
-                        index=self.index if isinstance(self, Link) else False,
-                        primary_key=(
-                            self.primary_key if isinstance(self, Link) else False
-                        ),
-                        _ctx=Ctx(from_rec),
-                    ): pk
-                    for pk in to_rec._pk_values.values()
-                }
-            )
-
-        match self.fks:
+        match fks:
+            case None:
+                return bidict(
+                    {
+                        Value[Any, Any, Any, Any, Symbolic](
+                            _name=f"{self.record_type._default_table_name()}_{pk.name}",
+                            _typehint=pk._typehint,
+                            init=False,
+                            index=self.index if isinstance(self, Link) else False,
+                            primary_key=(
+                                self.primary_key if isinstance(self, Link) else False
+                            ),
+                            _ctx=Ctx(self.ctx.record_type),
+                        ): pk
+                        for pk in self.record_type._pk_values.values()
+                    }
+                )
             case dict():
-                return bidict({fk: pk for fk, pk in self.fks.items()})
+                return bidict({fk: pk for fk, pk in fks.items()})
             case Value() | list():
-                fks = self.fks if isinstance(self.fks, list) else [self.fks]
+                fks = fks if isinstance(fks, list) else [fks]
 
                 pks = [
                     getattr(self.record_type, name)
@@ -2210,12 +2239,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         sqla.and_,
                         (
                             (
-                                _parent[fk] == target[pk]
-                                for fk, pk in target._fk_map.items()
-                            )
-                            if isinstance(target, Link)
-                            else (
                                 target[fk] == _parent[pk]
+                                for fk, pk in target.link._fk_map.items()
+                            )
+                            if isinstance(target, BackLink)
+                            else (
+                                _parent[fk] == target[pk]
                                 for fk, pk in target._fk_map.items()
                             )
                         ),
@@ -2378,7 +2407,16 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
 
         if isinstance(typedef, TypeVar):
-            typedef = self._typevar_map.get(typedef) or typedef.__bound__ or object
+            type_res = self._typevar_map.get(typedef, Undef)
+
+            if type_res is Undef and typedef.has_default():
+                type_res = typedef.__default__
+            if type_res is Undef:
+                raise TypeError(
+                    f"Type variable `{typedef}` not bound for typehint `{hint}`."
+                )
+
+            typedef = type_res
 
         if isinstance(typedef, ForwardRef):
             typedef = typedef._evaluate(
@@ -2717,19 +2755,17 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         value_table = self._gen_upload_table(include=list(df.columns))
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DuckDBEngineWarning)
-            if isinstance(df, pd.DataFrame):
-                df.reset_index().to_sql(
-                    value_table.name,
-                    self.db.engine,
-                    if_exists="replace",
-                    index=False,
-                )
-            else:
-                df.write_database(
-                    str(value_table), self.db.engine, if_table_exists="append"
-                )
+        if isinstance(df, pd.DataFrame):
+            df.reset_index().to_sql(
+                value_table.name,
+                self.db.engine,
+                if_exists="replace",
+                index=False,
+            )
+        else:
+            df.write_database(
+                str(value_table), self.db.engine, if_table_exists="append"
+            )
 
         return value_table
 
@@ -3053,7 +3089,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                                     value_table.c[col_name].label(col.name)
                                     for col_name, col in vals.items()
                                 )
-                            ).select_from(value_table),
+                            )
+                            .select_from(value_table)
+                            .where(sqla.text("true")),
                         )
                         statement = statement.on_conflict_do_update(
                             index_elements=[
@@ -3524,7 +3562,7 @@ class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
     def engine(self) -> sqla.engine.Engine:
         """SQLA Engine for this DB."""
         # Create engine based on backend type
-        # For Excel-backends, use duckdb in-memory engine
+        # For Excel-backends, use sqlite in-memory engine
         return (
             sqla.create_engine(
                 self.url if isinstance(self.url, sqla.URL) else str(self.url)
@@ -3533,7 +3571,11 @@ class DataBase(Data[Any, Idx[()], CrudT, None, None, BaseT]):
                 self.backend_type == "sql-connection"
                 or self.backend_type == "sqlite-file"
             )
-            else (sqla.create_engine(f"duckdb:///:memory:{self.db_id}"))
+            else (
+                sqla.create_engine(
+                    f"sqlite:///file:{self.db_id}?mode=memory&cache=shared"
+                )
+            )
         )
 
     def describe(self) -> dict[str, str | dict[str, str] | None]:
@@ -3912,12 +3954,34 @@ class RecordMeta(type):
     """Metaclass for record types."""
 
     _record_superclasses: list[type[Record]]
-    _class_props: dict[str, Data[Any, Any, Any, Any, Ctx, Symbolic]]
 
     _is_root_class: bool = False
     _template: bool = False
     _src_mod: ModuleType | None = None
     _derivate: bool = False
+
+    __class_props: dict[str, Data[Any, Any, Any, Any, Ctx[Record], Symbolic]] | None
+
+    @staticmethod
+    def _get_typevar_map(
+        c: SingleTypeDef[Record],
+    ) -> dict[TypeVar, SingleTypeDef | UnionType]:
+        orig = c if isinstance(c, RecordMeta) else get_origin(c)
+
+        if not isinstance(orig, RecordMeta):
+            return {}
+
+        own_typevar_map = (
+            dict(zip(getattr(orig, "__parameters__"), get_args(c)))
+            if orig is not c and hasattr(orig, "__parameters__")
+            else {}
+        )
+
+        super_typevar_map = reduce(
+            lambda x, y: x | y,
+            (RecordMeta._get_typevar_map(sup) for sup in orig._super_types),
+        )
+        return {**super_typevar_map, **own_typevar_map}
 
     def __init__(cls, name, bases, dct):
         """Initialize a new record type."""
@@ -3925,6 +3989,56 @@ class RecordMeta(type):
 
         if "_src_mod" not in cls.__dict__:
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
+
+        cls.__class_props = None
+
+        if cls._template:
+            return
+
+        cls._get_class_props()
+
+    @property
+    def __dataclass_fields__(cls) -> dict[str, Field]:  # noqa: D105
+        return {
+            **{
+                name: Field(
+                    a.default,
+                    a.default_factory,  # pyright: ignore[reportArgumentType]
+                    a.init,
+                    hash=a.primary_key,
+                    repr=True,
+                    metadata={},
+                    compare=True,
+                    kw_only=True,
+                )
+                for name, a in cls._values.items()
+            },
+            **{
+                name: Field(
+                    MISSING,
+                    lambda: MISSING,
+                    init=True,
+                    repr=True,
+                    hash=False,
+                    metadata={},
+                    compare=True,
+                    kw_only=True,
+                )
+                for name, _ in cls._links.items()
+            },
+        }
+
+    @property
+    def _super_types(cls) -> Iterable[type | GenericProtocol]:
+        return (
+            cls.__dict__["__orig_bases__"]
+            if "__orig_bases__" in cls.__dict__
+            else cls.__bases__
+        )
+
+    def _get_class_props(cls) -> dict[str, Data[Any, Any, Any, Any, Ctx, Symbolic]]:
+        if cls.__class_props is not None:
+            return cls.__class_props
 
         # Construct prelimiary symbolic data instances for all class annotations.
         props = {
@@ -3967,20 +4081,14 @@ class RecordMeta(type):
 
         # Construct list of Record superclasses and apply template superclasses.
         cls._record_superclasses = []
-        super_types: Iterable[type | GenericProtocol] = (
-            cls.__dict__["__orig_bases__"]
-            if "__orig_bases__" in cls.__dict__
-            else cls.__bases__
-        )
-        for c in super_types:
+
+        typevar_map = {}
+        for c in cls._super_types:
             # Get proper origin class of generic supertype.
             orig = get_origin(c) if not isinstance(c, type) else c
 
             # Handle typevar substitutions.
-            if orig is not c and hasattr(orig, "__parameters__"):
-                typevar_map = dict(zip(getattr(orig, "__parameters__"), get_args(c)))
-            else:
-                typevar_map = {}
+            typevar_map = cls._get_typevar_map(c)
 
             # Skip root Record class and non-Record classes.
             if not isinstance(orig, RecordMeta) or orig._is_root_class:
@@ -3988,7 +4096,7 @@ class RecordMeta(type):
 
             # Apply template classes.
             if orig._template or cls._derivate:
-                for prop_name, super_prop in orig._class_props.items():
+                for prop_name, super_prop in orig._get_class_props().items():
                     if prop_name in props:
                         prop = copy_and_override(
                             type(props[prop_name]), (super_prop, props[prop_name])
@@ -3998,6 +4106,7 @@ class RecordMeta(type):
                             type(super_prop),
                             super_prop,
                             _typevar_map=typevar_map,
+                            _ctx=Ctx(cast(type["Record"], cls)),
                         )
 
                     setattr(cls, prop_name, prop)
@@ -4006,16 +4115,8 @@ class RecordMeta(type):
                 assert orig is c  # Must be concrete class, not a generic
                 cls._record_superclasses.append(orig)
 
-        cls._class_props = props
-
-    @property
-    def _props(cls) -> dict[str, Data[Any, Any, Any, Any, Ctx, Symbolic]]:
-        """The statically defined properties of this record type."""
-        return reduce(
-            lambda x, y: {**x, **y},
-            (c._props for c in cls._record_superclasses),
-            cls._class_props,
-        )
+        cls.__class_props = props
+        return props
 
     @property
     def _class_links(
@@ -4023,7 +4124,9 @@ class RecordMeta(type):
     ) -> dict[str, Link[Any, Any, Any, Symbolic]]:
         """The relations of this record type without superclasses."""
         return {
-            name: ref for name, ref in cls._class_props.items() if isinstance(ref, Link)
+            name: ref
+            for name, ref in cls._get_class_props().items()
+            if isinstance(ref, Link)
         }
 
     @property
@@ -4035,6 +4138,16 @@ class RecordMeta(type):
             if isinstance(ref, Link)
             for a in ref._fk_map.keys()
         }
+
+    @property
+    def _props(cls) -> dict[str, Data[Any, Any, Any, Any, Ctx, Symbolic]]:
+        """The statically defined properties of this record type."""
+        own_props = {**cls._class_fk_values, **cls._get_class_props()}
+        return reduce(
+            lambda x, y: {**x, **y},
+            (c._props for c in cls._record_superclasses),
+            own_props,
+        )
 
     @property
     def _pk_values(cls) -> dict[str, Value[Any, Any, Any, Any, Symbolic]]:
@@ -4053,7 +4166,7 @@ class RecordMeta(type):
             | cls._pk_values
             | {
                 k: a
-                for k, a in cls._class_props.items()
+                for k, a in cls._get_class_props().items()
                 if isinstance(a, Value) and a.pub_status is Public
             }
         )
@@ -4076,7 +4189,7 @@ class RecordMeta(type):
         return {k: a for k, a in cls._values.items() if a.pub_status is Public}
 
     @property
-    def _data_values(cls) -> dict[str, Value[Any, Any, Any, Any, Symbolic]]:
+    def _non_fk_values(cls) -> dict[str, Value[Any, Any, Any, Any, Symbolic]]:
         return {k: c for k, c in cls._col_values.items() if k not in cls._fk_values}
 
     @property
@@ -4109,7 +4222,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         str: sqla.types.String().with_variant(
             sqla.types.String(50), "oracle"
         ),  # Avoid oracle error when VARCHAR has no size parameter
-        UUID: UUIDType(binary=False),
+        UUID4: sqla.types.CHAR(36),
     }
 
     _template: ClassVar[bool]
@@ -4122,35 +4235,8 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         """Initialize a new record subclass."""
         super().__init_subclass__(**kwargs)
         cls._is_root_class = False
-
-        cls.__dataclass_fields__ = {
-            **{
-                name: Field(
-                    a.default,
-                    a.default_factory,  # pyright: ignore[reportArgumentType]
-                    a.init,
-                    hash=a.primary_key,
-                    repr=True,
-                    metadata={},
-                    compare=True,
-                    kw_only=True,
-                )
-                for name, a in cls._values.items()
-            },
-            **{
-                name: Field(
-                    MISSING,
-                    lambda: MISSING,
-                    init=True,
-                    repr=True,
-                    hash=False,
-                    metadata={},
-                    compare=True,
-                    kw_only=True,
-                )
-                for name, _ in cls._links.items()
-            },
-        }
+        if "_template" not in cls.__dict__:
+            cls._template = False
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -4330,8 +4416,9 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
 
         vals = {
             p if not name_keys else p.name: getattr(self, p.name)
-            for p in (type(self)._props if with_fks else type(self)._props).values()
+            for p in type(self)._props.values()
             if isinstance(p, include_types)
+            and (with_fks or p.name not in type(self)._fk_values)
             and (not isinstance(p, Value) or p.pub_status is Public or with_private)
         }
 
@@ -4346,10 +4433,10 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
         return all(
             a.name in data
-            or a.getter is None
-            or a.default is Undef
-            or a.default_factory is None
-            for a in cls._data_values.values()
+            or a.getter is not None
+            or a.default is not Undef
+            or a.default_factory is not None
+            for a in cls._non_fk_values.values()
             if a.init is not False
         ) and all(
             r.name in data or all(fk.name in data for fk in r._fk_map.keys())
@@ -4432,11 +4519,11 @@ def dynamic_record_type(
     )
 
 
-class RecUUID(Record[UUID]):
-    """Record type with a default UUID primary key."""
+class RecUUID(Record[UUID4]):
+    """Record type with a default UUID4 primary key."""
 
     _template = True
-    _id: Value[UUID] = Value(primary_key=True, default_factory=uuid4)
+    _id: Value[UUID4] = Value(primary_key=True, default_factory=lambda: UUID4(uuid4()))
 
 
 class RecHashed(Record[int]):

@@ -580,7 +580,7 @@ async def _load_record[
 ](
     rec_set: Data[Record, Any, Any, Any, Any, Any],
     lazy_data: LazyData,
-    table_map: TableMap[Any, Any],
+    table_map: TableMap[Record, Any],
     parent_idx: Hashable | None,
     path_idx: DirectPath,
     data: TreeNode,
@@ -605,7 +605,7 @@ async def _load_record[
             sub_path = sub_items[0][0]
             sub_data = sub_items[0][1]
 
-            sub_rec = await _load_record(
+            sub_rec, _ = await _load_record(
                 rec_set[rel], lazy_data, target_map, None, sub_path, sub_data, None
             )
 
@@ -655,7 +655,7 @@ async def _load_record[
     parent_rel_fks = {}
     if isinstance(table_map, SubTableMap) and isinstance(table_map.target, BackLink):
         assert parent_idx is not None
-        parent_rel_fks = table_map.target._gen_fk_value_map(parent_idx)
+        parent_rel_fks = table_map.target.link._gen_fk_value_map(parent_idx)
 
     attrs = {
         a.name: (a, *list(sel.select(data, path_idx).items())[0])
@@ -687,7 +687,7 @@ async def _load_record[
         rec_idx = recs_keys[0]
         is_new = False
 
-    if rec_idx is None:
+    if rec is None and rec_idx is None:
         return None, None
 
     # Add backlinking tables to lazy data.
