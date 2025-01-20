@@ -129,6 +129,7 @@ KeyT3 = TypeVar("KeyT3", bound=Hashable)
 KeyTt = TypeVarTuple("KeyTt")
 KeyTt2 = TypeVarTuple("KeyTt2")
 KeyTt3 = TypeVarTuple("KeyTt3")
+KeyTt4 = TypeVarTuple("KeyTt4")
 
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
 
@@ -141,18 +142,21 @@ class Idx[*K]:
 class BaseIdx[R: Record]:
     """Singleton to mark dataset as having the record type's base index."""
 
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+
+@final
+class ArrayIdx[R: Record, *K]:
+    """Record type's base index + custom array index."""
 
 
 IdxT = TypeVar(
     "IdxT",
     covariant=True,
-    bound=Idx | BaseIdx,
+    bound=Idx | BaseIdx | ArrayIdx,
     default=BaseIdx,
 )
 IdxT2 = TypeVar(
     "IdxT2",
-    bound=Idx | BaseIdx,
+    bound=Idx | BaseIdx | ArrayIdx,
 )
 
 
@@ -698,6 +702,18 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ],
     ) -> Sequence[tuple[*KeyTt2]]: ...
 
+    @overload
+    def keys(
+        self: Data[
+            Any,
+            ArrayIdx[Record[*KeyTt2], KeyT3],
+            Any,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+    ) -> Sequence[tuple[*KeyTt2, KeyT3]]: ...
+
     def keys(
         self: Data[Any, Any, Any, Any, Any, Any],
     ) -> Sequence[Hashable]:
@@ -777,6 +793,18 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             DynBackendID,
         ],
     ) -> Iterable[tuple[tuple[*KeyTt2], ValT2]]: ...
+
+    @overload
+    def items(
+        self: Data[
+            ValT2,
+            ArrayIdx[Record[*KeyTt2], KeyT3],
+            Any,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+    ) -> Iterable[tuple[tuple[*KeyTt2, KeyT3], ValT2]]: ...
 
     def items(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
@@ -1082,11 +1110,29 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ],
     ) -> Data[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT3, RelT3, Ctx[RecT2], BaseT]: ...
 
-    # 3. Nested prop selection
+    # 3. Top-level array selection
     @overload
     def __getitem__(
         self: Data[
             RecT2 | None, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any
+        ],
+        key: Data[
+            ValT3,
+            ArrayIdx[Record[*KeyTt3], *KeyTt4],
+            CrudT3,
+            RelT3,
+            Ctx[RecT2],
+            Symbolic,
+        ],
+    ) -> Data[
+        ValT3, Idx[*KeyTt2, *KeyTt3, *KeyTt4], CrudT3, RelT3, Ctx[RecT2], BaseT
+    ]: ...
+
+    # 4. Nested prop selection
+    @overload
+    def __getitem__(
+        self: Data[
+            Record | None, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any
         ],
         key: Data[
             ValT3,
@@ -1105,7 +1151,30 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         BaseT,
     ]: ...
 
-    # 4. Key filtering, scalar index type
+    # 5. Nested array selection
+    @overload
+    def __getitem__(
+        self: Data[
+            Record | None, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any
+        ],
+        key: Data[
+            ValT3,
+            ArrayIdx[Record[*KeyTt3], *KeyTt4],
+            CrudT3,
+            RelT3,
+            CtxT3,
+            Symbolic,
+        ],
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2, *tuple[Any, ...], *KeyTt3, *KeyTt4],
+        CrudT3,
+        RelT3,
+        CtxT3,
+        BaseT,
+    ]: ...
+
+    # 6. Key filtering, scalar index type
     @overload
     def __getitem__(
         self: Data[
@@ -1114,7 +1183,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 5. Key / slice filtering
+    # 7. Key / slice filtering
     @overload
     def __getitem__(
         self: Data[
@@ -1123,21 +1192,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 6. Expression filtering
+    # 8. Key / slice filtering, array index
+    @overload
+    def __getitem__(
+        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, DynBackendID],
+        key: list[tuple[*KeyTt2, KeyT3]] | tuple[slice, ...],
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
+
+    # 9. Expression filtering
     @overload
     def __getitem__(
         self: Data[Any, Idx | BaseIdx, Any, Any, Any, DynBackendID],
         key: sqla.ColumnElement[bool],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 7. Key selection, scalar index type, symbolic context
+    # 10. Key selection, scalar index type, symbolic context
     @overload
     def __getitem__(
         self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Symbolic],
         key: KeyT2,
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 8. Key selection, tuple index type, symbolic context
+    # 11. Key selection, tuple index type, symbolic context
     @overload
     def __getitem__(
         self: Data[
@@ -1146,7 +1222,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: tuple[*KeyTt2],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 9. Key selection, scalar index type
+    # 12. Key selection, tuple index type, symbolic context, array index
+    @overload
+    def __getitem__(
+        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, Symbolic],
+        key: tuple[*KeyTt2, KeyT3],
+    ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
+
+    # 13. Key selection, scalar index type
     @overload
     def __getitem__(
         self: Data[
@@ -1155,13 +1238,20 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: KeyT2,
     ) -> ValT: ...
 
-    # 10. Key selection, tuple index type
+    # 14. Key selection, tuple index type
     @overload
     def __getitem__(
         self: Data[
             Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, DynBackendID
         ],
         key: tuple[*KeyTt2],
+    ) -> ValT: ...
+
+    # 15. Key selection, tuple index type, array index
+    @overload
+    def __getitem__(
+        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, DynBackendID],
+        key: tuple[*KeyTt2, KeyT3],
     ) -> ValT: ...
 
     # Implementation:
@@ -1666,6 +1756,13 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @overload
     def __get__(
+        self: Data[Any, ArrayIdx[Any, KeyT2], Any, Any, Any, Any],
+        instance: None,
+        owner: type[RecT4],
+    ) -> Data[ValT, ArrayIdx[RecT4, KeyT2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
+
+    @overload
+    def __get__(
         self: Data[Any, Any, Any, Any, Any, Any],
         instance: None,
         owner: type[RecT4],
@@ -1698,6 +1795,13 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         instance: RecT4,
         owner: type[RecT4],
     ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
+
+    @overload
+    def __get__(
+        self: Data[Any, ArrayIdx[Any, KeyT2], Any, Any, Any, Any],
+        instance: RecT4,
+        owner: type[RecT4],
+    ) -> Data[ValT, ArrayIdx[RecT4, KeyT2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
@@ -3415,7 +3519,14 @@ class BackLink(
 
 @dataclass(eq=False)
 class Array(
-    Data[ValT, Idx[KeyT], CrudT, "ArrayRecord[ValT, KeyT, OwnT]", Ctx[OwnT], BaseT],
+    Data[
+        ValT,
+        ArrayIdx[Any, KeyT],
+        CrudT,
+        "ArrayRecord[ValT, KeyT, OwnT]",
+        Ctx[OwnT],
+        BaseT,
+    ],
     Generic[ValT, KeyT, CrudT, OwnT, BaseT],
 ):
     """Set / array of scalar values."""
