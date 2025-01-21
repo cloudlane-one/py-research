@@ -1172,32 +1172,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     # 5. Key filtering, scalar index type
     @overload
     def __getitem__(
-        self: Data[
-            Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, DynBackendID
-        ],
+        self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Any],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 6. Key / slice filtering
     @overload
     def __getitem__(
-        self: Data[
-            Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, DynBackendID
-        ],
+        self: Data[Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 7. Key / slice filtering, array index
     @overload
     def __getitem__(
-        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, DynBackendID],
+        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, Any],
         key: list[tuple[*KeyTt2, KeyT3]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
     # 8. Expression filtering
     @overload
     def __getitem__(
-        self: Data[Any, Idx | BaseIdx, Any, Any, Any, DynBackendID],
+        self: Data[Any, Idx | BaseIdx, Any, Any, Any, Any],
         key: sqla.ColumnElement[bool],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
@@ -1644,7 +1640,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return self._sql_col < other._sql_col
         return self._sql_col < other
 
-    def __lte__(  # noqa: D105
+    def __le__(  # noqa: D105
         self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
@@ -1660,7 +1656,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return self._sql_col > other._sql_col
         return self._sql_col > other
 
-    def __gte__(  # noqa: D105
+    def __ge__(  # noqa: D105
         self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
         other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool]:
