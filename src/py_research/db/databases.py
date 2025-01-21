@@ -3854,6 +3854,134 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
         return ds
 
+    def to_graph(
+        self: DataBase[Schema, Any, DynBackendID], nodes: Sequence[type[Record]]
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        if not isinstance(self.schema, type):
+            raise TypeError(
+                "Only databases with single `Schema` base class are currently supported"
+            )
+
+        node_tables = [self[n] for n in nodes]
+
+        # Concat all node tables into one.
+        node_dfs = [
+            n.df(kind=pd.DataFrame)
+            .reset_index()
+            .assign(table=n.target_type._default_table_name())
+            for n in node_tables
+        ]
+        node_df = (
+            pd.concat(node_dfs, ignore_index=True)
+            .reset_index()
+            .rename(columns={"index": "node_id"})
+        )
+
+        directed_edges = reduce(
+            set.union, (set((n, r) for r in n._links.values()) for n in nodes)
+        )
+
+        undirected_edges: dict[
+            type[Record],
+            set[
+                tuple[
+                    Link[Record, Any, Any, Symbolic], Link[Record, Any, Any, Symbolic]
+                ]
+            ],
+        ] = {t: set() for t in nodes}
+
+        rel_types = self.schema._relation_types()
+
+        for n in nodes:
+            for rel in rel_types:
+                left, right = cast(
+                    tuple[
+                        Link[Record, Any, Any, Symbolic],
+                        Link[Record, Any, Any, Symbolic],
+                    ],
+                    (rel._from, rel._to),  # type: ignore
+                )
+                if left.target_type == n:
+                    undirected_edges[n].add((left, right))
+                elif right.target_type == n:
+                    undirected_edges[n].add((right, left))
+
+        # Concat all edges into one table.
+        edge_df = pd.concat(
+            [
+                *[
+                    node_df.loc[node_df["table"] == str(parent._default_table_name())]
+                    .rename(columns={"node_id": "source"})
+                    .merge(
+                        node_df.loc[
+                            node_df["table"]
+                            == str(link.record_type._default_table_name())
+                        ],
+                        left_on=[c.name for c in link._fk_map.keys()],
+                        right_on=[c.name for c in link._fk_map.values()],
+                    )
+                    .rename(columns={"node_id": "target"})[["source", "target"]]
+                    .assign(
+                        ltr=",".join(c.name for c in link._fk_map.keys()),
+                        rtl=None,
+                    )
+                    for parent, link in directed_edges
+                ],
+                *[
+                    self[assoc_table]
+                    .df(kind=pd.DataFrame)
+                    .merge(
+                        node_df.loc[
+                            node_df["table"]
+                            == str(left.record_type._default_table_name())
+                        ].dropna(axis="columns", how="all"),
+                        left_on=[c.name for c in left._fk_map.keys()],
+                        right_on=[c.name for c in left._fk_map.values()],
+                        how="inner",
+                    )
+                    .rename(columns={"node_id": "source"})
+                    .merge(
+                        node_df.loc[
+                            node_df["table"]
+                            == str(left.record_type._default_table_name())
+                        ].dropna(axis="columns", how="all"),
+                        left_on=[c.name for c in right._fk_map.keys()],
+                        right_on=[c.name for c in right._fk_map.values()],
+                        how="inner",
+                    )
+                    .rename(columns={"node_id": "target"})[
+                        list(
+                            {
+                                "source",
+                                "target",
+                                *(
+                                    c
+                                    for c in self[
+                                        assoc_table
+                                    ].record_type._col_values.keys()
+                                ),
+                            }
+                        )
+                    ]
+                    .assign(
+                        ltr=",".join(c.name for c in right._fk_map.keys()),
+                        rtl=",".join(c.name for c in left._fk_map.keys()),
+                    )
+                    for assoc_table, rels in undirected_edges.items()
+                    for left, right in rels
+                ],
+            ],
+            ignore_index=True,
+        )
+
+        return node_df, edge_df
+
     # 1. DB-level type selection
     @overload
     def __getitem__(
@@ -3950,112 +4078,6 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
         return db
 
-    # def to_graph(
-    #     self: DataBase[R, Any], nodes: Sequence[type[Record]]
-    # ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    #     """Export links between select database objects in a graph format.
-
-    #     E.g. for usage with `Gephi`_
-
-    #     .. _Gephi: https://gephi.org/
-    #     """
-    #     node_tables = [self[n] for n in nodes]
-
-    #     # Concat all node tables into one.
-    #     node_dfs = [
-    #         n.to_df(kind=pd.DataFrame)
-    #         .reset_index()
-    #         .assign(table=n.target_type._default_table_name())
-    #         for n in node_tables
-    #     ]
-    #     node_df = (
-    #         pd.concat(node_dfs, ignore_index=True)
-    #         .reset_index()
-    #         .rename(columns={"index": "node_id"})
-    #     )
-
-    #     directed_edges = reduce(
-    #         set.union, (set((n, r) for r in n._refs.values()) for n in nodes)
-    #     )
-
-    #     undirected_edges: dict[type[Record], set[tuple[Ref, ...]]] = {
-    #         t: set() for t in nodes
-    #     }
-    #     for n in nodes:
-    #         for at in self._assoc_types:
-    #             if len(at._refs) == 2:
-    #                 left, right = (r for r in at._refs.values())
-    #                 assert left is not None and right is not None
-    #                 if left.target_type == n:
-    #                     undirected_edges[n].add((left, right))
-    #                 elif right.target_type == n:
-    #                     undirected_edges[n].add((right, left))
-
-    #     # Concat all edges into one table.
-    #     edge_df = pd.concat(
-    #         [
-    #             *[
-    #                 node_df.loc[node_df["table"] == str(parent._default_table_name())]
-    #                 .rename(columns={"node_id": "source"})
-    #                 .merge(
-    #                     node_df.loc[
-    #                         node_df["table"]
-    #                         == str(link.target_type._default_table_name())
-    #                     ],
-    #                     left_on=[c.name for c in link.fk_map.keys()],
-    #                     right_on=[c.prop.name for c in link.fk_map.values()],
-    #                 )
-    #                 .rename(columns={"node_id": "target"})[["source", "target"]]
-    #                 .assign(
-    #                     ltr=",".join(c.name for c in link.fk_map.keys()),
-    #                     rtl=None,
-    #                 )
-    #                 for parent, link in directed_edges
-    #             ],
-    #             *[
-    #                 self[assoc_table]
-    #                 .to_df(kind=pd.DataFrame)
-    #                 .merge(
-    #                     node_df.loc[
-    #                         node_df["table"]
-    #                         == str(left_rel.value_origin_type._default_table_name())
-    #                     ].dropna(axis="columns", how="all"),
-    #                     left_on=[c.name for c in left_rel.fk_map.keys()],
-    #                     right_on=[c.name for c in left_rel.fk_map.values()],
-    #                     how="inner",
-    #                 )
-    #                 .rename(columns={"node_id": "source"})
-    #                 .merge(
-    #                     node_df.loc[
-    #                         node_df["table"]
-    #                         == str(left_rel.value_origin_type._default_table_name())
-    #                     ].dropna(axis="columns", how="all"),
-    #                     left_on=[c.name for c in right_rel.fk_map.keys()],
-    #                     right_on=[c.name for c in right_rel.fk_map.values()],
-    #                     how="inner",
-    #                 )
-    #                 .rename(columns={"node_id": "target"})[
-    #                     list(
-    #                         {
-    #                             "source",
-    #                             "target",
-    #                             *(a for a in self[assoc_table]._col_attrs),
-    #                         }
-    #                     )
-    #                 ]
-    #                 .assign(
-    #                     ltr=",".join(c.name for c in right_rel.fk_map.keys()),
-    #                     rtl=",".join(c.name for c in left_rel.fk_map.keys()),
-    #                 )
-    #                 for assoc_table, rels in undirected_edges.items()
-    #                 for left_rel, right_rel in rels
-    #             ],
-    #         ],
-    #         ignore_index=True,
-    #     )
-
-    #     return node_df, edge_df
-
     def __hash__(self) -> int:
         """Hash the DB."""
         return gen_int_hash(
@@ -4099,21 +4121,6 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             }
 
         return types
-
-    @cached_prop
-    def _assoc_types(self) -> set[type[Record]]:
-        """Set of all association tables in this DB."""
-        assoc_types = set()
-        for rec in self._def_types:
-            assoc_table = self[rec]  # move to DataSet
-            pks = set([col.name for col in assoc_table.record_type._pk_values.values()])
-            fks = set(
-                [col.name for rel in rec._links.values() for col in rel._fk_map.keys()]
-            )
-            if pks == fks:
-                assoc_types.add(rec)
-
-        return assoc_types
 
     def _get_valid_cache_set(self, rec: type[Record]) -> set[Hashable]:
         """Get the valid cache set for a record type."""
@@ -4443,11 +4450,11 @@ class RecordMeta(type):
         return {k: c for k, c in cls._col_values.items() if k not in cls._fk_values}
 
     @property
-    def _tables(cls) -> dict[str, Table[Any, Any, Any, Any, Ctx, Symbolic]]:
+    def _tables(cls) -> dict[str, Table[Record | None, Any, Any, Any, Ctx, Symbolic]]:
         return {k: r for k, r in cls._props.items() if isinstance(r, Table)}
 
     @property
-    def _links(cls) -> dict[str, Link[Any, Any, Any, Symbolic]]:
+    def _links(cls) -> dict[str, Link[Record | None, Any, Any, Symbolic]]:
         return {k: r for k, r in cls._tables.items() if isinstance(r, Link)}
 
     @property
@@ -4456,7 +4463,7 @@ class RecordMeta(type):
 
     @property
     def _rel_types(cls) -> set[type[Record]]:
-        return {t.target_type for t in cls._tables.values()}
+        return {t.record_type for t in cls._tables.values()}
 
     @property
     def _fqn(cls) -> str:
