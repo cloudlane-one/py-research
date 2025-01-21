@@ -3605,65 +3605,53 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
     )
 
     def __post_init__(self):  # noqa: D105
-        self._db = self
+        records = {
+            rec: sub for rec, sub in self._schema_map.items() if issubclass(rec, Record)
+        }
 
-        if self.schema is not None:
-            schema_map = self.schema
-            if isinstance(schema_map, type):
-                schema_map = {schema_map: True}
-            elif isinstance(schema_map, set):
-                schema_map = cast(
-                    dict[type[Record | Schema], Literal[True]],
-                    {rec: True for rec in schema_map},
-                )
+        # Handle Record classes in schema argument.
+        self._subs = {
+            **self._subs,
+            **{
+                rec: (sub if isinstance(sub, sqla.TableClause) else sqla.table(sub))
+                for rec, sub in records.items()
+                if not isinstance(sub, Require | bool)
+            },
+        }
+        self._def_types = {**self._def_types, **records}  # type: ignore
 
-            records = {
-                rec: sub for rec, sub in schema_map.items() if issubclass(rec, Record)
-            }
+        schemas = {
+            schema: schema_name
+            for schema, schema_name in self._schema_map.items()
+            if issubclass(schema, Schema)
+        }
 
-            # Handle Record classes in schema argument.
-            self._subs = {
-                **self._subs,
+        # Handle Schema classes in schema argument.
+        self._subs = {
+            **self._subs,
+            **{
+                rec: sqla.table(rec._default_table_name(), schema=schema_name)
+                for schema, schema_name in schemas.items()
+                for rec in schema._schema_types
+                if isinstance(schema_name, str)
+            },
+        }
+
+        self._def_types = cast(
+            dict,
+            {
+                **self._def_types,
                 **{
-                    rec: (sub if isinstance(sub, sqla.TableClause) else sqla.table(sub))
-                    for rec, sub in records.items()
-                    if not isinstance(sub, Require | bool)
-                },
-            }
-            self._def_types = {**self._def_types, **records}  # type: ignore
-
-            schemas = {
-                schema: schema_name
-                for schema, schema_name in schema_map.items()
-                if issubclass(schema, Schema)
-            }
-
-            # Handle Schema classes in schema argument.
-            self._subs = {
-                **self._subs,
-                **{
-                    rec: sqla.table(rec._default_table_name(), schema=schema_name)
-                    for schema, schema_name in schemas.items()
+                    rec: (
+                        req
+                        if not isinstance(req, str)
+                        else sqla.table(rec._default_table_name(), schema=req)
+                    )
+                    for schema, req in schemas.items()
                     for rec in schema._schema_types
-                    if isinstance(schema_name, str)
                 },
-            }
-
-            self._def_types = cast(
-                dict,
-                {
-                    **self._def_types,
-                    **{
-                        rec: (
-                            req
-                            if not isinstance(req, str)
-                            else sqla.table(rec._default_table_name(), schema=req)
-                        )
-                        for schema, req in schemas.items()
-                        for rec in schema._schema_types
-                    },
-                },
-            )
+            },
+        )
 
         if self.validate_on_init:
             self.validate()
@@ -3940,6 +3928,28 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         """Catchall setitem."""
         return
 
+    def __or__(
+        self: DataBase[Any, CRUD, BackT2], other: DataBase[SchemaT2, R, BackT2]
+    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+        """Combine two databases."""
+        db = DataBase[SchemaT | SchemaT2, CRUD, BackT2](
+            backend=self.backend,
+            schema={**self._schema_map, **self._schema_map},  # type: ignore
+            write_to_overlay=(
+                f"union_{self.db_id}_{other.db_id}"
+                if self.backend is not None
+                else None
+            ),
+        )
+
+        for rec in set(self._def_types.keys()) & set(other._def_types.keys()):
+            db[rec] |= sqla.union(
+                self[rec]._get_sql_base_table().select(),
+                other[rec]._get_sql_base_table().select(),
+            ).select()
+
+        return db
+
     # def to_graph(
     #     self: DataBase[R, Any], nodes: Sequence[type[Record]]
     # ) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -4053,6 +4063,25 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                 self.db_id,
                 self.url,
                 self._subs,
+            )
+        )
+
+    @cached_prop
+    def _schema_map(
+        self,
+    ) -> Mapping[
+        type[Record | Schema], Literal[True] | Require | str | sqla.TableClause
+    ]:
+        return (
+            {self.schema: True}
+            if isinstance(self.schema, type)
+            else (
+                cast(
+                    dict[type[Record | Schema], Literal[True]],
+                    {rec: True for rec in self.schema},
+                )
+                if isinstance(self.schema, set)
+                else self.schema if self.schema is not None else {}
             )
         )
 
