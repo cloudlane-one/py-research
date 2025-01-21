@@ -70,6 +70,12 @@ class PyObjectRef(Generic[T]):
     repo_revision: str | None = None
     """Revision of the repo."""
 
+    module_path: Path | None = None
+    """Path to the module file within the repo."""
+
+    module_dirty: bool = False
+    """Whether the referenced module is in a dirty state (untracked changes)."""
+
     docs_url: str | None = None
     """Deep-link to this object's section within the package's API reference."""
 
@@ -154,10 +160,13 @@ class PyObjectRef(Generic[T]):
         )
 
         repo = None
+        module_path = None
         if url is not None and str(url).startswith("file://"):
             repo = get_module_repo(module)
             if repo is not None:
                 url = repo.remote().url
+                if module.__file__ is not None:
+                    module_path = Path(module.__file__).relative_to(repo.working_dir)
 
         if not isinstance(obj, ModuleType) and fetch_obj_inv:
             obj_inv = get_py_inventory(docs_url) if docs_url is not None else None
@@ -182,6 +191,12 @@ class PyObjectRef(Generic[T]):
             package_version=package_version,
             repo=(url if url else "https://pypi.org"),
             repo_revision=repo.head.commit.hexsha if repo is not None else None,
+            module_path=module_path,
+            module_dirty=(
+                repo.is_dirty(path=module_path)
+                if repo is not None and module_path is not None
+                else False
+            ),
             docs_url=docs_url,
         )
 

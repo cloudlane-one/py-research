@@ -120,7 +120,7 @@ def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]] | No
     if res.status_code != 200:
         return None
 
-    inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)
+    inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)  # type: ignore
     py_inv_dict = reduce(
         lambda a, b: {**a, **b}, [v for k, v in inv_dict.items() if k.startswith("py:")]
     )

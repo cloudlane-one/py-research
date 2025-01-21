@@ -29,12 +29,12 @@ from py_research.telemetry import tqdm
 from .conflicts import DataConflictPolicy
 from .databases import (
     Array,
-    ArrayRecord,
     BackLink,
     Ctx,
     Data,
     DataBase,
     Idx,
+    Item,
     Link,
     Record,
     Symbolic,
@@ -158,9 +158,7 @@ type NodeSelector = str | int | TreePath | type[All]
 
 type ValueTarget[Val, Rec: Record] = Data[Val, Idx[()], Any, Any, Ctx[Rec], Symbolic]
 type TableTarget[Rec: Record] = Data[Rec, Any, Any, Any, Any, Symbolic]
-type ArrayTarget[Val, Rec: Record] = Data[
-    Val, Idx, Any, ArrayRecord, Ctx[Rec], Symbolic
-]
+type ArrayTarget[Val, Rec: Record] = Data[Val, Idx, Any, Item, Ctx[Rec], Symbolic]
 
 type PropTarget[Rec: Record] = ValueTarget[Any, Rec] | TableTarget[Rec] | ArrayTarget[
     Any, Rec

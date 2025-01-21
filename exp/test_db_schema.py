@@ -12,9 +12,14 @@ from py_research.db import (
     Record,
     RecUUID,
     Relation,
+    Schema,
     Table,
     Value,
 )
+
+
+class TestSchema(Schema):
+    """Test schema."""
 
 
 class SearchResult(Relation["Search", "Project"]):
@@ -23,7 +28,7 @@ class SearchResult(Relation["Search", "Project"]):
     score: Value[float]
 
 
-class Search(Record[str]):
+class Search(Record[str], TestSchema):
     """Defined search against the API."""
 
     term: Value[str] = Value(primary_key=True)
