@@ -54,7 +54,7 @@ type DirectPath = tuple[str | int | type[All], ...]
 
 
 def _select_on_level(
-    data: TreeData, selector: str | int | type[All]
+    data: TreeData, selector: str | int | type[All], parent_path: DirectPath = ()
 ) -> SupportsItems[DirectPath, Any]:
     """Select attribute from hierarchical data."""
     if isinstance(selector, type):
@@ -76,13 +76,18 @@ def _select_on_level(
                 res = data if data == selector else []
 
     if has_type(res, Mapping[str, Any]):
-        return {(selector,): res}
+        return {
+            (
+                *parent_path,
+                selector,
+            ): res
+        }
     elif isinstance(res, Mapping):
-        return {(selector, k): v for k, v in res.items()}
+        return {(*parent_path, selector, k): v for k, v in res.items()}
     elif isinstance(res, Sequence) and not isinstance(res, str):
-        return {(selector, i): v for i, v in enumerate(res)}
+        return {(*parent_path, selector, i): v for i, v in enumerate(res)}
 
-    return {(selector,): res}
+    return {(*parent_path, selector): res}
 
 
 type PathLevel = str | int | slice | set[str] | set[int] | type[All] | Callable[
@@ -96,38 +101,40 @@ class TreePath:
 
     path: Sequence[PathLevel]
 
-    def select(self, data: TreeData) -> SupportsItems[DirectPath, Any]:
+    def select(
+        self, data: TreeData, parent_path: DirectPath = ()
+    ) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
         res: SupportsItems[DirectPath, Any] = {}
         if len(self.path) == 0:
-            res = _select_on_level(data, All)
+            res = _select_on_level(data, All, parent_path)
         else:
             top = self.path[0]
             subpath = TreePath(self.path[1:])
             match top:
                 case str() | int() | type():
-                    res = _select_on_level(data, top)
+                    res = _select_on_level(data, top, parent_path)
                 case slice():
                     assert isinstance(data, Sequence)
                     index_range = range(
                         top.start or 0, top.stop or len(data), top.step or 1
                     )
                     res = {
-                        (i, *sub_i, *sub_sub_i): v
+                        (i, *sub_i, *sub_ij): v_ij
                         for i in index_range
-                        for sub_i, v in _select_on_level(data, i).items()
-                        for sub_sub_i, v in subpath.select(v).items()
+                        for sub_i, v_i in _select_on_level(data, i, parent_path).items()
+                        for sub_ij, v_ij in subpath.select(v_i).items()
                     }
                 case set():
                     res = {
-                        (i, *sub_i, *sub_sub_i): v
+                        (i, *sub_i, *sub_ij): v_ij
                         for i in top
-                        for sub_i, v in _select_on_level(data, i).items()
-                        for sub_sub_i, v in subpath.select(v).items()
+                        for sub_i, v_i in _select_on_level(data, i, parent_path).items()
+                        for sub_ij, v_ij in subpath.select(v_i).items()
                     }
                 case Callable():
                     res = {
-                        (top.__name__, *sub_i): v
+                        (*parent_path, top.__name__, *sub_i): v
                         for sub_i, v in subpath.select(
                             list(filter(top, data))
                             if isinstance(data, Iterable) and not isinstance(data, str)
@@ -198,14 +205,14 @@ class DataSelect:
         )
 
     def select(
-        self, data: TreeData, parent_path: DirectPath = tuple()
+        self, data: TreeData, parent_path: DirectPath = ()
     ) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
         sel = self.sel
         if not isinstance(sel, TreePath):
             sel = TreePath([sel])
 
-        return sel.select(data)
+        return sel.select(data, parent_path)
 
 
 @dataclass
@@ -225,9 +232,7 @@ type _PullMapping[Rec: Record] = Mapping[
     DataSelect,
 ]
 
-type RecMatchBy[Rec: Record] = (
-    Literal["index", "all"] | ValueTarget[Any, Rec] | list[ValueTarget[Any, Rec]]
-)
+type RecMatchBy[Rec: Record] = (Literal["index", "all"] | list[ValueTarget[Any, Rec]])
 
 
 @dataclass(kw_only=True, eq=False)
@@ -344,13 +349,13 @@ class SelIndex(DataSelect):
     levels_up: int = 1
 
     def select(
-        self, data: TreeData, parent_path: DirectPath = tuple()
+        self, data: TreeData, parent_path: DirectPath = ()
     ) -> SupportsItems[DirectPath, Any]:
         """Select the node in the data structure."""
-        idx_sel = slice(-self.levels_up) if self.levels_up > 1 else -1
+        idx_sel = slice(-self.levels_up, None) if self.levels_up > 1 else -1
         res = {
             p: ((*parent_path, *(pi for pi in p if pi is not All))[idx_sel])
-            for p, _ in DataSelect.select(self, data).items()
+            for p, _ in DataSelect.select(self, data, parent_path).items()
         }
         return res
 
@@ -631,10 +636,14 @@ async def _load_record(
     is_new: bool = True
     if table_map.record_type._is_complete_dict(rec_dict):
         rec = table_map.record_type(**rec_dict)
+        rec_idx = rec._index
+
+    if rec_idx is None and table_map.match_by == "index":
+        return None
 
     match_expr = _gen_match_expr(
         table,
-        rec._index if rec is not None else rec_idx if rec_idx is not None else None,
+        rec_idx,
         rec_dict,
         table_map.match_by,
     )
@@ -644,11 +653,11 @@ async def _load_record(
         rec_idx = recs_keys[0]
         is_new = False
 
+    if rec_idx is None:
+        return None
+
     if is_new and table_map.match_by != "index":
         table |= {rec_idx: rec}
-
-    if rec is None and rec_idx is None:
-        return None
 
     return rec if rec is not None and is_new else rec_idx
 
@@ -730,17 +739,17 @@ async def _load_records(
     if isinstance(table_map, SubTableMap) and issubclass(
         table_map.target.relation_type, Record
     ):
-        assert table_map.target._rel is not None
-        assert table_map.target._rel_to is not None
+        assert table_map.target._backlink is not None
+        assert table_map.target._link is not None
 
         rel_map = copy_and_override(
             SubTableMap,
             table_map.rel_map if table_map.rel_map is not None else TableMap(),
-            target=table_map.target._rel,
+            target=table_map.target._backlink,
         )
 
         rel_injects = {
-            path_idx: table_map.target._rel_to._gen_fk_value_map(rec_idx)
+            path_idx: table_map.target._link._gen_fk_value_map(rec_idx)
             for rec_idx, _, path_idx in records.keys()
         }
 
@@ -787,7 +796,7 @@ async def _load_records(
 
         elif isinstance(tgt, Array):
             # Load array data.
-            idx_sel = sel.idx if isinstance(sel, IdxMap) else SelIndex()
+            idx_sel = sel.idx if isinstance(sel, IdxMap) else SelIndex(sel=sel.sel)
 
             array_data = {}
             for rec_idx, parent_idx, path_idx in records.keys():
@@ -795,8 +804,8 @@ async def _load_records(
                 data = in_data[data_idx]
                 array_data |= {
                     (
-                        (rec_idx if isinstance(rec_idx, tuple) else (rec_idx,)),
-                        (idx if isinstance(idx, tuple) else (idx,)),
+                        *(rec_idx if isinstance(rec_idx, tuple) else (rec_idx,)),
+                        *(idx if isinstance(idx, tuple) else (idx,)),
                     ): val
                     for (_, idx), (_, val) in zip(
                         idx_sel.select(data, path_idx).items(),
@@ -804,7 +813,7 @@ async def _load_records(
                     )
                 }
 
-                table[tgt] |= array_data
+            table[tgt] |= array_data
 
     if len(rest_records) > 0:
         rest_data.append((table_map, rest_records))
