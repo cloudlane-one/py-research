@@ -174,7 +174,7 @@ def test_import_db_from_tree(nested_db_dict: dict, data_source: DataSource):
     reveal_type(s := db[Search])
     reveal_type(s[Search.result_count])
     reveal_type(sr := s[Search.results])
-    reveal_type(s[Search.results.rec.org])
+    reveal_type(s[Search.results.x.org])
     reveal_type(sr[("first", 0)])
     reveal_type(sr[[("first", 0), ("second", 1)]])
     reveal_type(db[Project][0:3])
