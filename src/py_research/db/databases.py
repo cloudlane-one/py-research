@@ -683,6 +683,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 self._typehint,
                 self._typevar_map,
                 self._filters,
+                self._tuple_selection,
             )
         )
 
@@ -2000,8 +2001,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return original_owners[0]
 
     @property
-    def _home_table(self) -> Data[Record | None, Any, Any, Any, Any, BaseT]:
-        if Data._has_type(self, Data[Record | None, Any, Any, Any, Any, Any]):
+    def _home_table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT]:
+        if Data._has_type(self, Table[Record | None, Any, Any, Any, Any, Any]):
             return self
 
         if Data._has_type(self, Data[Any, Any, Any, Record, Ctx, Any]):
@@ -2029,7 +2030,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
 
         if self._ctx is not None:
-            if issubclass(self.record_type, IndexedRelation):
+            if issubclass(self.record_type, Item):
+                return [self.record_type._id]  # type: ignore
+            elif issubclass(self.record_type, IndexedRelation):
                 return [self.record_type._rel_id]  # type: ignore
             elif issubclass(self.record_type, Relation):
                 return [fk for fk in self.record_type._to._fk_map.keys()]  # type: ignore
@@ -2109,11 +2112,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             for pk in node._idx_cols
         ]
 
-        return (
-            {col.fqn: col for col in indexes}
-            if issubclass(self.target_type, tuple)
-            else {col.name: col for col in indexes}
-        )
+        return {col.fqn: col for col in indexes}
 
     @cached_prop
     def _abs_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
@@ -2133,9 +2132,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 }
                 if Data._has_type(self, Data[Record | None, Any, Any, Any, Any, Any])
                 else {
-                    copy_and_override(
-                        Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self._ctx
-                    )
+                    cast(Value[Any, Any, Any, Any, BaseT], v._add_ctx(self._ctx_table))
                     for v in (
                         (self.rel.record_type._value,)  # type: ignore
                         if Data._has_type(self, Data[Any, Any, Any, Item, Ctx, Any])
@@ -2256,19 +2253,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @cached_prop
     def _abs_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
-        return [
-            copy_and_override(
-                Table[Record | None, Any, Any, Any, Any, BaseT],
-                v,
-                _db=self.db,
-                _ctx=self._ctx,
-            )
-            for v in (
-                (v for sel in self.tuple_selection for v in sel._abs_joins)
-                if Data._has_type(self, Data[tuple, Any, Any, Any, Ctx, Any])
-                else (self,)
-            )
-        ]
+        return (
+            [
+                v._add_ctx(self._ctx_table)
+                for sel in self.tuple_selection
+                for v in sel._abs_joins
+            ]
+            if Data._has_type(self, Data[tuple, Any, Any, Any, Ctx, Any])
+            else [self._home_table]
+        )
 
     @cached_prop
     def _total_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
@@ -2276,8 +2269,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @cached_prop
     def _total_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
-        sel = self._abs_joins + self._abs_filters[1]
-        return sel if self._ctx_table is None else sel + self._ctx_table._total_joins
+        return self._abs_joins + self._abs_filters[1]
 
     @cached_prop
     def _total_join_dict(self) -> JoinDict:
@@ -2482,9 +2474,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         tmpl = Data[Any, Any, Any, Any, Any, Any](_typehint=type_)
 
         return has_type(obj, type_) and all(
-            not isinstance(obj_type := obj._get_typearg(t), Undef)
-            and is_subtype(
-                obj_type,
+            is_subtype(
+                obj._get_typearg(t),
                 tmpl._get_typearg(t),
             )
             for t in tmpl._typearg_map.keys()
@@ -3514,6 +3505,9 @@ class BackLink(
     link: Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
 
 
+type ItemType = Item
+
+
 @dataclass(eq=False)
 class Array(
     Data[
@@ -3530,9 +3524,9 @@ class Array(
 
     _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
         ValT: 0,
-        IdxT: Idx[Any],
+        IdxT: ArrayIdx[Any, Any],
         CrudT: 2,
-        RelT: NoneType,
+        RelT: ItemType,
         CtxT: Ctx[Any],
         BaseT: 4,
     }
@@ -4237,10 +4231,6 @@ class RecordMeta(type):
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
         cls.__class_props = None
-
-        if cls._template:
-            return
-
         cls._get_class_props()
 
     @property
@@ -4867,6 +4857,7 @@ class Item(BacklinkRecord[KeyT2, RecT2], Generic[ValT, KeyT2, RecT2]):
 
     _template = True
 
+    _from: Link[RecT2] = Link(primary_key=True)
     _id: Value[KeyT2] = Value(primary_key=True)
     _value: Value[ValT]
 
