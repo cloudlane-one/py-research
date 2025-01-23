@@ -773,6 +773,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         instance_maps[rec_type][rec._index] = rec
 
                     val_list.append(rec)
+                elif isinstance(sel, Array):
+                    val_list.append(row["value"])
                 else:
                     val_list.append(row[sel.name])
 
@@ -815,7 +817,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
     ) -> Iterable[tuple[Any, Any]]:
         """Iterable over this dataset's items."""
-        return zip(self.keys(), self.values())
+        return list(zip(self.keys(), self.values()))
 
     @overload
     def get(
@@ -891,7 +893,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             with self.db.engine.connect() as con:
                 merged_df = pd.read_sql(select, con)
                 merged_df = merged_df.set_index(
-                    list(self._abs_idx_cols.keys()), drop=False
+                    list(self._abs_idx_cols.keys()), drop=True
                 )
         else:
             merged_df = pl.read_database(
