@@ -2447,11 +2447,16 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         setattr(col, "_data", self)
         return col
 
-    @cached_prop
+    @property
     def _sql_table(
         self: Data[Record | None, Any, Any, Any, Any, Any]
     ) -> sqla.FromClause:
         """Recursively join all bases of this record to get the full data."""
+        if self.db.backend_type == "excel-file":
+            self.db._load_from_excel(
+                # {self.record_type, *self.record_type._record_superclasses}
+            )
+
         base_table = self._get_sql_base_table("read")
         if len(self.record_type._record_superclasses) == 0:
             return base_table
@@ -2755,7 +2760,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self.db._create_sqla_table(table)
 
         if orig_table is not None and mode == "upsert":
-            with self.db.engine.connect() as conn:
+            with self.db.engine.begin() as conn:
                 conn.execute(
                     sqla.insert(table).from_select(
                         orig_table.columns.keys(), orig_table.select()
@@ -2904,7 +2909,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
         value: Data[ValT2, Any, Any, Any, Any, Any] | Input[ValT2, Hashable, Hashable],
         mode: Literal["update", "upsert", "replace", "insert"] = "update",
-        autosave: bool = True,
     ) -> None:
         record_ids: dict[Hashable, Hashable] | None = None
         valid_caches = self.db._get_valid_cache_set(self._target_table.record_type)
@@ -3021,9 +3025,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         self,
                     )._mutate_rels_from_rec_ids({value: value}, mode)
                     valid_caches -= {value}
-
-        if autosave and self.db.backend_type == "excel-file":
-            self.db._save_to_excel()
 
         return
 
@@ -3396,6 +3397,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             self.ctx._mutate_from_sql(
                 sqla.select(value_table).add_columns(*to_fk_cols).subquery(),
                 "update",
+            )
+
+        if self.db.backend_type == "excel-file":
+            self.db._save_to_excel(
+                # {self.record_type, *self.record_type._record_superclasses}
             )
 
         return
@@ -4165,39 +4171,42 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
         return schema_name
 
-    def _load_from_excel(self) -> None:
+    def _load_from_excel(self, targets: set[type[Record]] | None = None) -> None:
         """Load all tables from Excel."""
         assert isinstance(self.url, Path | CloudPath | HttpFile)
         path = self.url.get() if isinstance(self.url, HttpFile) else self.url
 
-        recs = self._schema_types.keys()
+        if isinstance(path, Path) and not path.exists():
+            return
+
+        recs = targets if targets is not None else self._schema_types.keys()
 
         with open(path, "rb") as file:
             for rec in recs:
                 table = self[rec]._get_sql_base_table("replace")
 
-                with self.engine.connect() as conn:
-                    conn.execute(table.delete())
+                with self.engine.begin() as conn:
+                    conn.execute(table.delete().where(sqla.true()))
 
                 pl.read_excel(
                     file, sheet_name=rec._get_table_name(self._subs)
                 ).write_database(
                     str(table),
-                    str(self.engine.url),
+                    self.engine,
                     if_table_exists="append",
                 )
 
-    def _save_to_excel(self) -> None:
+    def _save_to_excel(self, targets: set[type[Record]] | None = None) -> None:
         """Save all (or selected) tables to Excel."""
         assert isinstance(self.url, Path | CloudPath | HttpFile)
         file = self.url.get() if isinstance(self.url, HttpFile) else self.url
 
-        recs = self._schema_types.keys()
+        recs = targets if targets is not None else self._schema_types.keys()
 
         with ExcelWorkbook(file) as wb:
             for rec in recs:
                 pl.read_database(
-                    str(self[rec]._get_sql_base_table().select()),
+                    self[rec]._get_sql_base_table().select(),
                     self.engine,
                 ).write_excel(wb, worksheet=rec._get_table_name(self._subs))
 
@@ -4480,8 +4489,14 @@ class RecordMeta(type):
     def _rel_types(
         cls, _traversed: set[type[Record]] | None = None
     ) -> set[type[Record]]:
-        _traversed = _traversed or set()
         direct_rel_types = {t.record_type for t in cls._tables.values()}
+        direct_rel_types |= {
+            t.relation_type
+            for t in cls._tables.values()
+            if issubclass(t.relation_type, Record)
+        }
+
+        _traversed = _traversed or set()
         to_traverse = direct_rel_types - _traversed
 
         return (

@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["cross_platform", "inherit_metadata"]
 lock_version = "4.4.1"
-content_hash = "sha256:710b0c96af98e99524bdc5c15c69b795e960d499ac606d9c779ffc941842c18b"
+content_hash = "sha256:da9866b584b70df3f6a7ff1e415cfaaf228f96af44c1ff64de56d1fc4963988b"
 
 [[package]]
 name = "accessible-pygments"
@@ -726,48 +726,6 @@ files = [
 ]
 
 [[package]]
-name = "duckdb"
-version = "1.1.3"
-requires_python = ">=3.7.0"
-summary = "DuckDB in-process database"
-groups = ["default"]
-files = [
-    {file = "duckdb-1.1.3-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:a433ae9e72c5f397c44abdaa3c781d94f94f4065bcbf99ecd39433058c64cb38"},
-    {file = "duckdb-1.1.3-cp312-cp312-macosx_12_0_universal2.whl", hash = "sha256:d08308e0a46c748d9c30f1d67ee1143e9c5ea3fbcccc27a47e115b19e7e78aa9"},
-    {file = "duckdb-1.1.3-cp312-cp312-macosx_12_0_x86_64.whl", hash = "sha256:5d57776539211e79b11e94f2f6d63de77885f23f14982e0fac066f2885fcf3ff"},
-    {file = "duckdb-1.1.3-cp312-cp312-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:e59087dbbb63705f2483544e01cccf07d5b35afa58be8931b224f3221361d537"},
-    {file = "duckdb-1.1.3-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4ebf5f60ddbd65c13e77cddb85fe4af671d31b851f125a4d002a313696af43f1"},
-    {file = "duckdb-1.1.3-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:e4ef7ba97a65bd39d66f2a7080e6fb60e7c3e41d4c1e19245f90f53b98e3ac32"},
-    {file = "duckdb-1.1.3-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:f58db1b65593ff796c8ea6e63e2e144c944dd3d51c8d8e40dffa7f41693d35d3"},
-    {file = "duckdb-1.1.3-cp312-cp312-win_amd64.whl", hash = "sha256:e86006958e84c5c02f08f9b96f4bc26990514eab329b1b4f71049b3727ce5989"},
-    {file = "duckdb-1.1.3-cp313-cp313-macosx_12_0_arm64.whl", hash = "sha256:0897f83c09356206ce462f62157ce064961a5348e31ccb2a557a7531d814e70e"},
-    {file = "duckdb-1.1.3-cp313-cp313-macosx_12_0_universal2.whl", hash = "sha256:cddc6c1a3b91dcc5f32493231b3ba98f51e6d3a44fe02839556db2b928087378"},
-    {file = "duckdb-1.1.3-cp313-cp313-macosx_12_0_x86_64.whl", hash = "sha256:1d9ab6143e73bcf17d62566e368c23f28aa544feddfd2d8eb50ef21034286f24"},
-    {file = "duckdb-1.1.3-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:2f073d15d11a328f2e6d5964a704517e818e930800b7f3fa83adea47f23720d3"},
-    {file = "duckdb-1.1.3-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d5724fd8a49e24d730be34846b814b98ba7c304ca904fbdc98b47fa95c0b0cee"},
-    {file = "duckdb-1.1.3-cp313-cp313-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:51e7dbd968b393343b226ab3f3a7b5a68dee6d3fe59be9d802383bf916775cb8"},
-    {file = "duckdb-1.1.3-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:00cca22df96aa3473fe4584f84888e2cf1c516e8c2dd837210daec44eadba586"},
-    {file = "duckdb-1.1.3-cp313-cp313-win_amd64.whl", hash = "sha256:77f26884c7b807c7edd07f95cf0b00e6d47f0de4a534ac1706a58f8bc70d0d31"},
-    {file = "duckdb-1.1.3.tar.gz", hash = "sha256:68c3a46ab08836fe041d15dcbf838f74a990d551db47cb24ab1c4576fc19351c"},
-]
-
-[[package]]
-name = "duckdb-engine"
-version = "0.14.2"
-requires_python = "<4,>=3.8"
-summary = "SQLAlchemy driver for duckdb"
-groups = ["default"]
-dependencies = [
-    "duckdb>=0.5.0",
-    "packaging>=21",
-    "sqlalchemy>=1.3.22",
-]
-files = [
-    {file = "duckdb_engine-0.14.2-py3-none-any.whl", hash = "sha256:9c0634e53b91a2b43bbd74b06f275eca80acd7ad02ebb0193ef6d9a22ed29b49"},
-    {file = "duckdb_engine-0.14.2.tar.gz", hash = "sha256:a1e068d8c61d3368405a35740e652b236ae23e98fbbfbe02093855586e07caaf"},
-]
-
-[[package]]
 name = "et-xmlfile"
 version = "1.1.0"
 requires_python = ">=3.6"
@@ -787,6 +745,24 @@ groups = ["default"]
 files = [
     {file = "executing-2.1.0-py2.py3-none-any.whl", hash = "sha256:8d63781349375b5ebccc3142f4b30350c0cd9c79f921cde38be2be4637e98eaf"},
     {file = "executing-2.1.0.tar.gz", hash = "sha256:8ea27ddd260da8150fa5a708269c4a10e76161e2496ec3e587da9e3c0fe4b9ab"},
+]
+
+[[package]]
+name = "fastexcel"
+version = "0.12.1"
+requires_python = ">=3.8"
+summary = "A fast excel file reader for Python, written in Rust"
+groups = ["default"]
+dependencies = [
+    "pyarrow>=8.0.0",
+]
+files = [
+    {file = "fastexcel-0.12.1-cp38-abi3-macosx_10_12_x86_64.whl", hash = "sha256:7c4c959a49329a53540ed86d4f92cd4af2d774b08c47ad190841e4daf042758a"},
+    {file = "fastexcel-0.12.1-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:e889290b2d1437e57c4fb500657f0d2908de6aa5b291475b93e3b5d7e0cea938"},
+    {file = "fastexcel-0.12.1-cp38-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:c09119f14760dfee0c1cb94ef281bee2abb844975fdf0fbf34c5b836ff58d39d"},
+    {file = "fastexcel-0.12.1-cp38-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a169b72df88406007d8449a4b216effddeaad5e9d73f4de1fbd8cbfd6ce6a01c"},
+    {file = "fastexcel-0.12.1-cp38-abi3-win_amd64.whl", hash = "sha256:5c1868546ae0912040449e0b26dd4759db3f76a94e0fa5ac3c86fdaf54185e9c"},
+    {file = "fastexcel-0.12.1.tar.gz", hash = "sha256:5dc2f1ff3ddff6c933d1f924add7f7f5dc20388c1e70b22afae0f28b3c4f01c9"},
 ]
 
 [[package]]
@@ -2918,20 +2894,6 @@ files = [
     {file = "SQLAlchemy-2.0.37-cp313-cp313-win_amd64.whl", hash = "sha256:d70f53a0646cc418ca4853da57cf3ddddbccb8c98406791f24426f2dd77fd0e2"},
     {file = "SQLAlchemy-2.0.37-py3-none-any.whl", hash = "sha256:a8998bf9f8658bd3839cbc44ddbe982955641863da0c1efe5b00c1ab4f5c16b1"},
     {file = "sqlalchemy-2.0.37.tar.gz", hash = "sha256:12b28d99a9c14eaf4055810df1001557176716de0167b91026e648e65229bffb"},
-]
-
-[[package]]
-name = "sqlalchemy-utils"
-version = "0.41.2"
-requires_python = ">=3.7"
-summary = "Various utility functions for SQLAlchemy."
-groups = ["default"]
-dependencies = [
-    "SQLAlchemy>=1.3",
-]
-files = [
-    {file = "SQLAlchemy-Utils-0.41.2.tar.gz", hash = "sha256:bc599c8c3b3319e53ce6c5c3c471120bd325d0071fb6f38a10e924e3d07b9990"},
-    {file = "SQLAlchemy_Utils-0.41.2-py3-none-any.whl", hash = "sha256:85cf3842da2bf060760f955f8467b87983fb2e30f1764fd0e24a48307dc8ec6e"},
 ]
 
 [[package]]
