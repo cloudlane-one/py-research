@@ -735,6 +735,10 @@ async def _load_records(
     # Upload main records into the database.
     table |= {idx: rec for (idx, _, _), rec in records.items()}
 
+    if len(rest_records) > 0:
+        # Collect remaining data for later loading.
+        rest_data.append((table_map, rest_records))
+
     # Load relation records.
     if isinstance(table_map, SubTableMap) and issubclass(
         table_map.target.relation_type, Record
@@ -753,17 +757,23 @@ async def _load_records(
             for rec_idx, _, path_idx in records.keys()
         }
 
+        loaded_in_data = {
+            (parent_idx, path_idx): data
+            for (parent_idx, path_idx), data in in_data.items()
+            if path_idx in rel_injects
+        }
+
         await _load_records(
             table.db[rel_map.target.record_type],
             rel_map,
-            in_data,
+            loaded_in_data,
             rest_data,
             rel_injects,
         )
 
     # Handle relations with incoming links.
     for tgt, sel in table_map.full_map.items():
-        if isinstance(tgt, Table):
+        if isinstance(tgt, Table) and not isinstance(tgt, Link):
             # Load relation table.
             rel_map = (
                 copy_and_override(SubTableMap, sel, target=tgt)
@@ -814,9 +824,6 @@ async def _load_records(
                 }
 
             table[tgt] |= array_data
-
-    if len(rest_records) > 0:
-        rest_data.append((table_map, rest_records))
 
     return records
 
