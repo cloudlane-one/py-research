@@ -639,16 +639,18 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self,
         *,
         index_only: bool = False,
+        force_fqns: bool = False,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
+        all_cols = {
+            **self._abs_idx_cols,
+            **(self._abs_cols if not index_only else {}),
+        }
+        if force_fqns:
+            all_cols = {col.fqn: col for col in all_cols.values()}
+
         select = sqla.select(
-            *(
-                col._sql_col.label(col_name)
-                for col_name, col in {
-                    **self._abs_idx_cols,
-                    **(self._abs_cols if not index_only else {}),
-                }.items()
-            ),
+            *{col._sql_col.label(col_name) for col_name, col in all_cols.items()},
         ).select_from(self._root_table._sql_table)
 
         for join in self._sql_joins:
@@ -871,6 +873,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: type[DfT],
         index_only: bool = ...,
+        without_index: bool = ...,
+        force_fqns: bool = ...,
     ) -> DfT: ...
 
     @overload
@@ -878,15 +882,19 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: None = ...,
         index_only: bool = ...,
+        without_index: bool = ...,
+        force_fqns: bool = ...,
     ) -> pl.DataFrame: ...
 
     def df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: type[DfT] | None = None,
         index_only: bool = False,
+        without_index: bool = False,
+        force_fqns: bool = False,
     ) -> DfT:
         """Load dataset as dataframe."""
-        select = type(self).select(self, index_only=index_only)
+        select = type(self).select(self, index_only=index_only, force_fqns=force_fqns)
 
         merged_df = None
         if kind is pd.DataFrame:
@@ -901,7 +909,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 self.db.engine.connect(),
             )
 
-            if not index_only and isinstance(self, Table):
+            if not index_only and not without_index and isinstance(self, Table):
                 rec_type: type[Record] = self.record_type
                 drop_fqns = {
                     copy_and_override(Value, pk, _ctx=self).fqn
@@ -913,6 +921,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         for col_name in self._abs_idx_cols.keys()
                         if col_name in drop_fqns
                     ]
+                )
+            elif without_index:
+                merged_df = merged_df.drop(
+                    [col_name for col_name in self._abs_idx_cols.keys()]
                 )
 
             # merged_df = merged_df.rename(
@@ -997,6 +1009,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         overlay_type: OverlayType = "name_prefix",
     ) -> DataBase[Any, CRUD, BackT2 | BackT3]:
         """Extract a new database instance from the current dataset."""
+        if aggs is not None:
+            # TODO: Implement aggregations.
+            raise NotImplementedError("Aggregations are not yet supported.")
+
         assert isinstance(self, Table)
 
         # Get all rec types in the schema.
@@ -1009,25 +1025,25 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             for r in rel._add_ctx(self)._get_subdag(rec_types)
         }
 
-        # Extract rel paths, which contain an aggregated rel.
-        aggs_per_type: dict[
-            type[Record],
-            list[
-                tuple[
-                    Table[Record | None, Any, Any, Any, Any, Symbolic],
-                    Agg,
-                ]
-            ],
-        ] = {}
-        if aggs is not None:
-            for rel, agg in aggs.items():
-                for path_rel in all_paths_rels:
-                    if path_rel._has_ancestor(rel):
-                        aggs_per_type[rel._ctx_type.record_type] = [
-                            *aggs_per_type.get(rel._ctx_type.record_type, []),
-                            (rel, agg),
-                        ]
-                        all_paths_rels.remove(path_rel)
+        # # Extract rel paths, which contain an aggregated rel.
+        # aggs_per_type: dict[
+        #     type[Record],
+        #     list[
+        #         tuple[
+        #             Table[Record | None, Any, Any, Any, Any, Symbolic],
+        #             Agg,
+        #         ]
+        #     ],
+        # ] = {}
+        # if aggs is not None:
+        #     for rel, agg in aggs.items():
+        #         for path_rel in all_paths_rels:
+        #             if path_rel._has_ancestor(rel):
+        #                 aggs_per_type[rel._ctx_type.record_type] = [
+        #                     *aggs_per_type.get(rel._ctx_type.record_type, []),
+        #                     (rel, agg),
+        #                 ]
+        #                 all_paths_rels.remove(path_rel)
 
         replacements: dict[type[Record], sqla.Select] = {}
         for rec in rec_types:
@@ -1039,32 +1055,32 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ]
             replacements[rec] = sqla.union(*selects).select()
 
-        aggregations: dict[type[Record], sqla.Select] = {}
-        for rec, rec_aggs in aggs_per_type.items():
-            selects = []
-            for rel, agg in rec_aggs:
-                selects.append(
-                    sqla.select(
-                        *[
-                            (
-                                sa._add_ctx(self)._sql_col
-                                if isinstance(sa, Value)
-                                else sqla_visitors.replacement_traverse(
-                                    sa,
-                                    {},
-                                    replace=lambda element, **kw: (
-                                        element._add_ctx(cast(Table, self))._sql_col
-                                        if isinstance(element, Value)
-                                        else None
-                                    ),
-                                )
-                            ).label(ta.name)
-                            for ta, sa in agg.map.items()
-                        ]
-                    )
-                )
+        # aggregations: dict[type[Record], sqla.Select] = {}
+        # for rec, rec_aggs in aggs_per_type.items():
+        #     selects = []
+        #     for rel, agg in rec_aggs:
+        #         selects.append(
+        #             sqla.select(
+        #                 *[
+        #                     (
+        #                         sa._add_ctx(self)._sql_col
+        #                         if isinstance(sa, Value)
+        #                         else sqla_visitors.replacement_traverse(
+        #                             sa,
+        #                             {},
+        #                             replace=lambda element, **kw: (
+        #                                 element._add_ctx(cast(Table, self))._sql_col
+        #                                 if isinstance(element, Value)
+        #                                 else None
+        #                             ),
+        #                         )
+        #                     ).label(ta.name)
+        #                     for ta, sa in agg.map.items()
+        #                 ]
+        #             )
+        #         )
 
-            aggregations[rec] = sqla.union(*selects).select()
+        #     aggregations[rec] = sqla.union(*selects).select()
 
         # Create a new database overlay for the results.
         overlay_db = copy_and_override(
@@ -1083,8 +1099,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         for rec in replacements:
             overlay_db[rec] &= replacements[rec]
 
-        for rec, agg_select in aggregations.items():
-            overlay_db[rec] &= agg_select
+        # for rec, agg_select in aggregations.items():
+        #     overlay_db[rec] &= agg_select
 
         # Transfer table to the new database.
         if to_db is not None:
@@ -1098,7 +1114,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 _instance_map={},
             )
 
-            for rec in set(replacements) | set(aggregations):
+            for rec in set(
+                (
+                    *replacements,
+                    # *aggregations,
+                )
+            ):
                 other_db[rec] &= overlay_db[rec].df()
 
             overlay_db = other_db
@@ -3900,7 +3921,8 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         return ds
 
     def to_graph(
-        self: DataBase[Schema, Any, DynBackendID], nodes: Sequence[type[Record]]
+        self: DataBase[Schema, Any, DynBackendID],
+        nodes: Sequence[type[Record]] | None = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -3913,11 +3935,16 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                 "Only databases with single `Schema` base class are currently supported"
             )
 
+        nodes = (
+            nodes
+            if nodes is not None
+            else list(self.schema._record_types(with_relations=False))
+        )
         node_tables = [self[n] for n in nodes]
 
         # Concat all node tables into one.
         node_dfs = [
-            n.df(kind=pd.DataFrame)
+            n.df(kind=pd.DataFrame, force_fqns=True)
             .reset_index()
             .assign(table=n.target_type._default_table_name())
             for n in node_tables
@@ -3932,6 +3959,8 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             set.union, (set((n, r) for r in n._links.values()) for n in nodes)
         )
 
+        relation_types = self.schema._relation_types()
+
         undirected_edges: dict[
             type[Record],
             set[
@@ -3939,88 +3968,84 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                     Link[Record, Any, Any, Symbolic], Link[Record, Any, Any, Symbolic]
                 ]
             ],
-        ] = {t: set() for t in nodes}
+        ] = {t: set() for t in relation_types}
 
-        rel_types = self.schema._relation_types()
+        for rel in relation_types:
+            left, right = cast(
+                tuple[
+                    Link[Record, Any, Any, Symbolic],
+                    Link[Record, Any, Any, Symbolic],
+                ],
+                (rel._from, rel._to),  # type: ignore
+            )
+            if left.target_type in nodes and right.target_type in nodes:
+                undirected_edges[rel].add((left, right))
 
-        for n in nodes:
-            for rel in rel_types:
-                left, right = cast(
-                    tuple[
-                        Link[Record, Any, Any, Symbolic],
-                        Link[Record, Any, Any, Symbolic],
-                    ],
-                    (rel._from, rel._to),  # type: ignore
+        direct_edge_dfs = [
+            node_df.loc[node_df["table"] == str(parent._default_table_name())]
+            .rename(columns={"node_id": "source"})
+            .merge(
+                node_df.loc[
+                    node_df["table"] == str(link.record_type._default_table_name())
+                ],
+                left_on=[c.fqn for c in link._fk_map.keys()],
+                right_on=[c.fqn for c in link._fk_map.values()],
+            )
+            .rename(columns={"node_id": "target"})[["source", "target"]]
+            .assign(
+                ltr=",".join(c.name for c in link._fk_map.keys()),
+                rtl=None,
+            )
+            for parent, link in directed_edges
+        ]
+
+        rel_edge_dfs = []
+        for assoc_table, rels in undirected_edges.items():
+            for left, right in rels:
+                rel_df = (
+                    self[assoc_table]
+                    .df(kind=pd.DataFrame, force_fqns=True)
+                    .reset_index()
                 )
-                if left.target_type == n:
-                    undirected_edges[n].add((left, right))
-                elif right.target_type == n:
-                    undirected_edges[n].add((right, left))
+
+                left_merged = rel_df.merge(
+                    node_df.loc[
+                        node_df["table"] == str(left.record_type._default_table_name())
+                    ][[*(c.fqn for c in left._fk_map.values()), "node_id"]],
+                    left_on=[c.fqn for c in left._fk_map.keys()],
+                    right_on=[c.fqn for c in left._fk_map.values()],
+                    how="inner",
+                ).rename(columns={"node_id": "source"})
+
+                both_merged = left_merged.merge(
+                    node_df.loc[
+                        node_df["table"] == str(right.record_type._default_table_name())
+                    ][[*(c.fqn for c in right._fk_map.values()), "node_id"]],
+                    left_on=[c.fqn for c in right._fk_map.keys()],
+                    right_on=[c.fqn for c in right._fk_map.values()],
+                    how="inner",
+                ).rename(columns={"node_id": "target"})[
+                    list(
+                        {
+                            "source",
+                            "target",
+                            *(c.fqn for c in assoc_table._col_values.values()),
+                        }
+                    )
+                ]
+
+                rel_edge_dfs.append(
+                    both_merged.assign(
+                        ltr=",".join(c.name for c in right._fk_map.keys()),
+                        rtl=",".join(c.name for c in left._fk_map.keys()),
+                    )
+                )
 
         # Concat all edges into one table.
         edge_df = pd.concat(
             [
-                *[
-                    node_df.loc[node_df["table"] == str(parent._default_table_name())]
-                    .rename(columns={"node_id": "source"})
-                    .merge(
-                        node_df.loc[
-                            node_df["table"]
-                            == str(link.record_type._default_table_name())
-                        ],
-                        left_on=[c.name for c in link._fk_map.keys()],
-                        right_on=[c.name for c in link._fk_map.values()],
-                    )
-                    .rename(columns={"node_id": "target"})[["source", "target"]]
-                    .assign(
-                        ltr=",".join(c.name for c in link._fk_map.keys()),
-                        rtl=None,
-                    )
-                    for parent, link in directed_edges
-                ],
-                *[
-                    self[assoc_table]
-                    .df(kind=pd.DataFrame)
-                    .merge(
-                        node_df.loc[
-                            node_df["table"]
-                            == str(left.record_type._default_table_name())
-                        ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in left._fk_map.keys()],
-                        right_on=[c.name for c in left._fk_map.values()],
-                        how="inner",
-                    )
-                    .rename(columns={"node_id": "source"})
-                    .merge(
-                        node_df.loc[
-                            node_df["table"]
-                            == str(left.record_type._default_table_name())
-                        ].dropna(axis="columns", how="all"),
-                        left_on=[c.name for c in right._fk_map.keys()],
-                        right_on=[c.name for c in right._fk_map.values()],
-                        how="inner",
-                    )
-                    .rename(columns={"node_id": "target"})[
-                        list(
-                            {
-                                "source",
-                                "target",
-                                *(
-                                    c
-                                    for c in self[
-                                        assoc_table
-                                    ].record_type._col_values.keys()
-                                ),
-                            }
-                        )
-                    ]
-                    .assign(
-                        ltr=",".join(c.name for c in right._fk_map.keys()),
-                        rtl=",".join(c.name for c in left._fk_map.keys()),
-                    )
-                    for assoc_table, rels in undirected_edges.items()
-                    for left, right in rels
-                ],
+                *direct_edge_dfs,
+                *rel_edge_dfs,
             ],
             ignore_index=True,
         )
@@ -4521,14 +4546,16 @@ class RecordMeta(type):
         return ".".join((cls.__module__, cls.__name__))
 
     def _rel_types(
-        cls, _traversed: set[type[Record]] | None = None
+        cls, _traversed: set[type[Record]] | None = None, with_relations: bool = True
     ) -> set[type[Record]]:
         direct_rel_types = {t.record_type for t in cls._tables.values()}
-        direct_rel_types |= {
-            t.relation_type
-            for t in cls._tables.values()
-            if issubclass(t.relation_type, Record)
-        }
+
+        if with_relations:
+            direct_rel_types |= {
+                t.relation_type
+                for t in cls._tables.values()
+                if issubclass(t.relation_type, Record)
+            }
 
         _traversed = _traversed or set()
         to_traverse = direct_rel_types - _traversed
@@ -4539,7 +4566,10 @@ class RecordMeta(type):
             else direct_rel_types
             | reduce(
                 set.union,
-                (t._rel_types(_traversed | to_traverse) for t in to_traverse),
+                (
+                    t._rel_types(_traversed | to_traverse, with_relations)
+                    for t in to_traverse
+                ),
             )
         )
 
@@ -4554,12 +4584,15 @@ class Schema:
         super().__init_subclass__()
 
     @classmethod
-    def _schema_rel_types(cls) -> set[type[Record]]:
-        return reduce(set.union, (r._rel_types() for r in cls._schema_types))
+    def _schema_rel_types(cls, with_relations: bool = True) -> set[type[Record]]:
+        return reduce(
+            set.union,
+            (r._rel_types(with_relations=with_relations) for r in cls._schema_types),
+        )
 
     @classmethod
-    def _record_types(cls) -> set[type[Record]]:
-        return cls._schema_types | cls._schema_rel_types()
+    def _record_types(cls, with_relations: bool = True) -> set[type[Record]]:
+        return cls._schema_types | cls._schema_rel_types(with_relations)
 
     @classmethod
     def _item_types(cls) -> set[type[Item[Any, Any, Record]]]:
