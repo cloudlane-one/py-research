@@ -898,22 +898,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 select,
                 self.db.engine.connect(),
             )
-            if (
-                not index_only
-                and isinstance(self, Table)
-                and isinstance(self._target_table, Link)
-                and self._target_table._ctx_table is not None
-            ):
-                fk_fqns = {
-                    copy_and_override(Value, fk, _ctx=self._target_table._ctx_table).fqn
-                    for fk in self._target_table._fk_map.keys()
+
+            if not index_only and isinstance(self, Table):
+                rec_type: type[Record] = self.record_type
+                drop_fqns = {
+                    copy_and_override(Value, pk, _ctx=self).fqn
+                    for pk in rec_type._pk_values.values()
                 }
-                drop_idx = [
-                    col_name
-                    for col_name, col in self._abs_idx_cols.items()
-                    if col.fqn in fk_fqns
-                ]
-                merged_df = merged_df.drop(drop_idx)
+                merged_df = merged_df.drop(
+                    [
+                        col_name
+                        for col_name in self._abs_idx_cols.keys()
+                        if col_name in drop_fqns
+                    ]
+                )
+
+            # merged_df = merged_df.rename(
+            #     {
+            #         col.fqn: str(i)
+            #         for i, col in enumerate(self._abs_idx_cols.values())
+            #         if col.fqn in merged_df.columns
+            #     }
+            # )
 
         return cast(DfT, merged_df)
 
@@ -1957,30 +1963,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def _generic_args(self) -> tuple[SingleTypeDef, ...]:
         return get_args(self._generic_type)
 
-    @property
-    def _idx_cols(
-        self: Data[Record | None, Any, Any, Any, Any, Any]
-    ) -> list[Value[Any, Any, Public, Any, Symbolic]]:
-        if isinstance(self, Link):
-            return []
-
-        if isinstance(self, Table) and self.index_by is not None:
-            return (
-                [self.index_by]
-                if isinstance(self.index_by, Value)
-                else list(self.index_by)
-            )
-
-        if self._ctx is not None:
-            if issubclass(self.record_type, Item):
-                return [self.record_type._id]  # type: ignore
-            elif issubclass(self.record_type, IndexedRelation):
-                return [self.record_type._rel_id]  # type: ignore
-            elif issubclass(self.record_type, Relation):
-                return [fk for fk in self.record_type._to._fk_map.keys()]  # type: ignore
-
-        return list(self.record_type._pk_values.values())
-
     @cached_prop
     def _ctx_type(self) -> CtxT:
         """Context record type."""
@@ -2065,7 +2047,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return BackLink[RecT2 | RecT3, Any, Any, RecT4, BaseT](
             _db=self.db,
             _ctx=self._ctx,
-            _name=gen_str_hash((links[0]._ctx, links[0]._name), 6),
+            _name=(
+                self.name
+                if issubclass(rec_type, Item)
+                else (
+                    f"{self.name}_rel"
+                    if issubclass(rec_type, Relation)
+                    else gen_str_hash((links[0]._ctx, links[0]._name), 6)
+                )
+            ),
             _typehint=BackLink[cast(type[RecT2 | RecT3], rec_type)],
             link=cast(Link[Any, Any, Any, Any], links[0]),
             index_by=index_by,
@@ -2132,34 +2122,36 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return self._ctx_table
 
     @cached_prop
-    def _abs_link_path(self) -> list[LinkItem]:
-        return [t for p in self.path for t in (p._backlink, p._link) if t is not None]
+    def _abs_link_path(self) -> dict[LinkItem, Data[Any, Any, Any, Any, Any, Any]]:
+        return {
+            t: p for p in self.path for t in (p._backlink, p._link) if t is not None
+        }
 
     @cached_prop
     def _abs_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
         cols = (
-            {
+            [
                 v._add_ctx(self._ctx_table)
                 for sel in self._tuple_selection
                 for v in sel._abs_cols.values()
-            }
+            ]
             if self._tuple_selection is not None
             else (
-                {
+                [
                     copy_and_override(
                         Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self
                     )
                     for v in self.target_type._col_values.values()
-                }
+                ]
                 if has_type(self, Table[Record, Any, Any, Any, Any, Any])
-                else {
+                else [
                     cast(Value[Any, Any, Any, Any, BaseT], v._add_ctx(self._ctx_table))
                     for v in (
-                        (self.relation_type._value,)  # type: ignore
+                        (self.relation_type.value,)  # type: ignore
                         if issubclass(self.relation_type, Item)
                         else (self,)
                     )
-                }
+                ]
             )
         )
 
@@ -2169,20 +2161,55 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             else {col.name: col for col in cols}
         )
 
-    @property
+    @cached_prop
     def _abs_idx_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
-        cols = [
-            copy_and_override(
-                Value[Any, Any, Any, Any, BaseT],
-                pk,
-                _db=self.db,
-                _ctx=node,
-            )
-            for node in (self._root_table, *self._abs_link_path)
-            for pk in node._idx_cols
-        ]
+        abs_idx_cols = {}
+        path_dict: dict[
+            Data[Record | None, Any, Any, Any, Any, Any],
+            Data[Any, Any, Any, Any, Any, Any],
+        ] = {self._root_table: self._root_table, **self._abs_link_path}
 
-        return {col.fqn: col for col in cols}
+        for link_node, node in path_dict.items():
+            if isinstance(link_node, Link) and issubclass(node.relation_type, Relation):
+                abs_idx_cols |= {
+                    copy_and_override(
+                        Value,
+                        pk,
+                        _ctx=node,
+                    ).fqn: link_node[pk]
+                    for pk in link_node._fk_map.values()
+                }
+            elif isinstance(link_node, Table) and not issubclass(
+                node.relation_type, Relation
+            ):
+                cols = []
+                rec_type: type[Record] = link_node.record_type
+
+                if link_node.index_by is not None:
+                    cols = (
+                        [link_node.index_by]
+                        if isinstance(link_node.index_by, Value)
+                        else list(link_node.index_by)
+                    )
+                elif issubclass(rec_type, Item):
+                    cols = [rec_type.idx]  # type: ignore
+                elif issubclass(rec_type, IndexedRelation):
+                    cols = [rec_type._rel_id]  # type: ignore
+                else:
+                    cols = rec_type._pk_values.values()
+
+                abs_cols = [
+                    copy_and_override(
+                        Value[Any, Any, Any, Any, BaseT],
+                        col,
+                        _db=self.db,
+                        _ctx=link_node,
+                    )
+                    for col in cols
+                ]
+                abs_idx_cols |= {col.fqn: col for col in abs_cols}
+
+        return abs_idx_cols
 
     @cached_prop
     def _abs_col_sets(
@@ -2292,7 +2319,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         for rel in self._total_joins:
             subtree = tree
-            for node in rel._abs_link_path:
+            for node in rel._abs_link_path.keys():
                 if node not in subtree:
                     subtree[node] = {}
                 subtree = subtree[node]
@@ -4374,6 +4401,9 @@ class RecordMeta(type):
 
             # Apply template classes.
             if orig._template or cls._derivate:
+                # Pre-collect all template props
+                # to prepend them in order.
+                orig_props = {}
                 for prop_name, super_prop in orig._get_class_props().items():
                     if prop_name in props:
                         prop = copy_and_override(
@@ -4388,7 +4418,9 @@ class RecordMeta(type):
                         )
 
                     setattr(cls, prop_name, prop)
-                    props[prop_name] = prop
+                    orig_props[prop_name] = prop
+
+                props = {**orig_props, **props}  # Prepend template props.
             else:
                 assert orig is c  # Must be concrete class, not a generic
                 cls._record_superclasses.append(orig)
@@ -4420,7 +4452,7 @@ class RecordMeta(type):
     @property
     def _props(cls) -> dict[str, Data[Any, Any, Any, Any, Ctx, Symbolic]]:
         """The statically defined properties of this record type."""
-        own_props = {**cls._class_fk_values, **cls._get_class_props()}
+        own_props = {**cls._get_class_props(), **cls._class_fk_values}
         return reduce(
             lambda x, y: {**x, **y},
             (c._props for c in cls._record_superclasses),
@@ -4608,7 +4640,9 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         if cls._table_name is not None:
             return cls._table_name
 
-        fqn_parts = (cls.__module__ + "." + cls.__name__).split(".")
+        cls_name = cls.__name__ if not cls._derivate else cls.__bases__[0].__name__
+
+        fqn_parts = (cls.__module__ + "." + cls_name).split(".")
 
         name = fqn_parts[-1]
         for part in reversed(fqn_parts[:-1]):
@@ -4902,8 +4936,8 @@ class Item(BacklinkRecord[KeyT2, RecT2], Generic[ValT, KeyT2, RecT2]):
     _template = True
 
     _from: Link[RecT2] = Link(primary_key=True)
-    _id: Value[KeyT2] = Value(primary_key=True)
-    _value: Value[ValT]
+    idx: Value[KeyT2] = Value(primary_key=True)
+    value: Value[ValT]
 
 
 class Relation(RecHashed, BacklinkRecord[str, RecT2], Generic[RecT2, RecT3]):
