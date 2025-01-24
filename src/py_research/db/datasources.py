@@ -18,7 +18,6 @@ from functools import cached_property, reduce
 from typing import Any, Literal, Self, cast
 
 import sqlalchemy as sqla
-from aioitertools.builtins import zip as azip
 from lxml.etree import _ElementTree as ElementTree
 
 from py_research.data import copy_and_override
@@ -696,7 +695,7 @@ async def _load_records(
     # Define function for async-loading records.
     async def _load_rec_from_item(
         item: tuple[tuple[Hashable, DirectPath], TreeNode]
-    ) -> Hashable | Record | None:
+    ) -> tuple[Hashable, DirectPath, TreeNode, Hashable | Record | None]:
         (parent_idx, path_idx), data = item
 
         rec_inj = injects[path_idx]
@@ -708,14 +707,11 @@ async def _load_records(
 
         rec = await _load_record(table, table_map, path_idx, data, rec_inj)
 
-        return rec
+        return parent_idx, path_idx, data, rec
 
     # Queue up all record loading tasks.
     async_recs = tqdm(
-        azip(
-            in_data.items(),
-            _sliding_batch_map(in_data.items(), _load_rec_from_item),
-        ),
+        _sliding_batch_map(in_data.items(), _load_rec_from_item),
         desc=f"Async-loading `{table_map.record_type.__name__}`",
         total=len(in_data),
     )
@@ -724,7 +720,7 @@ async def _load_records(
     rest_records: InData = {}
 
     # Collect all loaded records.
-    async for ((parent_idx, path_idx), data), rec in async_recs:
+    async for parent_idx, path_idx, data, rec in async_recs:
         if rec is None:
             rest_records[(parent_idx, path_idx)] = data
             continue

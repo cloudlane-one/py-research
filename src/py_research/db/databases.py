@@ -4037,6 +4037,13 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             .reset_index()
             .rename(columns={"index": "node_id"})
         )
+        node_df = node_df[
+            [
+                "node_id",
+                "table",
+                *(c for c in node_df.columns if c not in ("node_id", "table")),
+            ]
+        ]
 
         directed_edges = reduce(
             set.union, (set((n, r) for r in n._links.values()) for n in nodes)
