@@ -153,5 +153,5 @@ def gen_str_hash(x: Any, length: int = 10) -> str:
     Returns:
         Hash of the object as string.
     """
-    s = str(abs(gen_int_hash(x)))
+    s = hex(abs(gen_int_hash(x)))[2:]
     return s[:length].rjust(length, "0")

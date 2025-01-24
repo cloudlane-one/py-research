@@ -650,21 +650,23 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def select(
         self,
-        *,
-        index_only: bool = False,
-        force_fqns: bool = False,
-        without_index: bool = False,
+        cols: Mapping[str, Value[Any, Any, Any, Any, Any]] | None = None,
     ) -> sqla.Select:
         """Return select statement for this dataset."""
-        all_cols = {
-            **(self._abs_idx_cols if not without_index else {}),
-            **(self._abs_cols if not index_only else {}),
-        }
-        if force_fqns:
-            all_cols = {col.fqn: col for col in all_cols.values()}
+        if cols is not None:
+            abs_cols = {
+                name: (
+                    col._prepend_ctx(self._tip)
+                    if issubclass(col.base_type, Symbolic)
+                    else col
+                )
+                for name, col in cols.items()
+            }
+        else:
+            abs_cols = self._abs_idx_cols | self._abs_cols
 
         sql_cols: list[sqla.ColumnElement] = []
-        for col_name, col in all_cols.items():
+        for col_name, col in abs_cols.items():
             sql_col = col._sql_col.label(col_name)
             if sql_col not in sql_cols:
                 sql_cols.append(sql_col)
@@ -677,7 +679,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         for filt in self._sql_filters:
             select = select.where(filt)
 
-        return select
+        return select.distinct()
 
     @cached_prop
     def query(
@@ -888,6 +890,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: type[DfT],
+        sort_by: (
+            Literal["index"] | Iterable[Data[Any, Idx[()], Any, None, Ctx, Symbolic]]
+        ) = ...,
         index_only: bool = ...,
         without_index: bool = ...,
         force_fqns: bool = ...,
@@ -897,6 +902,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: None = ...,
+        sort_by: (
+            Literal["index"] | Iterable[Data[Any, Idx[()], Any, None, Ctx, Symbolic]]
+        ) = ...,
         index_only: bool = ...,
         without_index: bool = ...,
         force_fqns: bool = ...,
@@ -905,25 +913,56 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
         kind: type[DfT] | None = None,
+        sort_by: (
+            Literal["index"] | Iterable[Data[Any, Idx[()], Any, None, Ctx, Symbolic]]
+        ) = "index",
         index_only: bool = False,
         without_index: bool = False,
         force_fqns: bool = False,
     ) -> DfT:
         """Load dataset as dataframe."""
-        select = type(self).select(self, index_only=index_only, force_fqns=force_fqns)
+        all_cols = {
+            **(self._abs_idx_cols if not without_index else {}),
+            **(self._abs_cols if not index_only else {}),
+        }
+        if force_fqns:
+            all_cols = {col.fqn: col for col in all_cols.values()}
+
+        select = type(self).select(self, all_cols)
+
+        col_names = cast(
+            Mapping[Data[Any, Any, Any, None, Ctx, DynBackendID], str],
+            {col: col_name for col_name, col in all_cols.items()},
+        )
 
         merged_df = None
         if kind is pd.DataFrame:
             with self.db.engine.connect() as con:
                 merged_df = pd.read_sql(select, con)
+
                 merged_df = merged_df.set_index(
                     list(self._abs_idx_cols.keys()), drop=True
+                )
+
+                merged_df = (
+                    merged_df.sort_index()
+                    if sort_by == "index"
+                    else merged_df.sort_values(
+                        by=[col_names[self._tip[c]] for c in sort_by]
+                    )
                 )
         else:
             merged_df = pl.read_database(
                 select,
                 self.db.df_engine.connect(),
             )
+
+            sort_cols = (
+                list(self._abs_idx_cols.keys())
+                if sort_by == "index"
+                else [col_names[self._tip[c]] for c in sort_by]
+            )
+            merged_df = merged_df.sort(sort_cols)
 
             if not index_only and not without_index and isinstance(self, Table):
                 rec_type: type[Record] = self.record_type
@@ -942,14 +981,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 merged_df = merged_df.drop(
                     [col_name for col_name in self._abs_idx_cols.keys()]
                 )
-
-            # merged_df = merged_df.rename(
-            #     {
-            #         col.fqn: str(i)
-            #         for i, col in enumerate(self._abs_idx_cols.values())
-            #         if col.fqn in merged_df.columns
-            #     }
-            # )
 
         return cast(DfT, merged_df)
 
@@ -1065,7 +1096,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 continue
 
             select = Data[Any, Any, Any, Any, Any, Any].select(
-                target, without_index=True
+                target, cols=target._abs_cols
             )
             overlay_db[target.record_type] |= select
 
@@ -1689,8 +1720,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[Any, Any, Any, Any, Any, Any],
         other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
     ) -> sqla.ColumnElement[bool] | bool:
-        if self._ctx is None:
-            return hash(self) == hash(other)
+        identical = hash(self) == hash(other)
+
+        if identical or self._ctx is None:
+            return identical
 
         if isinstance(other, Data):
             return self._sql_col == other._sql_col
@@ -2164,12 +2197,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @property
     def _tip(self) -> Table[Record | None, Any, Any, Any, Any, BaseT]:
-        if self._link is not None:
-            return self._link
+        if isinstance(self, Table):
+            return self
         elif self._backlink is not None:
             return self._backlink
-        elif isinstance(self, Table):
-            return self
 
         assert self._ctx_table is not None, "Only tables can be context-less"
         return self._ctx_table
@@ -3217,7 +3248,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if isinstance(self, BackLink):
             # If this table links back to its parent, query and join
             # the parent's primary key columns to the value table.
-            ctx_table = Data.select(self.ctx, index_only=True).subquery()
+            ctx_table = Data.select(self.ctx, cols=self.ctx._abs_idx_cols).subquery()
 
             pk_fk_cols = {
                 self.ctx[pk].fqn: fk.name for fk, pk in self.link._fk_map.items()
