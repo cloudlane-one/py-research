@@ -667,6 +667,7 @@ async def _load_records(
     in_data: InData,
     rest_data: RestData,
     injects: dict[DirectPath, dict[str, Hashable]] | None = None,
+    post_round: bool = False,
 ) -> dict[tuple[Hashable, Hashable, DirectPath], Record | Hashable]:
     # Prepare data injections for all records.
     injects = injects or {}
@@ -687,6 +688,8 @@ async def _load_records(
                 target_map,
                 link_data,
                 rest_data,
+                None,
+                post_round,
             )
 
             for link_idx, _, path_idx in link_recs.keys():
@@ -712,8 +715,10 @@ async def _load_records(
     # Queue up all record loading tasks.
     async_recs = tqdm(
         _sliding_batch_map(in_data.items(), _load_rec_from_item),
-        desc=f"Async-loading `{table_map.record_type.__name__}`",
+        desc=("Loading: " if not post_round else "Post-loading: ")
+        + f"`{table_map.record_type.__name__}`",
         total=len(in_data),
+        leave=True,
     )
 
     records: dict[tuple[Hashable, Hashable, DirectPath], Record | Hashable] = {}
@@ -759,13 +764,15 @@ async def _load_records(
             if path_idx in rel_injects
         }
 
-        await _load_records(
-            table.db[rel_map.target.record_type],
-            rel_map,
-            loaded_in_data,
-            rest_data,
-            rel_injects,
-        )
+        if len(loaded_in_data) > 0:
+            await _load_records(
+                table.db[rel_map.target.record_type],
+                rel_map,
+                loaded_in_data,
+                rest_data,
+                rel_injects,
+                post_round,
+            )
 
     # Handle relations with incoming links.
     for tgt, sel in table_map.full_map.items():
@@ -798,6 +805,8 @@ async def _load_records(
                 rel_map,
                 rel_data,
                 rest_data,
+                None,
+                post_round,
             )
 
         elif isinstance(tgt, Array):
@@ -863,7 +872,7 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
         for table_map, tree_data in rest_data:
             rest_rest: RestData = []
             loaded |= await _load_records(
-                db[table_map.record_type], table_map, tree_data, rest_rest
+                db[table_map.record_type], table_map, tree_data, rest_rest, None, True
             )
             assert all(len(v[1]) == 0 for v in rest_rest)
 
