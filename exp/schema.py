@@ -87,4 +87,4 @@ class Organization(RecUUID):
     address: Value[str]
     city: Value[str]
     projects: BackLink[Project] = BackLink(link=Project.org, default=True)
-    ccs: Array[str, int]
+    countries: Array[str, int]
