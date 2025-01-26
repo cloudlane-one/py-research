@@ -544,10 +544,7 @@ def _gen_match_expr(
         return [rec_idx]
     else:
         match_cols = (
-            list(
-                getattr(table.record_type, a.name)
-                for a in table.record_type._values.values()
-            )
+            list(table.record_type._values.values())
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Data) else match_by
         )

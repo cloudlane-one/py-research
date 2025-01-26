@@ -252,18 +252,15 @@ BackT3 = TypeVar(
     bound=DynBackendID,
 )
 
-
-@final
-class Public:
-    """Demark public status of attribute."""
+# OverT = TypeVar("OverT", bound=LiteralString | None, default=None)
 
 
-@final
-class Private:
-    """Demark private status of attribute."""
+# class Overlay(Generic[BackT, OverT]):
+#     """Overlay type."""
 
 
-PubT = TypeVar("PubT", bound="Public | Private", default="Public")
+# class DynOverlay(Overlay[BackT, None]):
+#     """Dynamic overlay type."""
 
 
 DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
@@ -516,7 +513,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ] = field(default_factory=list)
     _tuple_selection: tuple[Data[Any, Any, Any, Any, Any, BaseT], ...] | None = None
 
-    _sql_table_alias: sqla_sel.NamedFromClause | None = None
+    _sql_col: sqla.ColumnElement | None = None
+    _sql_from: sqla_sel.NamedFromClause | None = None
+    """Override the SQL from clause of this dataset."""
 
     @cached_prop
     def db(self) -> DataBase[Any, CrudT | CRUD, BaseT]:
@@ -585,12 +584,17 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         base_type = self._hint_to_type(base)
         return cast(type[BaseT], base_type)
 
+    @property
+    def tuple_selection(
+        self: Data[tuple, Any, Any, Any, Any, Any]
+    ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
+        """Tuple-selection of data in the sub-grpah, if any."""
+        assert self._tuple_selection is not None
+        return self._tuple_selection
+
     @cached_prop
     def fqn(self) -> str:
         """Fully qualified name of this dataset based on relational path."""
-        if self._sql_table_alias is not None:
-            return self._sql_table_alias.name
-
         if self._ctx_table is None:
             if issubclass(self.target_type, Record):
                 return self.target_type._fqn
@@ -643,14 +647,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ),
         )
 
-    @property
-    def tuple_selection(
-        self: Data[tuple, Any, Any, Any, Any, Any]
-    ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
-        """Tuple-selection of data in the sub-grpah, if any."""
-        assert self._tuple_selection is not None
-        return self._tuple_selection
-
     @cached_prop
     def select(
         self,
@@ -671,16 +667,16 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         sql_cols: list[sqla.ColumnElement] = []
         for col_name, col in abs_cols.items():
-            sql_col = col._sql_col.label(col_name)
+            sql_col = col.sql_col.label(col_name)
             if sql_col not in sql_cols:
                 sql_cols.append(sql_col)
 
-        select = sqla.select(*sql_cols).select_from(self._root._sql_table)
+        select = sqla.select(*sql_cols).select_from(self._root.sql_from)
 
-        for join in self._sql_joins:
+        for join in self.sql_joins:
             select = select.join(*join)
 
-        for filt in self._sql_filters:
+        for filt in self.sql_filters:
             select = select.where(filt)
 
         return select.distinct()
@@ -699,6 +695,109 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             str(self.select.compile(self.db.engine)),
             reindent=True,
             keyword_case="upper",
+        )
+
+    @property
+    def sql_col(self: Data[Any, Any, Any, None, Ctx, Any]) -> sqla.ColumnElement:
+        """Return the SQL column of this dataset."""
+        if self._sql_col is not None:
+            return self._sql_col
+
+        col = sqla.column(self.name, _selectable=self._table.sql_from)
+        setattr(col, "_data", self)
+
+        return col
+
+    @property
+    def sql_from(
+        self: Data[Record | None, Any, Any, Any, Any, Any]
+    ) -> sqla_sel.NamedFromClause:
+        """Recursively join all bases of this record to get the full data."""
+        if self.db.backend_type == "excel-file":
+            self.db._load_from_excel(
+                {self.record_type, *self.record_type._record_superclasses}
+            )
+
+        if self._sql_from is not None:
+            return self._sql_from
+
+        base_table = self._gen_sql_base_table("read")
+
+        if len(self.record_type._record_superclasses) == 0:
+            table = base_table.alias(self.fqn)
+        else:
+            table = base_table
+            cols = {col.name: col for col in base_table.columns}
+            for superclass in self.record_type._record_superclasses:
+                superclass_table = Table(
+                    _db=self.db, _typehint=Table[superclass]
+                ).sql_from
+                cols |= {col.key: col for col in superclass_table.columns}
+
+                table = table.join(
+                    superclass_table,
+                    reduce(
+                        sqla.and_,
+                        (
+                            base_table.c[pk_name] == superclass_table.c[pk_name]
+                            for pk_name in self.record_type._pk_values
+                        ),
+                    ),
+                )
+
+            table = (
+                sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
+                .select_from(table)
+                .alias(self.fqn)
+            )
+
+        self._sql_from = table
+        return table
+
+    @cached_prop
+    def sql_joins(
+        self,
+        _subtree: JoinDict | None = None,
+        _parent: Data[Record | None, Any, Any, Any, Any, Any] | None = None,
+    ) -> list[SqlJoin]:
+        """Extract join operations from the relational tree."""
+        joins: list[SqlJoin] = []
+        _subtree = _subtree if _subtree is not None else self._total_join_dict
+        _parent = _parent if _parent is not None else self._root
+
+        for target, next_subtree in _subtree.items():
+            joins.append(
+                (
+                    target.sql_from,
+                    reduce(
+                        sqla.and_,
+                        (
+                            (
+                                target[fk] == _parent[pk]
+                                for fk, pk in target.link._fk_map.items()
+                            )
+                            if isinstance(target, BackLink)
+                            else (
+                                _parent[fk] == target[pk]
+                                for fk, pk in target._fk_map.items()
+                            )
+                        ),
+                    ),
+                )
+            )
+
+            joins.extend(type(self).sql_joins(self, next_subtree, target))
+
+        return joins
+
+    @cached_prop
+    def sql_filters(self) -> list[sqla.ColumnElement[bool]]:
+        """Get the SQL filters for this table."""
+        if not isinstance(self, Table):
+            return []
+
+        return self._abs_filters[0] + (
+            self._ctx_table.sql_filters if self._ctx_table is not None else []
         )
 
     def __hash__(self) -> int:  # noqa: D105
@@ -1090,7 +1189,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         assert isinstance(self, Table)
 
-        rec_types = {self.record_type} | self.record_type._rel_types()
+        rec_types = self.record_type._rel_types()
 
         # Create a new database overlay for the results.
         overlay_db = copy_and_override(
@@ -1209,13 +1308,13 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return overlay_db
 
     def isin(
-        self: Data[ValT2, Any, Any, Any, Any, BaseT2], other: Iterable[ValT2] | slice
+        self: Data[Any, Any, Any, None, Ctx, BaseT2], other: Iterable[ValT2] | slice
     ) -> sqla.ColumnElement[bool]:
         """Test values of this dataset for membership in the given iterable."""
         return (
-            self._sql_col.between(other.start, other.stop)
+            self.sql_col.between(other.start, other.stop)
             if isinstance(other, slice)
-            else self._sql_col.in_(other)
+            else self.sql_col.in_(other)
         )
 
     # 1. Top-level prop selection
@@ -1724,20 +1823,20 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self._mutate([], mode="delete")
 
     @overload
-    def __eq__(  # noqa: D105
-        self: Data[Any, IdxT2, Any, Any, Ctx, BaseT2],
-        other: Any | Data[Any, IdxT2, Any, Any, Any, BaseT2],
+    def __eq__(
+        self: Data[Any, Any, Any, None, Ctx, BaseT2],
+        other: Any | Data[Any, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]: ...
 
     @overload
-    def __eq__(  # noqa: D105
+    def __eq__(
         self,
         other: Any,
     ) -> bool: ...
 
     def __eq__(  # noqa: D105
         self: Data[Any, Any, Any, Any, Any, Any],
-        other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
+        other: Any,
     ) -> sqla.ColumnElement[bool] | bool:
         identical = hash(self) == hash(other)
 
@@ -1745,49 +1844,49 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return identical
 
         if isinstance(other, Data):
-            return self._sql_col == other._sql_col
+            return self.sql_col == other.sql_col
 
-        return self._sql_col == other
+        return self.sql_col == other
 
     def __neq__(  # noqa: D105
-        self: Data[Any, IdxT2, Any, Any, Ctx, BaseT2],
-        other: Any | Data[Ordinal, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[Any, Any, Any, None, Ctx, BaseT2],
+        other: Any | Data[Any, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
-            return self._sql_col != other._sql_col
-        return self._sql_col != other
+            return self.sql_col != other.sql_col
+        return self.sql_col != other
 
     def __lt__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
-        other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, Any, Any, None, Ctx, BaseT2],
+        other: OrdT | Data[OrdT, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
-            return self._sql_col < other._sql_col
-        return self._sql_col < other
+            return self.sql_col < other.sql_col
+        return self.sql_col < other
 
     def __le__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
-        other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, Any, Any, None, Ctx, BaseT2],
+        other: OrdT | Data[OrdT, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
-            return self._sql_col <= other._sql_col
-        return self._sql_col <= other
+            return self.sql_col <= other.sql_col
+        return self.sql_col <= other
 
     def __gt__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
-        other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, Any, Any, None, Ctx, BaseT2],
+        other: OrdT | Data[OrdT, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
-            return self._sql_col > other._sql_col
-        return self._sql_col > other
+            return self.sql_col > other.sql_col
+        return self.sql_col > other
 
     def __ge__(  # noqa: D105
-        self: Data[OrdT, IdxT2, Any, Any, Ctx, BaseT2],
-        other: OrdT | Data[OrdT, IdxT2, Any, Any, Any, BaseT2],
+        self: Data[OrdT, Any, Any, None, Ctx, BaseT2],
+        other: OrdT | Data[OrdT, Any, Any, None, Ctx, BaseT2],
     ) -> sqla.ColumnElement[bool]:
         if isinstance(other, Data):
-            return self._sql_col >= other._sql_col
-        return self._sql_col >= other
+            return self.sql_col >= other.sql_col
+        return self.sql_col >= other
 
     @overload
     def __matmul__(
@@ -2197,7 +2296,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             links[0],
             _db=self.db,
             _ctx=self._backlink if self._backlink is not None else self._ctx,  # type: ignore
-            _sql_table_alias=self._sql_table,
+            _sql_from=self.sql_from,
         )
 
     @property
@@ -2466,104 +2565,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                 return bidict(dict(zip(fks, pks)))
 
-    @cached_prop
-    def _sql_joins(
-        self,
-        _subtree: JoinDict | None = None,
-        _parent: Data[Record | None, Any, Any, Any, Any, Any] | None = None,
-    ) -> list[SqlJoin]:
-        """Extract join operations from the relational tree."""
-        joins: list[SqlJoin] = []
-        _subtree = _subtree if _subtree is not None else self._total_join_dict
-        _parent = _parent if _parent is not None else self._root
-
-        for target, next_subtree in _subtree.items():
-            joins.append(
-                (
-                    target._sql_table,
-                    reduce(
-                        sqla.and_,
-                        (
-                            (
-                                target[fk] == _parent[pk]
-                                for fk, pk in target.link._fk_map.items()
-                            )
-                            if isinstance(target, BackLink)
-                            else (
-                                _parent[fk] == target[pk]
-                                for fk, pk in target._fk_map.items()
-                            )
-                        ),
-                    ),
-                )
-            )
-
-            joins.extend(type(self)._sql_joins(self, next_subtree, target))
-
-        return joins
-
-    @cached_prop
-    def _sql_filters(self) -> list[sqla.ColumnElement[bool]]:
-        """Get the SQL filters for this table."""
-        if not isinstance(self, Table):
-            return []
-
-        return self._abs_filters[0] + (
-            self._ctx_table._sql_filters if self._ctx_table is not None else []
-        )
-
-    @cached_prop
-    def _sql_col(self: Data[Any, Any, Any, Any, Ctx, Any]) -> sqla.ColumnElement:
-        col = sqla.column(self.name, _selectable=self._table._sql_table)
-        setattr(col, "_data", self)
-        return col
-
-    @property
-    def _sql_table(
-        self: Data[Record | None, Any, Any, Any, Any, Any]
-    ) -> sqla_sel.NamedFromClause:
-        """Recursively join all bases of this record to get the full data."""
-        if self.db.backend_type == "excel-file":
-            self.db._load_from_excel(
-                {self.record_type, *self.record_type._record_superclasses}
-            )
-
-        if self._sql_table_alias is not None:
-            return self._sql_table_alias
-
-        base_table = self._gen_sql_base_table("read")
-
-        if len(self.record_type._record_superclasses) == 0:
-            table = base_table.alias(self.fqn)
-        else:
-            table = base_table
-            cols = {col.name: col for col in base_table.columns}
-            for superclass in self.record_type._record_superclasses:
-                superclass_table = Table(
-                    _db=self.db, _typehint=Table[superclass]
-                )._sql_table
-                cols |= {col.key: col for col in superclass_table.columns}
-
-                table = table.join(
-                    superclass_table,
-                    reduce(
-                        sqla.and_,
-                        (
-                            base_table.c[pk_name] == superclass_table.c[pk_name]
-                            for pk_name in self.record_type._pk_values
-                        ),
-                    ),
-                )
-
-            table = (
-                sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
-                .select_from(table)
-                .alias(self.fqn)
-            )
-
-        self._sql_table_alias = table
-        return table
-
     @staticmethod
     def _has_type[
         D: Data[Any, Any, Any, Any, Any, Any]
@@ -2733,10 +2734,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
             prefixed = data._prepend_ctx(self._table)
 
-            if hash(prefixed.ctx) != hash(self._root):
+            if prefixed.ctx != self._root:
                 join_set.add(prefixed.ctx)
 
-            return prefixed._sql_col
+            return prefixed.sql_col
 
         return None
 
@@ -3039,31 +3040,32 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 self._table._mutate_from_sql(value.subquery(), mode)
                 valid_caches.clear()
             case Data():
-                if hash(value.db) != hash(self.db):
-                    if has_type(value, Data[Record | None, Any, Any, Any, Any, Any]):
-                        remote_db = (
-                            value if isinstance(value, DataBase) else value.extract()
-                        )
-                        for s in remote_db._def_types:
-                            if remote_db.db_id == self.db.db_id:
-                                self.db[s]._mutate_from_sql(
-                                    remote_db[s].query, "upsert"
-                                )
-                            else:
-                                value_table = self._df_to_table(
-                                    remote_db[s].df(),
-                                )
-                                self.db[s]._mutate_from_sql(
-                                    value_table,
-                                    "upsert",
-                                )
-                                value_table.drop(self.db.engine)
-                    else:
-                        value_table = self._df_to_table(value.df())
-                        self._table._mutate_from_sql(value_table, mode)
-                        value_table.drop(self.db.engine)
+                if hash(value.db) == hash(self.db):
+                    # Other database is exactly the same,
+                    # so updating target table is enough.
+                    self._table._mutate_from_sql(value.query, mode)
+                elif Data._has_type(
+                    value, Data[Record | None, Any, Any, Any, Any, Any]
+                ):
+                    # Other database is not exactly the same,
+                    # hence may be on a different overlay or backend.
+                    # Related records have to be mutated alongside.
+                    self.db._mutate(
+                        value.extract(),
+                        (
+                            "upsert"
+                            if mode in ("upsert", "update")
+                            else (
+                                "replace" if mode in ("replace", "delete") else "insert"
+                            )
+                        ),
+                    )
+                else:
+                    # Not a record type, so no need to mutate related records.
+                    value_table = self._df_to_table(value.df())
+                    self._table._mutate_from_sql(value_table, mode)
+                    value_table.drop(self.db.engine)
 
-                self._table._mutate_from_sql(value.select.subquery(), mode)
                 valid_caches -= set(value.keys())
             case pd.DataFrame() | pl.DataFrame():
                 value_table = self._df_to_table(value)
@@ -3454,28 +3456,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     )
 
                 statements.append(statement)
+
         elif mode == "update":
             # Construct the update statements.
 
-            # Derive current select statement and join with value table, if exists.
-            value_join_on = reduce(
-                sqla.and_,
-                (
-                    self.query.corresponding_column(idx_col) == idx_col
-                    for idx_col in value_table.primary_key
-                ),
-            )
+            # Derive current select statement and join with value table.
             select = self.query.join(
                 value_table,
-                value_join_on,
+                reduce(
+                    sqla.and_,
+                    (
+                        self.query.c[col_name] == value_table.c[col_name]
+                        for col_name in self._abs_idx_cols.keys()
+                    ),
+                ),
             )
 
             for table, vals in table_values.items():
-                col_names = {c_name: c.name for c_name, c in vals.items()}
+                col_name_map = {c_name: c.name for c_name, c in vals.items()}
                 values = {
-                    col_names[col_fqn]: col
-                    for col_fqn, col in value_table.columns.items()
-                    if col_fqn in col_names
+                    col_name_map[col_name]: col
+                    for col_name, col in value_table.columns.items()
+                    if col_name in col_name_map
                 }
 
                 # Prepare update statement.
@@ -3495,10 +3497,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                             reduce(
                                 sqla.and_,
                                 (
-                                    col == select.corresponding_column(col)
-                                    for col in table.primary_key.columns
+                                    table.c[col.name] == select.c[col_name]
+                                    for col_name, col in vals.items()
+                                    if col.name in table.primary_key.columns
                                 ),
-                            )
+                            ),
                         )
                     )
                 else:
@@ -3528,6 +3531,19 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
 
         return
+
+
+@final
+class Public:
+    """Demark public status of attribute."""
+
+
+@final
+class Private:
+    """Demark private status of attribute."""
+
+
+PubT = TypeVar("PubT", bound="Public | Private", default="Public")
 
 
 @dataclass(kw_only=True, eq=False)
@@ -4041,7 +4057,10 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
     def to_graph(
         self: DataBase[Schema, Any, DynBackendID],
-        nodes: Sequence[type[Record]] | None = None,
+        nodes: (
+            Sequence[type[Record] | Data[Record, BaseIdx, Any, None, None, Symbolic]]
+            | None
+        ) = None,
     ) -> tuple[pd.DataFrame, pd.DataFrame]:
         """Export links between select database objects in a graph format.
 
@@ -4055,6 +4074,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             else list(DataBase[Any, Any, Any]._record_types(self, with_relations=False))
         )
         node_tables = [self[n] for n in nodes]
+        node_types = [n if isinstance(n, type) else n.record_type for n in nodes]
 
         # Concat all node tables into one.
         node_dfs = [
@@ -4077,7 +4097,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         ]
 
         directed_edges = reduce(
-            set.union, (set((n, r) for r in n._links.values()) for n in nodes)
+            set.union, (set((n, r) for r in n._links.values()) for n in node_types)
         )
 
         undirected_edges: dict[
@@ -4097,7 +4117,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                 ],
                 (rel._from, rel._to),  # type: ignore
             )
-            if left.target_type in nodes and right.target_type in nodes:
+            if left.target_type in node_types and right.target_type in node_types:
                 undirected_edges[rel].add((left, right))
 
         direct_edge_dfs = [
@@ -4246,33 +4266,59 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         return
 
     def __or__(
-        self: DataBase[Any, CRUD, BackT2], other: DataBase[SchemaT2, R, BackT2]
+        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
     ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
-        """Combine two databases."""
+        """Union two databases, right overriding left."""
         db = copy_and_override(
             DataBase[SchemaT | SchemaT2, CRUD, BackT2],
             self,
             backend=self.backend,
             schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=(
-                f"union/({self.db_id}|{other.db_id})"
-                if self.backend is not None
-                else None
-            ),
+            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
             _def_types={},
             _metadata=sqla.MetaData(),
             _instance_map={},
         )
 
-        all_rec_types = set(self._record_types.keys()) & set(other._record_types.keys())
+        db._mutate(other, "upsert")
 
-        if other.db_id == db.db_id:
-            for rec in all_rec_types:
-                db[rec] |= other[rec].select
-        else:
-            for rec in all_rec_types:
-                df = other[rec].df()
-                db[rec] |= db[rec]._df_to_table(df).select()
+        return db
+
+    def __add__(
+        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
+    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+        """Union two databases, left overriding right."""
+        db = copy_and_override(
+            DataBase[SchemaT | SchemaT2, CRUD, BackT2],
+            self,
+            backend=self.backend,
+            schema={**self._schema_map, **self._schema_map},  # type: ignore
+            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
+            _def_types={},
+            _metadata=sqla.MetaData(),
+            _instance_map={},
+        )
+
+        db._mutate(other, "insert")
+
+        return db
+
+    def __and__(
+        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
+    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+        """Intersect two databases, right overriding left."""
+        db = copy_and_override(
+            DataBase[SchemaT | SchemaT2, CRUD, BackT2],
+            self,
+            backend=self.backend,
+            schema={**self._schema_map, **self._schema_map},  # type: ignore
+            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
+            _def_types={},
+            _metadata=sqla.MetaData(),
+            _instance_map={},
+        )
+
+        db._mutate(other, "replace")
 
         return db
 
@@ -4402,6 +4448,25 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         if isinstance(self.url, HttpFile):
             assert isinstance(file, BytesIO)
             self.url.set(file)
+
+    def _mutate(
+        self,
+        other: DataBase[Any, Any, Any],
+        mode: Literal["upsert", "insert", "replace"],
+    ) -> None:
+        """Mutate the database with another database."""
+        for rec in set(self._record_types.keys()) | set(other._record_types.keys()):
+            if other.db_id == self.db_id:
+                self[rec]._mutate_from_sql(other[rec].query, mode)
+            else:
+                value_table = self[rec]._df_to_table(
+                    other[rec].df(),
+                )
+                self[rec]._mutate_from_sql(
+                    value_table,
+                    mode,
+                )
+                value_table.drop(self.engine)
 
 
 symbol_db = DataBase[Any, R, Symbolic](backend=Symbolic())
