@@ -840,10 +840,6 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
     def __post_init__(self) -> None:  # noqa: D105
         self.target_type = self.target
 
-    @cached_property
-    def _obj_cache(self) -> dict[type[Record], dict[Hashable, Any]]:
-        return {}
-
     async def load(
         self, data: Iterable[Dat], db: DataBase | None = None
     ) -> set[Hashable]:
@@ -873,5 +869,4 @@ class DataSource[Rec: Record, Dat: TreeNode](TableMap[Rec, Dat]):
             )
             assert all(len(v[1]) == 0 for v in rest_rest)
 
-        db[self.record_type] |= loaded
         return set(loaded.keys())

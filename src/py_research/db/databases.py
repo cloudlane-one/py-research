@@ -25,8 +25,8 @@ from typing import (
     ParamSpec,
     Self,
     TypeAliasType,
-    TypeGuard,
     TypeVarTuple,
+    Union,
     cast,
     dataclass_transform,
     final,
@@ -68,6 +68,7 @@ from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
     GenericProtocol,
     SingleTypeDef,
+    get_lowest_common_base,
     has_type,
     is_subtype,
 )
@@ -121,9 +122,9 @@ class Keep:
     __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
-type Input[Val, Key: Hashable, RKey: Hashable] = pd.DataFrame | pl.DataFrame | Iterable[
-    Val | RKey
-] | Mapping[Key, Val | RKey] | sqla.Select | Val | RKey
+type Input[Val, Key: Hashable] = pd.DataFrame | pl.DataFrame | Iterable[Val] | Mapping[
+    Key, Val
+] | sqla.Select | Val
 
 ValT = TypeVar("ValT", covariant=True)
 ValT2 = TypeVar("ValT2")
@@ -143,8 +144,14 @@ KeyTt4 = TypeVarTuple("KeyTt4")
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
 
 
+@final
 class Idx[*K]:
     """Define the custom index type of a dataset."""
+
+
+@final
+class RootIdx[T]:
+    """Database root index."""
 
 
 @final
@@ -160,12 +167,12 @@ class ArrayIdx[R: Record, *K]:
 IdxT = TypeVar(
     "IdxT",
     covariant=True,
-    bound=Idx | BaseIdx | ArrayIdx,
+    bound=Idx | RootIdx | BaseIdx | ArrayIdx,
     default=BaseIdx,
 )
 IdxT2 = TypeVar(
     "IdxT2",
-    bound=Idx | BaseIdx | ArrayIdx,
+    bound=Idx | RootIdx | BaseIdx | ArrayIdx,
 )
 
 
@@ -270,10 +277,8 @@ Params = ParamSpec("Params")
 
 type LinkItem = Table[Record | None, None, Any, Any, Any, Any]
 
-type PropPath[RootT: Record, LeafT] = tuple[
-    Table[RootT, None, Any, Any, None, Any]
-] | tuple[
-    Table[RootT, None, Any, Any, None, Any],
+type PropPath[LeafT] = tuple[Data[LeafT, Any, Any, None, None, Any]] | tuple[
+    Table[Record, None, Any, Any, None, Any],
     *tuple[Table[Record | None, Any, Any, Any, Ctx, Any], ...],
     Data[LeafT, Any, Any, Any, Ctx, Any],
 ]
@@ -410,12 +415,12 @@ def _gen_prop(
     attr = Value(
         primary_key=pk,
         _name=name if not is_link else f"fk_{name}",
-        _typehint=Value[value_type],
+        _type=Value[value_type],
     )
     return (
         attr
         if not is_link
-        else Link(fks=fks[name], _typehint=fks[name]._typehint, _name=f"link_{name}")
+        else Link(fks=fks[name], _type=fks[name]._type, _name=f"link_{name}")
     )
 
 
@@ -500,10 +505,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     }
 
     _name: str | None = None
-    _typehint: str | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]] | None = None
+    _type: (
+        str
+        | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]]
+        | SingleTypeDef[ValT]
+        | None
+    ) = None
     _typevar_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
 
-    _db: DataBase[Any, CrudT | CRUD, BaseT] | None = None
+    _db: DataBase[Any, Any, CrudT | CRUD, BaseT] | None = None
     _ctx: CtxT | Data[Record | None, Any, R, Any, Any, BaseT] | None = None
 
     _filters: list[
@@ -518,46 +528,26 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     """Override the SQL from clause of this dataset."""
 
     @cached_prop
-    def db(self) -> DataBase[Any, CrudT | CRUD, BaseT]:
-        """Database, which this dataset belongs to."""
-        db = self._db
-
-        if db is None and issubclass(cast(type, self.base_type), NoneType):
-            db = cast(DataBase[Any, CRUD, BaseT], DataBase())
-
-        if db is None:
-            raise ValueError("Missing backend.")
-
-        return db
-
-    @cached_prop
-    def path(self) -> PropPath[Record, ValT]:
-        """Relational path of this dataset."""
-        if self._ctx_table is None:
-            assert issubclass(self.target_type, Record)
-            return (cast(Table[Record, Any, Any, Any, None, Any], self),)
-
-        return cast(PropPath[Record, ValT], (*self._ctx_table.path, self))
-
-    @cached_prop
     def name(self) -> str:
         """Defined name or generated identifier of this dataset."""
         return self._name if self._name is not None else token_hex(5)
 
-    @property
+    @cached_prop
     def value_type(self) -> SingleTypeDef[ValT] | UnionType:
         """Value typehint of this dataset."""
-        return self._get_typearg(ValT)
+        if is_subtype(self._generic_type, Data[Any, Any, Any, Any, Any, Any]):
+            typearg = self._typearg_map[ValT]
+            if isinstance(typearg, int):
+                typearg = self._hint_to_typedef(self._generic_args[typearg])
+
+            return typearg
+
+        return self._generic_type
 
     @cached_prop
     def target_type(self) -> type[ValT]:
         """Value type of this dataset."""
-        t = self._get_typearg(ValT, remove_null=True)
-
-        return cast(
-            type[ValT],
-            (t if isinstance(t, type) else get_origin(t) or object),
-        )
+        return self._typedef_to_type(self.value_type)
 
     @cached_prop
     def record_type(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
@@ -569,44 +559,25 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def relation_type(self) -> type[RelT]:
         """Relation record type, if any."""
-        rec = self._get_typearg(RelT)
+        typearg = self._typearg_map[RelT]
+        if isinstance(typearg, int):
+            typearg = self._hint_to_typedef(self._generic_args[typearg])
 
-        rec_type = self._hint_to_type(rec)
+        rec_type = self._typedef_to_type(typearg)
         if not issubclass(rec_type, Record):
             return cast(type[RelT], NoneType)
 
         return cast(type[RelT], rec_type)
 
     @cached_prop
-    def base_type(self) -> type[BaseT]:
-        """Base type of this dataset."""
-        base = self._get_typearg(BaseT)
-        base_type = self._hint_to_type(base)
-        return cast(type[BaseT], base_type)
+    def db(self) -> DataBase[Any, Any, CrudT | CRUD, BaseT]:
+        """Database, which this dataset belongs to."""
+        if self._db is not None:
+            return self._db
 
-    @property
-    def tuple_selection(
-        self: Data[tuple, Any, Any, Any, Any, Any]
-    ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
-        """Tuple-selection of data in the sub-grpah, if any."""
-        assert self._tuple_selection is not None
-        return self._tuple_selection
-
-    @cached_prop
-    def fqn(self) -> str:
-        """Fully qualified name of this dataset based on relational path."""
-        if self._ctx_table is None:
-            if issubclass(self.target_type, Record):
-                return self.target_type._fqn
-            else:
-                return self.name
-
-        fqn = f"{self._ctx_table.fqn}.{self.name}"
-
-        if len(self._filters) > 0:
-            fqn += f"[{gen_str_hash(self._filters, length=6)}]"
-
-        return fqn
+        db = cast(DataBase[Any, Any, CRUD, BaseT], DataBase())
+        self._db = db
+        return db
 
     @property
     def ctx(
@@ -617,8 +588,16 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return (
             cast(Table[RecT2, Any, Any, Any, Any, BaseT], self._ctx)
             if isinstance(self._ctx, Data)
-            else Table(_db=self.db, _typehint=Table[self._ctx.record_type])
+            else Table(_db=self.db, _type=Table[self._ctx.record_type])
         )
+
+    @cached_prop
+    def path(self) -> PropPath[ValT]:
+        """Relational path of this dataset."""
+        if self._ctx_table is None:
+            return (cast(Data[ValT, Any, Any, None, None, Any], self),)
+
+        return cast(PropPath[ValT], (*self._ctx_table.path, self))
 
     @property
     def rel(
@@ -648,6 +627,30 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
     @cached_prop
+    def fqn(self) -> str:
+        """Fully qualified name of this dataset based on relational path."""
+        if self._ctx_table is None:
+            if issubclass(self.target_type, Record):
+                return self.target_type._fqn
+            else:
+                return self.name
+
+        fqn = f"{self._ctx_table.fqn}.{self.name}"
+
+        if len(self._filters) > 0:
+            fqn += f"[{gen_str_hash(self._filters, length=6)}]"
+
+        return fqn
+
+    @property
+    def tuple_selection(
+        self: Data[tuple, Any, Any, Any, Any, Any]
+    ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
+        """Tuple-selection of data in the sub-grpah, if any."""
+        assert self._tuple_selection is not None
+        return self._tuple_selection
+
+    @cached_prop
     def select(
         self,
         cols: Mapping[str, Value[Any, Any, Any, Any, Any]] | None = None,
@@ -657,7 +660,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             abs_cols = {
                 name: (
                     col._prepend_ctx(self._table)
-                    if issubclass(col.base_type, Symbolic)
+                    if isinstance(col.db.backend, Symbolic)
                     else col
                 )
                 for name, col in cols.items()
@@ -671,7 +674,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             if sql_col not in sql_cols:
                 sql_cols.append(sql_col)
 
-        select = sqla.select(*sql_cols).select_from(self._root.sql_from)
+        select = sqla.select(*sql_cols)
+
+        if self._root._table is not None:
+            select = select.select_from(self._root._table.sql_from)
 
         for join in self.sql_joins:
             select = select.join(*join)
@@ -703,7 +709,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if self._sql_col is not None:
             return self._sql_col
 
-        col = sqla.column(self.name, _selectable=self._table.sql_from)
+        col = sqla.column(
+            self.name,
+            _selectable=self._table.sql_from if self._table is not None else None,
+        )
         setattr(col, "_data", self)
 
         return col
@@ -729,9 +738,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             table = base_table
             cols = {col.name: col for col in base_table.columns}
             for superclass in self.record_type._record_superclasses:
-                superclass_table = Table(
-                    _db=self.db, _typehint=Table[superclass]
-                ).sql_from
+                superclass_table = Table(_db=self.db, _type=Table[superclass]).sql_from
                 cols |= {col.key: col for col in superclass_table.columns}
 
                 table = table.join(
@@ -798,17 +805,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         return self._abs_filters[0] + (
             self._ctx_table.sql_filters if self._ctx_table is not None else []
-        )
-
-    def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash(
-            (
-                self.db,
-                self.fqn,
-                *(self._get_typearg(t) for t in self._typearg_map.keys()),
-                self._filters,
-                self._tuple_selection,
-            )
         )
 
     @overload
@@ -1048,6 +1044,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         force_fqns: bool = False,
     ) -> DfT:
         """Load dataset as dataframe."""
+        if self._table is None:
+            return cast(DfT, kind() if kind is not None else pl.DataFrame())
+
         all_cols = {
             **(self._abs_idx_cols if not without_index else {}),
             **(self._abs_cols if not index_only else {}),
@@ -1112,35 +1111,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return cast(DfT, merged_df)
 
     @overload
-    def to_dfs(
-        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
-        kind: type[DfT],
-    ) -> tuple[DfT, ...]: ...
-
-    @overload
-    def to_dfs(
-        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
-        kind: None = ...,
-    ) -> tuple[pl.DataFrame, ...]: ...
-
-    def to_dfs(
-        self: Data[Any, Any, Any, Any, Any, DynBackendID],
-        kind: type[DfT] | None = None,
-    ) -> DfT | tuple[DfT, ...]:
-        """Load tuple-valued dataset as tuple of dataframes."""
-        merged_df = self.df(kind=kind)
-
-        name_map = [
-            {col.fqn: col.name for col in col_set}
-            for col_set in self._abs_col_sets.values()
-        ]
-
-        return cast(
-            tuple[DfT, ...],
-            (merged_df[list(cols.keys())].rename(cols) for cols in name_map),
-        )
-
-    @overload
     def extract(
         self: Data[RecT2 | None, Any, Any, Any, Any, BackT2],
         *,
@@ -1153,7 +1123,22 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ) = ...,
         to_db: None = ...,
         overlay_type: OverlayType = ...,
-    ) -> DataBase[RecT2, CRUD, BackT2]: ...
+    ) -> DataBase[RecT2, Any, CRUD, BackT2]: ...
+
+    @overload
+    def extract(
+        self: Data[Any, Any, Any, Any, Any, BackT2],
+        *,
+        aggs: (
+            Mapping[
+                Table[Record | None, Any, Any, Any, Ctx, Symbolic],
+                Agg,
+            ]
+            | None
+        ) = ...,
+        to_db: None = ...,
+        overlay_type: OverlayType = ...,
+    ) -> DataBase[Any, Any, CRUD, BackT2]: ...
 
     @overload
     def extract(
@@ -1166,12 +1151,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ]
             | None
         ) = ...,
-        to_db: DataBase[SchemaT2, CRUD, BackT3],
+        to_db: DataBase[SchemaT2, Any, CRUD, BackT3],
         overlay_type: OverlayType = ...,
-    ) -> DataBase[SchemaT2, CRUD, BackT3]: ...
+    ) -> DataBase[SchemaT2, Any, CRUD, BackT3]: ...
 
     def extract(
-        self: Data[Record | None, Any, Any, Any, Any, BackT2],
+        self: Data[Any, Any, Any, Any, Any, BackT2],
         aggs: (
             Mapping[
                 Table[Record | None, Any, Any, Any, Ctx, Symbolic],
@@ -1179,64 +1164,68 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ]
             | None
         ) = None,
-        to_db: DataBase[Any, CRUD, BackT3] | None = None,
+        to_db: DataBase[Any, Any, CRUD, BackT3] | None = None,
         overlay_type: OverlayType = "name_prefix",
-    ) -> DataBase[Any, CRUD, BackT2 | BackT3]:
+    ) -> DataBase[Any, Any, CRUD, BackT2 | BackT3]:
         """Extract a new database instance from the current dataset."""
         if aggs is not None:
             # TODO: Implement aggregations.
             raise NotImplementedError("Aggregations are not yet supported.")
 
-        assert isinstance(self, Table)
+        if isinstance(self, DataBase):
+            overlay_db = self
+        else:
+            # Create a new database overlay for the results.
+            assert self._table is not None
+            rec_types = self._table.record_type._rel_types()
 
-        rec_types = self.record_type._rel_types()
+            overlay_db = copy_and_override(
+                DataBase[Any, Any, CRUD, BackT2 | BackT3],
+                self.db,
+                backend=self.db.backend,
+                schema=rec_types,
+                write_to_overlay=f"extract/{token_hex(10)}",
+                overlay_type=overlay_type,
+                _def_types={},
+                _metadata=sqla.MetaData(),
+                _instance_map={},
+            )
 
-        # Create a new database overlay for the results.
-        overlay_db = copy_and_override(
-            DataBase[Any, CRUD, BackT2 | BackT3],
-            self.db,
-            backend=self.db.backend,
-            schema=rec_types,
-            write_to_overlay=f"extract/{token_hex(10)}",
-            overlay_type=overlay_type,
-            _def_types={},
-            _metadata=sqla.MetaData(),
-            _instance_map={},
-        )
+            # Empty all tables in the overlay.
+            for rec in rec_types:
+                overlay_db[rec] = {}
 
-        # Empty all tables in the overlay.
-        for rec in rec_types:
-            overlay_db[rec] &= {}
+            # Traverse all relation paths and extract data to overlay.
+            to_traverse: dict[
+                Data[Record | None, Any, Any, Any, Ctx, DynBackendID],
+                Data[Record | None, Any, Any, Any, Ctx, DynBackendID],
+            ] = {
+                self[rel]: self[tab]
+                for tab in self.record_type._tables.values()
+                for rel in tab._abs_link_path
+            }
+            while to_traverse:
+                rel = next(iter(to_traverse.keys()))
+                tab = to_traverse.pop(rel)
 
-        # Traverse all relation paths and extract data to overlay.
-        to_traverse: dict[
-            Data[Record | None, Any, Any, Any, Ctx, DynBackendID],
-            Data[Record | None, Any, Any, Any, Ctx, DynBackendID],
-        ] = {
-            self[rel]: self[tab]
-            for tab in self.record_type._tables.values()
-            for rel in tab._abs_link_path
-        }
-        while to_traverse:
-            rel = next(iter(to_traverse.keys()))
-            tab = to_traverse.pop(rel)
+                if len(rel) == 0:
+                    continue
 
-            if len(rel) == 0:
-                continue
+                select = Data[Any, Any, Any, Any, Any, Any].select(
+                    rel, cols=rel._abs_cols
+                )
+                overlay_db[rel.record_type] |= select
 
-            select = Data[Any, Any, Any, Any, Any, Any].select(rel, cols=rel._abs_cols)
-            overlay_db[rel.record_type] |= select
+                if rel._rel is not None:
+                    overlay_db[rel._rel.record_type] |= rel._rel.select
 
-            if rel._rel is not None:
-                overlay_db[rel._rel.record_type] |= rel._rel.select
+                for sub_tab in rel.record_type._tables.values():
+                    sub_tab = tab[sub_tab]
+                    for sub_rel in sub_tab._abs_link_path:
+                        sub_rel = rel[sub_rel]
 
-            for sub_tab in rel.record_type._tables.values():
-                sub_tab = tab[sub_tab]
-                for sub_rel in sub_tab._abs_link_path:
-                    sub_rel = rel[sub_rel]
-
-                    if not issubclass(sub_tab.relation_type, tab.relation_type):
-                        to_traverse[sub_tab] = sub_rel
+                        if not issubclass(sub_tab.relation_type, tab.relation_type):
+                            to_traverse[sub_tab] = sub_rel
 
         # # Extract rel paths, which contain an aggregated rel.
         # aggs_per_type: dict[
@@ -1291,7 +1280,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         # Transfer tables to the new database, if supplied.
         if to_db is not None:
             other_db = copy_and_override(
-                DataBase[Any, CRUD, BackT3],
+                DataBase[Any, Any, CRUD, BackT3],
                 overlay_db,
                 backend=to_db.backend,
                 url=to_db.url,
@@ -1300,12 +1289,181 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 _instance_map={},
             )
 
-            for rec in rec_types:
-                other_db[rec] &= overlay_db[rec].df()
+            for rec in overlay_db._record_types:
+                other_db[rec] = overlay_db[rec].df()
 
             overlay_db = other_db
 
         return overlay_db
+
+    def to_graph(
+        self: Data[Schema | Record, Any, Any, Any, Any, DynBackendID],
+        nodes: (
+            Sequence[type[Record] | Data[Record, BaseIdx, Any, None, None, Symbolic]]
+            | None
+        ) = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        db = self.extract()
+
+        nodes = (
+            nodes
+            if nodes is not None
+            else list(
+                DataBase[Any, Any, Any, Any]._record_types(db, with_relations=False)
+            )
+        )
+        node_tables = [db[n] for n in nodes]
+        node_types = [n if isinstance(n, type) else n.record_type for n in nodes]
+
+        # Concat all node tables into one.
+        node_dfs = [
+            n.df(kind=pd.DataFrame, force_fqns=True)
+            .reset_index()
+            .assign(table=n.target_type._default_table_name())
+            for n in node_tables
+        ]
+        node_df = (
+            pd.concat(node_dfs, ignore_index=True)
+            .reset_index()
+            .rename(columns={"index": "node_id"})
+        )
+        node_df = node_df[
+            [
+                "node_id",
+                "table",
+                *(c for c in node_df.columns if c not in ("node_id", "table")),
+            ]
+        ]
+
+        directed_edges = reduce(
+            set.union, (set((n, r) for r in n._links.values()) for n in node_types)
+        )
+
+        undirected_edges: dict[
+            type[Record],
+            set[
+                tuple[
+                    Link[Record, Any, Any, Symbolic], Link[Record, Any, Any, Symbolic]
+                ]
+            ],
+        ] = {t: set() for t in db._relation_types}
+
+        for rel in db._relation_types:
+            left, right = cast(
+                tuple[
+                    Link[Record, Any, Any, Symbolic],
+                    Link[Record, Any, Any, Symbolic],
+                ],
+                (rel._from, rel._to),  # type: ignore
+            )
+            if left.target_type in node_types and right.target_type in node_types:
+                undirected_edges[rel].add((left, right))
+
+        direct_edge_dfs = [
+            node_df.loc[node_df["table"] == str(parent._default_table_name())]
+            .rename(columns={"node_id": "source"})
+            .merge(
+                node_df.loc[
+                    node_df["table"] == str(link.record_type._default_table_name())
+                ],
+                left_on=[c.fqn for c in link._fk_map.keys()],
+                right_on=[c.fqn for c in link._fk_map.values()],
+            )
+            .rename(columns={"node_id": "target"})[["source", "target"]]
+            .assign(
+                ltr=",".join(c.name for c in link._fk_map.keys()),
+                rtl=None,
+            )
+            for parent, link in directed_edges
+        ]
+
+        rel_edge_dfs = []
+        for assoc_table, rels in undirected_edges.items():
+            for left, right in rels:
+                rel_df = (
+                    self[assoc_table]
+                    .df(kind=pd.DataFrame, force_fqns=True)
+                    .reset_index()
+                )
+
+                left_merged = rel_df.merge(
+                    node_df.loc[
+                        node_df["table"] == str(left.record_type._default_table_name())
+                    ][[*(c.fqn for c in left._fk_map.values()), "node_id"]],
+                    left_on=[c.fqn for c in left._fk_map.keys()],
+                    right_on=[c.fqn for c in left._fk_map.values()],
+                    how="inner",
+                ).rename(columns={"node_id": "source"})
+
+                both_merged = left_merged.merge(
+                    node_df.loc[
+                        node_df["table"] == str(right.record_type._default_table_name())
+                    ][[*(c.fqn for c in right._fk_map.values()), "node_id"]],
+                    left_on=[c.fqn for c in right._fk_map.keys()],
+                    right_on=[c.fqn for c in right._fk_map.values()],
+                    how="inner",
+                ).rename(columns={"node_id": "target"})[
+                    list(
+                        {
+                            "source",
+                            "target",
+                            *(c.fqn for c in assoc_table._col_values.values()),
+                        }
+                    )
+                ]
+
+                rel_edge_dfs.append(
+                    both_merged.assign(
+                        ltr=",".join(c.name for c in right._fk_map.keys()),
+                        rtl=",".join(c.name for c in left._fk_map.keys()),
+                    )
+                )
+
+        # Concat all edges into one table.
+        edge_df = pd.concat(
+            [
+                *direct_edge_dfs,
+                *rel_edge_dfs,
+            ],
+            ignore_index=True,
+        )
+
+        return node_df, edge_df
+
+    @overload
+    def to_dfs(
+        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
+        kind: type[DfT],
+    ) -> tuple[DfT, ...]: ...
+
+    @overload
+    def to_dfs(
+        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
+        kind: None = ...,
+    ) -> tuple[pl.DataFrame, ...]: ...
+
+    def to_dfs(
+        self: Data[Any, Any, Any, Any, Any, DynBackendID],
+        kind: type[DfT] | None = None,
+    ) -> DfT | tuple[DfT, ...]:
+        """Load tuple-valued dataset as tuple of dataframes."""
+        merged_df = self.df(kind=kind)
+
+        name_map = [
+            {col.fqn: col.name for col in col_set}
+            for col_set in self._abs_col_sets.values()
+        ]
+
+        return cast(
+            tuple[DfT, ...],
+            (merged_df[list(cols.keys())].rename(cols) for cols in name_map),
+        )
 
     def isin(
         self: Data[Any, Any, Any, None, Ctx, BaseT2], other: Iterable[ValT2] | slice
@@ -1317,7 +1475,56 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             else self.sql_col.in_(other)
         )
 
-    # 1. Top-level prop selection
+    # 1. DB-level type selection
+    @overload
+    def __getitem__(
+        self: Data[Schema | Record | None, RootIdx, Any, None, None, Any],
+        key: type[RecT3],
+    ) -> Data[RecT3, BaseIdx[RecT3], CrudT, None, None, BaseT]: ...
+
+    # 2. DB-level nested prop selection
+    @overload
+    def __getitem__(
+        self: Data[Schema | Record | None, RootIdx, Any, None, None, Any],
+        key: Data[
+            ValT3,
+            BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
+            CrudT3,
+            RelT3,
+            CtxT3,
+            Symbolic,
+        ],
+    ) -> Data[
+        ValT3,
+        Idx[*tuple[Any, ...], Any, *KeyTt3] | Idx[*KeyTt3],
+        CrudT3,
+        RelT3,
+        CtxT3,
+        BaseT,
+    ]: ...
+
+    # 3. DB-level nested array selection
+    @overload
+    def __getitem__(
+        self: Data[Schema | Record | None, RootIdx, Any, None, None, Any],
+        key: Data[
+            ValT3,
+            ArrayIdx[Record[*KeyTt3], *KeyTt4],
+            CrudT3,
+            RelT3,
+            CtxT3,
+            Symbolic,
+        ],
+    ) -> Data[
+        ValT3,
+        Idx[*tuple[Any, ...], *KeyTt3, *KeyTt4],
+        CrudT3,
+        RelT3,
+        CtxT3,
+        BaseT,
+    ]: ...
+
+    # 4. Top-level prop selection
     @overload
     def __getitem__(
         self: Data[
@@ -1333,7 +1540,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ],
     ) -> Data[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT3, RelT3, Ctx[RecT2], BaseT]: ...
 
-    # 2. Top-level array selection
+    # 5. Top-level array selection
     @overload
     def __getitem__(
         self: Data[
@@ -1351,7 +1558,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ValT3, Idx[*KeyTt2, *KeyTt3, *KeyTt4], CrudT3, RelT3, Ctx[RecT2], BaseT
     ]: ...
 
-    # 3. Nested prop selection
+    # 6. Nested prop selection
     @overload
     def __getitem__(
         self: Data[
@@ -1374,7 +1581,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         BaseT,
     ]: ...
 
-    # 4. Nested array selection
+    # 7. Nested array selection
     @overload
     def __getitem__(
         self: Data[
@@ -1397,42 +1604,42 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         BaseT,
     ]: ...
 
-    # 5. Key filtering, scalar index type
+    # 8. Key filtering, scalar index type
     @overload
     def __getitem__(
         self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Any],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 6. Key / slice filtering
+    # 9. Key / slice filtering
     @overload
     def __getitem__(
         self: Data[Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], Any, Any, Any, Any],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 7. Key / slice filtering, array index
+    # 10. Key / slice filtering, array index
     @overload
     def __getitem__(
         self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, Any],
         key: list[tuple[*KeyTt2, KeyT3]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 8. Expression filtering
+    # 11. Expression filtering
     @overload
     def __getitem__(
         self: Data[Any, Idx | BaseIdx, Any, Any, Any, Any],
         key: sqla.ColumnElement[bool],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 9. Key selection, scalar index type, symbolic context
+    # 12. Key selection, scalar index type, symbolic context
     @overload
     def __getitem__(
         self: Data[Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], Any, Any, Any, Symbolic],
         key: KeyT2,
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 10. Key selection, tuple index type, symbolic context
+    # 13. Key selection, tuple index type, symbolic context
     @overload
     def __getitem__(
         self: Data[
@@ -1441,14 +1648,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: tuple[*KeyTt2],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 11. Key selection, tuple index type, symbolic context, array index
+    # 14. Key selection, tuple index type, symbolic context, array index
     @overload
     def __getitem__(
         self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, Symbolic],
         key: tuple[*KeyTt2, KeyT3],
     ) -> Data[ValT, IdxT, RU, RelT, CtxT, BaseT]: ...
 
-    # 12. Key selection, scalar index type
+    # 15. Key selection, scalar index type
     @overload
     def __getitem__(
         self: Data[
@@ -1457,7 +1664,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: KeyT2,
     ) -> ValT: ...
 
-    # 13. Key selection, tuple index type
+    # 16. Key selection, tuple index type
     @overload
     def __getitem__(
         self: Data[
@@ -1466,7 +1673,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         key: tuple[*KeyTt2],
     ) -> ValT: ...
 
-    # 14. Key selection, tuple index type, array index
+    # 17. Key selection, tuple index type, array index
     @overload
     def __getitem__(
         self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], Any, Any, Any, DynBackendID],
@@ -1490,9 +1697,13 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Select into the relational subgraph or filte ron the current level."""
         match key:
             case type():
-                return Table(_db=self.db, _typehint=Table[key])
+                return Table(_db=self.db, _type=Table[key])
             case Data():
-                return key._prepend_ctx(self._table)
+                return (
+                    copy_and_override(type(key), key, _db=self)
+                    if isinstance(self, DataBase)
+                    else key._prepend_ctx(self._table)
+                )
             case list() | slice() | Hashable() | sqla.ColumnElement():
                 if not isinstance(key, tuple | list | sqla.ColumnElement):
                     key = (key,)
@@ -1525,251 +1736,124 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                 return key_set
 
-    def __iter__(  # noqa: D105
-        self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
-    ) -> Iterator[ValT2]:
-        return iter(self.values())
+    @overload
+    def __setitem__(
+        self: Data[Schema | Record | None, RootIdx, CRUD, None, None, DynBackendID],
+        key: type[RecT3],
+        value: Data[RecT3, Any, Any, Any, Any, DynBackendID] | Input[RecT3, Hashable],
+    ) -> None: ...
 
     @overload
-    def __imatmul__(
-        self: Data[
-            Record[KeyT2] | Record[*KeyTt2] | None,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            RU,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT, Any, Any, Any, Any, BaseT]
-            | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    @overload
-    def __imatmul__(
-        self: Data[
-            ValT2,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            RU,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT2, Any, Any, Any, Any, BaseT]
-            | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    def __imatmul__(
-        self: Data[Any, Any, RU, Any, Any, DynBackendID],
-        other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
-        """Aligned assignment."""
-        self._mutate(other, mode="update")
-        return cast(
-            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
-            self,
-        )
-
-    @overload
-    def __iadd__(
-        self: Data[
-            Record[KeyT2] | Record[*KeyTt2] | None,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CR,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT, Any, Any, Any, Any, BaseT]
-            | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    @overload
-    def __iadd__(
-        self: Data[
-            ValT2,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CR,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT2, Any, Any, Any, Any, BaseT]
-            | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    def __iadd__(
-        self: Data[Any, Any, CR, Any, Any, DynBackendID],
-        other: Data[Any, Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
-        """Inserting assignment."""
-        self._mutate(other, mode="insert")
-        return cast(
-            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
-            self,
-        )
-
-    @overload
-    def __ior__(
-        self: Data[
-            Record[KeyT2] | Record[*KeyTt2] | None,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRU,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT, Any, Any, Any, Any, BaseT]
-            | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    @overload
-    def __ior__(
-        self: Data[
-            ValT2,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRU,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT2, Any, Any, Any, Any, BaseT]
-            | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    def __ior__(
-        self: Data[Any, Any, CRU, Any, Any, DynBackendID],
-        other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
-        """Upserting assignment."""
-        self._mutate(other, mode="upsert")
-        return cast(
-            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
-            self,
-        )
-
-    @overload
-    def __iand__(
-        self: Data[
-            Record[KeyT2] | Record[*KeyTt2] | None,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRUD,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT, Any, Any, Any, Any, BaseT]
-            | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    @overload
-    def __iand__(
-        self: Data[
-            ValT2,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRUD,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT2, Any, Any, Any, Any, BaseT]
-            | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    def __iand__(
+    def __setitem__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
-        other: Data[Any, Any, Any, Any, Any, BaseT] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
+        key: Data[
+            RecT3 | None,
+            BaseIdx[Record[KeyT3]],
+            Any,
+            Any,
+            Any,
+            Symbolic,
+        ],
+        value: (
+            Data[
+                RecT3,
+                Any,
+                Any,
+                Any,
+                Any,
+                DynBackendID,
+            ]
+            | Input[RecT3 | KeyT3, Hashable]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
+        key: Data[
+            RecT3 | None,
+            BaseIdx[Record[*KeyTt3]],
+            Any,
+            Any,
+            Any,
+            Symbolic,
+        ],
+        value: (
+            Data[
+                RecT3,
+                Any,
+                Any,
+                Any,
+                Any,
+                DynBackendID,
+            ]
+            | Input[RecT3 | tuple[*KeyTt3], Hashable]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
+        key: Data[
+            ValT3,
+            Any,
+            Any,
+            Any,
+            Any,
+            Symbolic,
+        ],
+        value: (
+            Data[
+                ValT3,
+                Any,
+                Any,
+                Any,
+                Any,
+                DynBackendID,
+            ]
+            | Input[ValT, Hashable]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: Data[
+            Any, BaseIdx[Record[KeyT2]] | Idx[KeyT2], CRUD, Any, Any, DynBackendID
+        ],
+        key: KeyT2,
+        value: Data[ValT, Idx[()], Any, Any, Any, DynBackendID] | Input[ValT, None],
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: Data[
+            Any, BaseIdx[Record[*KeyTt2]] | Idx[*KeyTt2], CRUD, Any, Any, DynBackendID
+        ],
+        key: tuple[*KeyTt2],
+        value: Data[ValT, Idx[()], Any, Any, Any, DynBackendID] | Input[ValT, None],
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, ArrayIdx[Record[*KeyTt2], KeyT3], CRUD, Any, Any, DynBackendID],
+        key: tuple[*KeyTt2, KeyT3],
+        value: Data[ValT, Idx[()], Any, Any, Any, DynBackendID] | Input[ValT, None],
+    ) -> None: ...
+
+    # Implementation:
+
+    def __setitem__(
+        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
+        key: type[Record] | Data[Any, Any, Any, Any, Any, Symbolic] | Hashable,
+        value: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
+    ) -> None:
         """Replacing assignment."""
-        self._mutate(other, mode="replace")
-        return cast(
-            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
-            self,
-        )
+        item = self[key]
 
-    @overload
-    def __isub__(
-        self: Data[
-            Record[KeyT2] | Record[*KeyTt2] | None,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRUD,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT, Any, Any, Any, Any, BaseT]
-            | Input[ValT, KeyT3 | tuple[*KeyTt3], KeyT2 | tuple[*KeyTt2]]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+        if hash(item) != hash(value):
+            cast(Data, item)._mutate(value, mode="replace")
 
-    @overload
-    def __isub__(
-        self: Data[
-            ValT2,
-            BaseIdx[Record[KeyT3]]
-            | Idx[KeyT3]
-            | BaseIdx[Record[*KeyTt3]]
-            | Idx[*KeyTt3],
-            CRUD,
-            Any,
-            Any,
-            DynBackendID,
-        ],
-        other: (
-            Data[ValT2, Any, Any, Any, Any, BaseT]
-            | Input[ValT2, KeyT3 | tuple[*KeyTt3], None]
-        ),
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
-
-    def __isub__(
-        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
-        other: Data[Any, Any, Any, Any, Any] | Input[Any, Any, Any],
-    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
-        """Idempotent deletion."""
-        raise NotImplementedError("Subtraction not supported yet.")
+        return
 
     # 1. Type deletion
     @overload
@@ -1821,6 +1905,165 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return
 
         self._mutate([], mode="delete")
+
+    @overload
+    def __irshift__(
+        self: Data[
+            Record[KeyT2] | None,
+            Any,
+            RU,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: Data[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[
+            Record[*KeyTt2] | None,
+            Any,
+            RU,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: (
+            Data[ValT, Any, Any, Any, Any, DynBackendID]
+            | Input[ValT | tuple[*KeyTt2], Any]
+        ),
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[
+            ValT2,
+            Any,
+            RU,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+        other: Data[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    def __irshift__(
+        self: Data[Any, Any, RU, Any, Any, DynBackendID],
+        other: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
+        """Updating assignment."""
+        cast(Data, self)._mutate(other, mode="update")
+        return cast(
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
+            self,
+        )
+
+    @overload
+    def __ilshift__(
+        self: Data[
+            Record[KeyT2] | None,
+            Any,
+            CRUD,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: Data[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[
+            Record[*KeyTt2] | None,
+            Any,
+            CRUD,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: (
+            Data[ValT, Any, Any, Any, Any, DynBackendID]
+            | Input[ValT | tuple[*KeyTt2], Any]
+        ),
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[
+            ValT2,
+            Any,
+            CRUD,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+        other: Data[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    def __ilshift__(
+        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
+        other: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
+        """Inserting assignment."""
+        self._mutate(other, mode="insert")
+        return cast(
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
+            self,
+        )
+
+    @overload
+    def __ior__(
+        self: Data[
+            Record[KeyT2] | None,
+            Any,
+            CRUD,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: Data[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __ior__(
+        self: Data[
+            Record[*KeyTt2] | None,
+            Any,
+            CRUD,
+            Any,
+            Ctx,
+            DynBackendID,
+        ],
+        other: (
+            Data[ValT, Any, Any, Any, Any, DynBackendID]
+            | Input[ValT | tuple[*KeyTt2], Any]
+        ),
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    @overload
+    def __ior__(
+        self: Data[
+            ValT2,
+            Any,
+            CRUD,
+            Any,
+            Any,
+            DynBackendID,
+        ],
+        other: Data[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
+
+    def __ior__(
+        self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
+        other: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
+    ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
+        """Upserting assignment."""
+        self._mutate(other, mode="upsert")
+        return cast(
+            Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT],
+            self,
+        )
 
     @overload
     def __eq__(
@@ -1933,14 +2176,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 ),
             ),
         )
-
-    def __setitem__(
-        self,
-        key: Any,
-        other: Data[Any, Any, Any, Any, Any, Any],
-    ) -> None:
-        """Catchall setitem."""
-        return
 
     # def __set_name__(self, _, name: str) -> None:  # noqa: D105
     #     if self._name is None:
@@ -2133,10 +2368,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             assert count is not None
             return count
 
+    def __iter__(  # noqa: D105
+        self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
+    ) -> Iterator[ValT2]:
+        return iter(self.values())
+
+    def __hash__(self) -> int:  # noqa: D105
+        return gen_int_hash(
+            (
+                self.db,
+                self.name,
+                self.value_type,
+                self.relation_type,
+                self._ctx_table,
+                self._filters,
+                self._tuple_selection,
+            )
+        )
+
     @property
     def _data_type(self) -> type[Data] | type[None]:
         """Resolve the data container type reference."""
-        hint = self._typehint
+        hint = self._type
 
         if hint is None:
             return NoneType
@@ -2155,15 +2408,21 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def _generic_type(self) -> SingleTypeDef | UnionType:
         """Resolve the generic property type reference."""
-        hint = self._typehint or Data
+        hint = self._type or Data
         generic = self._hint_to_typedef(hint)
-        assert is_subtype(generic, Data)
 
         return generic
 
     @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef, ...]:
-        return get_args(self._generic_type)
+        args = get_args(self._generic_type)
+        if len(args) == 0:
+            args = tuple(
+                cast(TypeVar, t).__default__
+                for t in getattr(type(self), "__parameters__")
+            )
+
+        return args
 
     @cached_prop
     def _symbolic_ctx(self) -> CtxT:
@@ -2181,7 +2440,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             self._ctx
             if isinstance(self._ctx, Table)
             else (
-                Table(_db=self.db, _typehint=Table[self._ctx.record_type])
+                Table(_db=self.db, _type=Table[self._ctx.record_type])
                 if self._ctx is not None
                 else None
             )
@@ -2259,7 +2518,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     else gen_str_hash((link._ctx, link._name), 6)
                 )
             ),
-            _typehint=BackLink[cast(type[RecT2 | RecT3], rec_type)],
+            _type=BackLink[cast(type[RecT2 | RecT3], rec_type)],
             link=cast(Link[Any, Any, Any, Any], link),
             index_by=index_by,
         )
@@ -2300,14 +2559,17 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
     @property
-    def _table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT]:
+    def _table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT] | None:
         if isinstance(self, Table):
             return self
-        elif self._backlink is not None:
+        if issubclass(self.target_type, Record):
+            return Table(_db=self.db, _type=self.target_type)
+        if self._backlink is not None:
             return self._backlink
+        if self._ctx_table is not None:
+            return self._ctx_table
 
-        assert self._ctx_table is not None, "Only tables can be context-less"
-        return self._ctx_table
+        return None
 
     @property
     def _rel(
@@ -2320,7 +2582,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return self._backlink
 
     @property
-    def _root(self) -> Data[Record | None, Any, Any, None, None, BaseT]:
+    def _root(self) -> Data[Any, Any, Any, None, None, BaseT]:
         return self.path[0]
 
     @cached_prop
@@ -2500,26 +2762,26 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ], merge
 
     @cached_prop
-    def _abs_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
+    def _abs_froms(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
         return (
             [
                 v._prepend_ctx(self._table)
                 for sel in self._tuple_selection
-                for v in sel._abs_joins
+                for v in sel._abs_froms
             ]
             if self._tuple_selection is not None
-            else [self._table]
+            else [self._table] if self._table is not None else []
         )
 
     @cached_prop
-    def _total_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
-        return self._abs_joins + self._abs_filters[1]
+    def _total_froms(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
+        return self._abs_froms + self._abs_filters[1]
 
     @cached_prop
     def _total_join_dict(self) -> JoinDict:
         tree: JoinDict = {}
 
-        for rel in self._total_joins:
+        for rel in self._total_froms:
             subtree = tree
             for node in rel._abs_link_path.keys():
                 if node not in subtree:
@@ -2542,7 +2804,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     {
                         Value[Any, Any, Any, Any, Symbolic](
                             _name=f"{self.name}_{pk.name}",
-                            _typehint=pk._typehint,
+                            _type=pk._type,
                             init=False,
                             index=self.index if isinstance(self, Link) else False,
                             primary_key=(
@@ -2565,42 +2827,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                 return bidict(dict(zip(fks, pks)))
 
-    @staticmethod
-    def _has_type[
-        D: Data[Any, Any, Any, Any, Any, Any]
-    ](obj: Data[Any, Any, Any, Any, Any, Any], type_: SingleTypeDef[D]) -> TypeGuard[D]:
-        """Check if object is of given type hint."""
-        tmpl = Data[Any, Any, Any, Any, Any, Any](_typehint=type_)
-
-        return has_type(obj, type_) and all(
-            is_subtype(
-                obj._get_typearg(t),
-                tmpl._get_typearg(t),
-            )
-            for t in tmpl._typearg_map.keys()
-        )
-
-    def _get_typearg(
-        self, typevar: TypeVar, remove_null: bool = False
-    ) -> SingleTypeDef | UnionType:
-        """Get the type argument for a type variable."""
-        args = self._generic_args
-        if len(self._generic_args) == 0:
-            args = tuple(
-                cast(TypeVar, t).__default__
-                for t in getattr(type(self), "__parameters__")
-            )
-
-        typearg = self._typearg_map[typevar]
-        if isinstance(typearg, int):
-            typearg = self._hint_to_typedef(args[typearg], remove_null=remove_null)
-
-        return typearg
-
     def _hint_to_typedef(
         self,
         hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-        remove_null: bool = False,
     ) -> SingleTypeDef | UnionType:
         typedef = hint
 
@@ -2629,25 +2858,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 recursive_guard=frozenset(),
             )
 
-        if isinstance(typedef, UnionType):
-            if remove_null:
-                union_types: set[type] = {
-                    get_origin(union_arg) or union_arg
-                    for union_arg in get_args(typedef)
-                }
-                union_types = {
-                    t
-                    for t in union_types
-                    if t is not None and not issubclass(t, NoneType)
-                }
-                assert len(union_types) == 1
-                return next(iter(union_types))
-
-            return typedef
-
         return cast(SingleTypeDef, typedef)
 
-    def _hint_to_type(self, hint: SingleTypeDef | UnionType | TypeVar | None) -> type:
+    def _typedef_to_type(
+        self, hint: SingleTypeDef | UnionType | None, remove_null: bool = False
+    ) -> type:
         if hint is None:
             return NoneType
 
@@ -2659,6 +2874,23 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             if isinstance(hint, TypeAliasType)
             else self._hint_to_typedef(hint) if isinstance(hint, TypeVar) else hint
         )
+
+        if isinstance(typedef, UnionType):
+            union_types: set[type] = {
+                get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
+            }
+
+            if remove_null:
+                union_types = {
+                    t
+                    for t in union_types
+                    if t is not None and not issubclass(t, NoneType)
+                }
+                assert len(union_types) == 1
+                return next(iter(union_types))
+
+            typedef = get_lowest_common_base(union_types)
+
         orig = get_origin(typedef)
 
         if orig is None or orig is Literal:
@@ -2704,7 +2936,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         root, *path = self.path
         assert (
-            left.record_type == root.record_type
+            left.record_type == root.target_type
         ), "Context table must be of same type as root table."
 
         prefixed = cast(
@@ -2781,7 +3013,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         for superclass in self.record_type._record_superclasses:
             base_table = Table(
-                _db=self.db, _typehint=Table[superclass]
+                _db=self.db, _type=Table[superclass]
             )._gen_sql_base_table()
 
             fks.append(
@@ -3028,39 +3260,47 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return value_table
 
     def _mutate(
-        self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
-        value: Data[ValT2, Any, Any, Any, Any, Any] | Input[ValT2, Hashable, Hashable],
+        self: Data[ValT2, Any, CRUD, Any, Any, DynBackendID],
+        value: Data[ValT2, Any, Any, Any, Any, Any] | Input[ValT2, Hashable],
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
         record_ids: dict[Hashable, Hashable] | None = None
-        valid_caches = self.db._get_valid_cache_set(self._table.record_type)
+        valid_caches = (
+            self.db._get_valid_cache_set(self._table.record_type)
+            if self._table is not None
+            else set()
+        )
 
         match value:
             case sqla.Select():
+                assert self._table is not None
                 self._table._mutate_from_sql(value.subquery(), mode)
                 valid_caches.clear()
             case Data():
-                if hash(value.db) == hash(self.db):
+                if hash(value.db) == hash(self.db) and self._table is not None:
                     # Other database is exactly the same,
                     # so updating target table is enough.
                     self._table._mutate_from_sql(value.query, mode)
-                elif Data._has_type(
-                    value, Data[Record | None, Any, Any, Any, Any, Any]
-                ):
+                elif issubclass(value.target_type, Record | Schema):
                     # Other database is not exactly the same,
                     # hence may be on a different overlay or backend.
                     # Related records have to be mutated alongside.
-                    self.db._mutate(
-                        value.extract(),
-                        (
-                            "upsert"
-                            if mode in ("upsert", "update")
-                            else (
-                                "replace" if mode in ("replace", "delete") else "insert"
+                    other_db = value.extract()
+
+                    if self.db.db_id == other_db.db_id:
+                        for rec in other_db._record_types:
+                            self.db[rec]._mutate_from_sql(other_db[rec].query, mode)
+                    else:
+                        for rec in other_db._record_types:
+                            value_table = self.db[rec]._df_to_table(
+                                other_db[rec].df(),
                             )
-                        ),
-                    )
-                else:
+                            self.db[rec]._mutate_from_sql(
+                                value_table,
+                                mode,
+                            )
+                            value_table.drop(self.db.engine)
+                elif self._table is not None and value._table is not None:
                     # Not a record type, so no need to mutate related records.
                     value_table = self._df_to_table(value.df())
                     self._table._mutate_from_sql(value_table, mode)
@@ -3068,6 +3308,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                 valid_caches -= set(value.keys())
             case pd.DataFrame() | pl.DataFrame():
+                assert self._table is not None
+
                 value_table = self._df_to_table(value)
                 self._table._mutate_from_sql(
                     value_table,
@@ -3156,6 +3398,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         values: Mapping[Any, ValT2],
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
+        assert self._table is not None
+
         df = self._values_to_df(values)
         value_table = self._df_to_table(df)
         self._table._mutate_from_sql(
@@ -3236,7 +3480,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         values: Mapping[Hashable, Hashable],
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
-        if self._link is None:
+        if self._link is None or self._table is None:
             return
 
         if not issubclass(self.relation_type, NoneType):
@@ -3461,22 +3705,30 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             # Construct the update statements.
 
             # Derive current select statement and join with value table.
-            select = self.query.join(
+            select = self.select.join(
                 value_table,
                 reduce(
                     sqla.and_,
                     (
-                        self.query.c[col_name] == value_table.c[col_name]
-                        for col_name in self._abs_idx_cols.keys()
+                        col.sql_col == value_table.c[col_name]
+                        for col_name, col in (
+                            *self._abs_idx_cols.items(),
+                            *(
+                                (pk.name, pk)
+                                for pk in self._abs_cols.values()
+                                if pk.primary_key
+                            ),
+                        )
+                        if col_name in value_table.columns
                     ),
                 ),
-            )
+            ).subquery()
 
             for table, vals in table_values.items():
                 col_name_map = {c_name: c.name for c_name, c in vals.items()}
                 values = {
                     col_name_map[col_name]: col
-                    for col_name, col in value_table.columns.items()
+                    for col_name, col in select.columns.items()
                     if col_name in col_name_map
                 }
 
@@ -3731,17 +3983,20 @@ class Array(
         return rec
 
 
+RootKeyT = TypeVar("RootKeyT", bound=Hashable, default=None)
+
+
 @dataclass
-class DataBase(Generic[SchemaT, CrudT, BaseT]):
+class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
     """Database connection."""
 
     _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
-        ValT: object,
-        IdxT: Idx[()],
-        CrudT: 0,
+        ValT: 0,
+        IdxT: RootIdx,
+        CrudT: 2,
         RelT: NoneType,
         CtxT: NoneType,
-        BaseT: 1,
+        BaseT: 3,
     }
 
     backend: BaseT = None  # pyright: ignore[reportAssignmentType]
@@ -3834,6 +4089,17 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
         if self.write_to_overlay is not None and self.overlay_type == "db_schema":
             self._ensure_sqla_schema_exists(self.write_to_overlay)
 
+        self._db = self
+        self._name = self.db_id
+        self._type = cast(
+            type[SchemaT],
+            (
+                self.schema
+                if isinstance(self.schema, type)
+                else Union[*self._def_types] if len(self._def_types) > 0 else None
+            ),
+        )
+
     @property
     def db_id(self) -> str:
         """Return the unique database ID."""
@@ -3912,8 +4178,8 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
     def describe(self) -> dict[str, str | dict[str, str] | None]:
         """Return a description of this database."""
         schema_desc = {}
-        if not isinstance(self.backend, Symbolic):
-            dyn_self = cast(DataBase[Any, Any, DynBackendID], self)
+        if not isinstance(self.db.backend, Symbolic):
+            dyn_self = cast(DataBase[Any, Any, Any, DynBackendID], self)
 
             schema_ref = (
                 PyObjectRef.reference(self.schema)
@@ -3936,7 +4202,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                 "contents": {
                     "records": {
                         rec._fqn: len(dyn_self[rec])
-                        for rec in DataBase[Any, Any, Any]._record_types(
+                        for rec in DataBase[Any, Any, Any, Any]._record_types(
                             self, with_relations=False
                         )
                     },
@@ -4024,7 +4290,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                 assert any(all(m) for m in matches)
 
     def load(
-        self: DataBase[Any, CRUD, Any],
+        self: DataBase[Any, Any, CRUD, BackT2],
         data: pd.DataFrame | pl.DataFrame | sqla.Select,
         fks: (
             Mapping[
@@ -4033,7 +4299,7 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             ]
             | None
         ) = None,
-    ) -> Data[DynRecord, BaseIdx[DynRecord], R, None, None, BaseT]:
+    ) -> Data[DynRecord, BaseIdx[DynRecord], R, None, None, BackT2]:
         """Create a temporary dataset instance from a DataFrame or SQL query."""
         name = (
             f"temp_df_{gen_str_hash(data, 10)}"
@@ -4050,231 +4316,21 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             ),
         )
 
-        ds = self[rec]
-        ds &= data
+        self[rec] = data
 
-        return ds
-
-    def to_graph(
-        self: DataBase[Schema, Any, DynBackendID],
-        nodes: (
-            Sequence[type[Record] | Data[Record, BaseIdx, Any, None, None, Symbolic]]
-            | None
-        ) = None,
-    ) -> tuple[pd.DataFrame, pd.DataFrame]:
-        """Export links between select database objects in a graph format.
-
-        E.g. for usage with `Gephi`_
-
-        .. _Gephi: https://gephi.org/
-        """
-        nodes = (
-            nodes
-            if nodes is not None
-            else list(DataBase[Any, Any, Any]._record_types(self, with_relations=False))
-        )
-        node_tables = [self[n] for n in nodes]
-        node_types = [n if isinstance(n, type) else n.record_type for n in nodes]
-
-        # Concat all node tables into one.
-        node_dfs = [
-            n.df(kind=pd.DataFrame, force_fqns=True)
-            .reset_index()
-            .assign(table=n.target_type._default_table_name())
-            for n in node_tables
-        ]
-        node_df = (
-            pd.concat(node_dfs, ignore_index=True)
-            .reset_index()
-            .rename(columns={"index": "node_id"})
-        )
-        node_df = node_df[
-            [
-                "node_id",
-                "table",
-                *(c for c in node_df.columns if c not in ("node_id", "table")),
-            ]
-        ]
-
-        directed_edges = reduce(
-            set.union, (set((n, r) for r in n._links.values()) for n in node_types)
-        )
-
-        undirected_edges: dict[
-            type[Record],
-            set[
-                tuple[
-                    Link[Record, Any, Any, Symbolic], Link[Record, Any, Any, Symbolic]
-                ]
-            ],
-        ] = {t: set() for t in self._relation_types}
-
-        for rel in self._relation_types:
-            left, right = cast(
-                tuple[
-                    Link[Record, Any, Any, Symbolic],
-                    Link[Record, Any, Any, Symbolic],
-                ],
-                (rel._from, rel._to),  # type: ignore
-            )
-            if left.target_type in node_types and right.target_type in node_types:
-                undirected_edges[rel].add((left, right))
-
-        direct_edge_dfs = [
-            node_df.loc[node_df["table"] == str(parent._default_table_name())]
-            .rename(columns={"node_id": "source"})
-            .merge(
-                node_df.loc[
-                    node_df["table"] == str(link.record_type._default_table_name())
-                ],
-                left_on=[c.fqn for c in link._fk_map.keys()],
-                right_on=[c.fqn for c in link._fk_map.values()],
-            )
-            .rename(columns={"node_id": "target"})[["source", "target"]]
-            .assign(
-                ltr=",".join(c.name for c in link._fk_map.keys()),
-                rtl=None,
-            )
-            for parent, link in directed_edges
-        ]
-
-        rel_edge_dfs = []
-        for assoc_table, rels in undirected_edges.items():
-            for left, right in rels:
-                rel_df = (
-                    self[assoc_table]
-                    .df(kind=pd.DataFrame, force_fqns=True)
-                    .reset_index()
-                )
-
-                left_merged = rel_df.merge(
-                    node_df.loc[
-                        node_df["table"] == str(left.record_type._default_table_name())
-                    ][[*(c.fqn for c in left._fk_map.values()), "node_id"]],
-                    left_on=[c.fqn for c in left._fk_map.keys()],
-                    right_on=[c.fqn for c in left._fk_map.values()],
-                    how="inner",
-                ).rename(columns={"node_id": "source"})
-
-                both_merged = left_merged.merge(
-                    node_df.loc[
-                        node_df["table"] == str(right.record_type._default_table_name())
-                    ][[*(c.fqn for c in right._fk_map.values()), "node_id"]],
-                    left_on=[c.fqn for c in right._fk_map.keys()],
-                    right_on=[c.fqn for c in right._fk_map.values()],
-                    how="inner",
-                ).rename(columns={"node_id": "target"})[
-                    list(
-                        {
-                            "source",
-                            "target",
-                            *(c.fqn for c in assoc_table._col_values.values()),
-                        }
-                    )
-                ]
-
-                rel_edge_dfs.append(
-                    both_merged.assign(
-                        ltr=",".join(c.name for c in right._fk_map.keys()),
-                        rtl=",".join(c.name for c in left._fk_map.keys()),
-                    )
-                )
-
-        # Concat all edges into one table.
-        edge_df = pd.concat(
-            [
-                *direct_edge_dfs,
-                *rel_edge_dfs,
-            ],
-            ignore_index=True,
-        )
-
-        return node_df, edge_df
-
-    # 1. DB-level type selection
-    @overload
-    def __getitem__(
-        self,
-        key: type[RecT3],
-    ) -> Data[RecT3, BaseIdx[RecT3], CrudT, None, None, BaseT]: ...
-
-    # 2. Nested prop selection
-    @overload
-    def __getitem__(
-        self,
-        key: Data[
-            ValT3,
-            BaseIdx[Record[*KeyTt3]] | Idx[*KeyTt3],
-            CrudT3,
-            RelT3,
-            CtxT3,
-            Symbolic,
-        ],
-    ) -> Data[
-        ValT3,
-        Idx[*tuple[Any, ...], Any, *KeyTt3] | Idx[*KeyTt3],
-        CrudT3,
-        RelT3,
-        CtxT3,
-        BaseT,
-    ]: ...
-
-    # 3. Nested array selection
-    @overload
-    def __getitem__(
-        self,
-        key: Data[
-            ValT3,
-            ArrayIdx[Record[*KeyTt3], *KeyTt4],
-            CrudT3,
-            RelT3,
-            CtxT3,
-            Symbolic,
-        ],
-    ) -> Data[
-        ValT3,
-        Idx[*tuple[Any, ...], *KeyTt3, *KeyTt4],
-        CrudT3,
-        RelT3,
-        CtxT3,
-        BaseT,
-    ]: ...
-
-    # Implementation:
-
-    def __getitem__(
-        self,
-        key: type[Record] | Data[Any, Any, Any, Any, Any, Symbolic],
-    ) -> DataBase[Any, Any, Any] | Data[Any, Any, Any, Any, Any, Any]:
-        """Select into the relational subgraph or filte ron the current level."""
-        match key:
-            case type():
-                return Table(_db=self, _typehint=Table[key])
-            case Data():
-                return copy_and_override(
-                    type(key),
-                    key,
-                    _db=self,  # type: ignore
-                )
-
-    def __setitem__(
-        self,
-        key: Any,
-        other: Data[Any, Any, Any, Any, Any, Any],
-    ) -> None:
-        """Catchall setitem."""
-        return
+        return self[rec]
 
     def __or__(
-        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
-    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+        self: DataBase[Any, Any, Any, BackT2],
+        other: DataBase[SchemaT2, Any, Any, DynBackendID],
+    ) -> DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2]:
         """Union two databases, right overriding left."""
         db = copy_and_override(
-            DataBase[SchemaT | SchemaT2, CRUD, BackT2],
+            DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2],
             self,
             backend=self.backend,
             schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
+            write_to_overlay=f"upsert/({self.db_id}|{other.db_id})/{token_hex(4)}",
             _def_types={},
             _metadata=sqla.MetaData(),
             _instance_map={},
@@ -4284,16 +4340,17 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
         return db
 
-    def __add__(
-        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
-    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+    def __lshift__(
+        self: DataBase[Any, Any, Any, BackT2],
+        other: DataBase[SchemaT2, Any, Any, DynBackendID],
+    ) -> DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2]:
         """Union two databases, left overriding right."""
         db = copy_and_override(
-            DataBase[SchemaT | SchemaT2, CRUD, BackT2],
+            DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2],
             self,
             backend=self.backend,
             schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
+            write_to_overlay=f"insert/({self.db_id}<<{other.db_id})/{token_hex(4)}",
             _def_types={},
             _metadata=sqla.MetaData(),
             _instance_map={},
@@ -4303,22 +4360,23 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
 
         return db
 
-    def __and__(
-        self: DataBase[Any, Any, BackT2], other: DataBase[SchemaT2, Any, Any]
-    ) -> DataBase[SchemaT | SchemaT2, CRUD, BackT2]:
+    def __rshift__(
+        self: DataBase[Any, Any, Any, BackT2],
+        other: DataBase[SchemaT2, Any, Any, DynBackendID],
+    ) -> DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2]:
         """Intersect two databases, right overriding left."""
         db = copy_and_override(
-            DataBase[SchemaT | SchemaT2, CRUD, BackT2],
+            DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2],
             self,
             backend=self.backend,
             schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"union/({self.db_id}|{other.db_id})",
+            write_to_overlay=f"update/({self.db_id}>>{other.db_id})/{token_hex(4)}",
             _def_types={},
             _metadata=sqla.MetaData(),
             _instance_map={},
         )
 
-        db._mutate(other, "replace")
+        db._mutate(other, "update")
 
         return db
 
@@ -4431,12 +4489,12 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
                     if_table_exists="append",
                 )
 
-    def _save_to_excel(self, targets: set[type[Record]] | None = None) -> None:
+    def _save_to_excel(self) -> None:
         """Save all (or selected) tables to Excel."""
         assert isinstance(self.url, Path | CloudPath | HttpFile)
         file = self.url.get() if isinstance(self.url, HttpFile) else self.url
 
-        recs = targets if targets is not None else self._record_types.keys()
+        recs = self._record_types.keys()
 
         with ExcelWorkbook(file) as wb:
             for rec in recs:
@@ -4449,27 +4507,8 @@ class DataBase(Generic[SchemaT, CrudT, BaseT]):
             assert isinstance(file, BytesIO)
             self.url.set(file)
 
-    def _mutate(
-        self,
-        other: DataBase[Any, Any, Any],
-        mode: Literal["upsert", "insert", "replace"],
-    ) -> None:
-        """Mutate the database with another database."""
-        for rec in set(self._record_types.keys()) | set(other._record_types.keys()):
-            if other.db_id == self.db_id:
-                self[rec]._mutate_from_sql(other[rec].query, mode)
-            else:
-                value_table = self[rec]._df_to_table(
-                    other[rec].df(),
-                )
-                self[rec]._mutate_from_sql(
-                    value_table,
-                    mode,
-                )
-                value_table.drop(self.engine)
 
-
-symbol_db = DataBase[Any, R, Symbolic](backend=Symbolic())
+symbol_db = DataBase[Any, Any, R, Symbolic](backend=Symbolic())
 """Database for all symbolic data instances."""
 
 
@@ -4568,7 +4607,7 @@ class RecordMeta(type):
         # Construct prelimiary symbolic data instances for all class annotations.
         props = {
             name: Data[Any, Any, Any, Any, Ctx, Symbolic](
-                _typehint=hint,
+                _type=hint,
                 _db=symbol_db,
                 _ctx=ctx,
                 _name=name,
@@ -4595,7 +4634,7 @@ class RecordMeta(type):
                     prop_type,
                     cls.__dict__[prop_name],
                     _name=prop._name,
-                    _typehint=prop._typehint,
+                    _type=prop._type,
                     _ctx=prop._ctx,
                 )
             else:
@@ -4881,7 +4920,7 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
             BackLink(
                 link=cast(Link[Self, Any, RecT2, Symbolic], ln),
                 _ctx=Ctx(cls),
-                _typehint=BackLink[target],
+                _type=BackLink[target],
                 _db=symbol_db,
             )
             for ln in target._links.values()
@@ -4907,9 +4946,11 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
             **{k: v if v is not Keep else MISSING for k, v in kwargs.items()},
         )  # pyright: ignore[reportCallIssue]
 
-    _database: Value[DataBase[Any, CRUD, DynBackendID] | None, CRUD, Private] = Value(
-        pub_status=Private,
-        default=None,
+    _database: Value[DataBase[Any, Any, CRUD, DynBackendID] | None, CRUD, Private] = (
+        Value(
+            pub_status=Private,
+            default=None,
+        )
     )
     _published: Value[bool, CRUD, Private] = Value(pub_status=Private, default=False)
     _root: Value[bool, CRUD, Private] = Value(pub_status=Private, default=True)
@@ -4966,9 +5007,9 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         return
 
     @property
-    def _db(self) -> DataBase[Any, CRUD, DynBackendID]:
+    def _db(self) -> DataBase[Any, Any, CRUD, DynBackendID]:
         if self._database is None:
-            self._database = DataBase[Any, CRUD, DynBackendID]()
+            self._database = DataBase[Any, Any, CRUD, DynBackendID]()
 
         return self._database
 
@@ -5067,7 +5108,7 @@ class DynRecordMeta(RecordMeta):
         cls: type[Record], name: str
     ) -> Value[Any, Any, Any, Any, Symbolic]:
         """Get dynamic attribute by dynamic name."""
-        return Value(_db=symbol_db, _typehint=Value[cls], _ctx=Ctx(cls), _name=name)
+        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx(cls), _name=name)
 
     def __getattr__(
         cls: type[Record], name: str
@@ -5075,7 +5116,7 @@ class DynRecordMeta(RecordMeta):
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
-        return Value(_db=symbol_db, _typehint=Value[cls], _ctx=Ctx(cls), _name=name)
+        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx(cls), _name=name)
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):
@@ -5084,7 +5125,7 @@ class DynRecord(Record, metaclass=DynRecordMeta):
     _template = True
 
 
-a = DynRecord
+x = DynRecord
 
 
 def dynamic_record_type(
@@ -5104,7 +5145,7 @@ def dynamic_record_type(
             lambda ns: ns.update(
                 {
                     **{p.name: p for p in props},
-                    "__annotations__": {p.name: p._typehint for p in props},
+                    "__annotations__": {p.name: p._type for p in props},
                     "_src_mod": src_module or base._src_mod or getmodule(base),
                     **extra_attrs,
                 }
