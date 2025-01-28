@@ -9,7 +9,7 @@ from decimal import Decimal
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
-from itertools import groupby, product
+from itertools import chain, combinations, groupby, product
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
@@ -936,34 +936,55 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self: Data[ValT2, Any, Any, Any, Any, DynBackendID],
     ) -> Sequence[ValT2]:
         """Iterable over this dataset's values."""
-        dfs = self.df()
-        if isinstance(dfs, pl.DataFrame):
-            dfs = (dfs,)
+        df = self.df()
 
-        selection = list(self._alignment) if self._alignment is not None else [self]
+        aligned_cols = self._abs_aligned_cols
 
-        valid_caches = {
-            sel.record_type: self.db._get_valid_cache_set(sel.record_type)
-            for sel in selection
-            if isinstance(sel, Table)
+        rec_types = {
+            rec
+            for col_set_map in aligned_cols.values()
+            for rec in col_set_map.keys()
+            if issubclass(rec, Record)
         }
-        instance_maps = {
-            sel.record_type: self.db._get_instance_map(sel.record_type)
-            for sel in selection
-            if isinstance(sel, Table)
+        combi_types = {
+            frozenset(type_subset): dynamic_record_type(type_subset, token_hex(5))
+            for type_subset in chain.from_iterable(
+                combinations(rec_types, r) for r in range(2, len(rec_types) + 1)
+            )
         }
+
+        valid_caches = {rec: self.db._get_valid_cache_set(rec) for rec in rec_types}
+        instance_maps = {rec: self.db._get_instance_map(rec) for rec in rec_types}
+
+        dfs = [
+            df[[col_name for col_set in sel.values() for col_name in col_set.keys()]]
+            for sel in aligned_cols.values()
+        ]
 
         vals = []
         for rows in zip(*(df.iter_rows(named=True) for df in dfs)):
-            rows = cast(tuple[dict[str, Any], ...], rows)
-
             val_list = []
-            for sel, row in zip(selection, rows):
+            for (sel, col_set_map), row in zip(aligned_cols.items(), rows):
                 if isinstance(sel, Table):
-                    rec_type = sel.record_type
-                    assert issubclass(rec_type, Record)
+                    recs = {
+                        rec_type: rec_type(**rec_dict)
+                        for rec_type, col_set in col_set_map.items()
+                        if issubclass(rec_type, Record)
+                        and rec_type._is_complete_dict(
+                            rec_dict := {
+                                col.name: row[col_name]
+                                for col_name, col in col_set.items()
+                            }
+                        )
+                    }
 
-                    new_rec = rec_type(**row)
+                    if len(recs) > 1:
+                        rec_type = combi_types[frozenset(recs.keys())]
+                        new_rec = copy_and_override(
+                            rec_type, tuple(r for r in recs.values())
+                        )
+                    else:
+                        rec_type, new_rec = next(iter(recs.items()))
 
                     if new_rec._index in valid_caches[rec_type]:
                         rec = instance_maps[rec_type][new_rec._index]
@@ -1518,35 +1539,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
         return node_df, edge_df
-
-    @overload
-    def to_dfs(
-        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
-        kind: type[DfT],
-    ) -> tuple[DfT, ...]: ...
-
-    @overload
-    def to_dfs(
-        self: Data[tuple, Any, Any, Any, Any, DynBackendID],
-        kind: None = ...,
-    ) -> tuple[pl.DataFrame, ...]: ...
-
-    def to_dfs(
-        self: Data[Any, Any, Any, Any, Any, DynBackendID],
-        kind: type[DfT] | None = None,
-    ) -> DfT | tuple[DfT, ...]:
-        """Load tuple-valued dataset as tuple of dataframes."""
-        merged_df = self.df(kind=kind)
-
-        name_map = [
-            {col.fqn: col.name for col in col_set}
-            for col_set in self._abs_aligned_cols.values()
-        ]
-
-        return cast(
-            tuple[DfT, ...],
-            (merged_df[list(cols.keys())].rename(cols) for cols in name_map),
-        )
 
     def isin(
         self: Data[Any, Any, Any, None, Ctx, BaseT2], other: Iterable[ValT2] | slice
@@ -2660,42 +2652,63 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         }
 
     @cached_prop
-    def _abs_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
-        cols = (
-            [
-                v._prepend_ctx(self._table)
+    def _abs_aligned_cols(
+        self,
+    ) -> dict[
+        Data[Any, Any, Any, Any, Any, Any],
+        dict[type[ValT], dict[str, Value[Any, Any, Any, Any, BaseT]]],
+    ]:
+        return (
+            {
+                sel: {
+                    t: {
+                        (abs_col := col._prepend_ctx(self._table)).fqn: abs_col
+                        for col in col_set.values()
+                    }
+                    for t, col_set in sel._abs_aligned_cols[sel].items()
+                }
                 for sel in self._alignment
-                for v in sel._abs_cols.values()
-            ]
+            }
             if self._alignment is not None
-            else (
-                [
-                    copy_and_override(
-                        Value[Any, Any, Any, Any, BaseT],
-                        v,
-                        _db=self.db,
-                        _ctx=self._table,
-                    )
-                    for rec in self.target_record_types
-                    for v in rec._col_values.values()
-                ]
-                if len(self.target_record_types) > 0
-                else [
-                    cast(Value[Any, Any, Any, Any, BaseT], v)
-                    for v in (
-                        (self.relation_type.value._prepend_ctx(self._rel),)  # type: ignore
-                        if issubclass(self.relation_type, Item)
-                        else (self._prepend_ctx(self._ctx_table),)
-                    )
-                ]
-            )
+            else {
+                self: (
+                    {
+                        rec: {
+                            (
+                                abs_col := copy_and_override(
+                                    Value[Any, Any, Any, Any, BaseT],
+                                    col,
+                                    _db=self.db,
+                                    _ctx=self._table,
+                                )
+                            ): abs_col
+                            for col in rec._col_values.values()
+                        }
+                        for rec in self.target_record_types
+                    }
+                    if len(self.target_record_types) > 0
+                    else {
+                        self.target_base_type: {
+                            col.fqn: cast(Value[Any, Any, Any, Any, BaseT], col)
+                            for col in (
+                                (self.relation_type.value._prepend_ctx(self._rel),)  # type: ignore
+                                if issubclass(self.relation_type, Item)
+                                else (self._prepend_ctx(self._ctx_table),)
+                            )
+                        }
+                    }
+                )
+            }
         )
 
-        return (
-            {col.fqn: col for col in cols}
-            if self._alignment is not None or len(self.target_record_types) > 1
-            else {col.name: col for col in cols}
-        )
+    @cached_prop
+    def _abs_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
+        return {
+            col_name: col
+            for sel in self._abs_aligned_cols.values()
+            for col_set in sel.values()
+            for col_name, col in col_set.items()
+        }
 
     @cached_prop
     def _abs_idx_cols(self) -> dict[str, Value[Any, Any, Any, Any, BaseT]]:
@@ -2749,22 +2762,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 abs_idx_cols |= {col.fqn: col for col in abs_cols}
 
         return abs_idx_cols
-
-    @cached_prop
-    def _abs_aligned_cols(
-        self,
-    ) -> dict[
-        Data[Any, Any, Any, Any, Any, Any], set[Value[Any, Any, Any, Any, BaseT]]
-    ]:
-        return {
-            sel: {
-                copy_and_override(
-                    Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self._ctx
-                )
-                for v in sel._abs_cols.values()
-            }
-            for sel in (self._alignment if self._alignment is not None else [self])
-        }
 
     @cached_prop
     def _base_table_map(
@@ -3167,13 +3164,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                     if self.db.db_id == other_db.db_id:
                         for rec in other_db._record_types:
-                            self.db[rec]._mutate_from_sql(other_db[rec].query, mode)
+                            Table(_db=self.db, _type=rec)._mutate_from_sql(
+                                other_db[rec].query, mode
+                            )
                     else:
                         for rec in other_db._record_types:
                             value_table = self.db[rec]._df_to_table(
-                                other_db[rec].df(),
+                                Table(_db=other_db, _type=rec).df(),
                             )
-                            self.db[rec]._mutate_from_sql(
+                            Table(_db=self.db, _type=rec)._mutate_from_sql(
                                 value_table,
                                 mode,
                             )
@@ -3204,10 +3203,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
                 valid_caches -= base_idx_keys
             case Record():
-                cast(
-                    Data[Record, Any, CRUD, Any, Any, DynBackendID],
-                    self,
-                )._mutate_from_records({value._index: value}, mode)
+                assert isinstance(self, Table)
+                self._mutate_from_records({value._index: value}, mode)
                 valid_caches -= {value._index}
             case Iterable():
                 if not issubclass(self.target_type, Record):
@@ -3240,33 +3237,25 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                             if not isinstance(rec, Record)
                         }
 
-                    cast(
-                        Data[Record | None, Any, CRUD, Any, Any, DynBackendID],
-                        self,
-                    )._mutate_from_records(
+                    assert isinstance(self, Table)
+                    self._mutate_from_records(
                         records,
                         mode,
                     )
                     valid_caches -= {rec._index for rec in records.values()}
 
                     if len(record_ids) > 0:
-                        cast(
-                            Data[Record | None, Any, CRUD, Any, Any, DynBackendID],
-                            self,
-                        )._mutate_rels_from_rec_ids(record_ids, mode)
+                        self._mutate_rels_from_rec_ids(record_ids, mode)
                         valid_caches -= set(record_ids.values())
             case Hashable():
                 if not issubclass(self.target_type, Record):
                     self._mutate_from_values({None: cast(ValT2, value)}, mode)
                     valid_caches -= {self.keys()}
                 else:
-                    assert issubclass(
-                        self.relation_type, Record
+                    assert issubclass(self.relation_type, Record) and isinstance(
+                        self, Table
                     ), "Inserting via ids requires a relation."
-                    cast(
-                        Data[Record, Any, CRUD, Record, Ctx, DynBackendID],
-                        self,
-                    )._mutate_rels_from_rec_ids({value: value}, mode)
+                    self._mutate_rels_from_rec_ids({value: value}, mode)
                     valid_caches -= {value}
 
         return
@@ -3430,12 +3419,14 @@ class Table(
             )
             for s in remote_db._def_types:
                 if remote_db.db_id == self.db.db_id:
-                    self.db[s]._mutate_from_sql(remote_db[s].query, "upsert")
+                    Table(_db=self.db, _type=s)._mutate_from_sql(
+                        remote_db[s].query, "upsert"
+                    )
                 else:
                     value_table = self._df_to_table(
                         remote_db[s].df(),
                     )
-                    self.db[s]._mutate_from_sql(
+                    Table(_db=self.db, _type=s)._mutate_from_sql(
                         value_table,
                         "upsert",
                     )
@@ -5275,24 +5266,25 @@ x = DynRecord
 
 
 def dynamic_record_type(
-    base: type[RecT2],
+    base: type[RecT2] | tuple[type[RecT2], ...],
     name: str,
     props: Iterable[Data[Any, Any, Any, Any, Any, Any]] = [],
     src_module: ModuleType | None = None,
     extra_attrs: dict[str, Any] = {},
 ) -> type[RecT2]:
     """Create a dynamically defined record type."""
+    base = base if isinstance(base, tuple) else (base,)
     return cast(
         type[RecT2],
         new_class(
             name,
-            (base,),
+            base,
             None,
             lambda ns: ns.update(
                 {
                     **{p.name: p for p in props},
                     "__annotations__": {p.name: p._generic_type for p in props},
-                    "_src_mod": src_module or base._src_mod or getmodule(base),
+                    "_src_mod": src_module or base[0]._src_mod or getmodule(base[0]),
                     **extra_attrs,
                 }
             ),
