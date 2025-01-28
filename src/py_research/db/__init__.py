@@ -5,11 +5,11 @@ from .databases import Array as Array
 from .databases import BackLink as BackLink
 from .databases import Data as Data
 from .databases import DataBase as DataBase
-from .databases import IndexedRelation as IndexedRelation
+from .databases import Entity as Entity
 from .databases import Link as Link
 from .databases import Record as Record
-from .databases import RecUUID as RecUUID
 from .databases import Relation as Relation
+from .databases import RelIndex as RelIndex
 from .databases import Schema as Schema
 from .databases import Table as Table
 from .databases import Value as Value

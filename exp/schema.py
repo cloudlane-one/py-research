@@ -8,9 +8,9 @@ from typing import Literal
 from py_research.db import (
     Array,
     BackLink,
+    Entity,
     Link,
     Record,
-    RecUUID,
     Relation,
     Schema,
     Table,
@@ -39,7 +39,7 @@ class Search(Record[str], TestSchema):
 type Assignment = Relation["User", "Task"]
 
 
-class Task(RecUUID):
+class Task(Entity):
     """Link search to a result."""
 
     name: Value[str]
@@ -48,7 +48,7 @@ class Task(RecUUID):
     status: Value[Literal["todo", "done"]]
 
 
-class User(RecUUID):
+class User(Entity):
     """A generic user."""
 
     name: Value[str]
@@ -76,15 +76,15 @@ class Project(Record[int]):
     end: Value[date]
     status: Value[Literal["planned", "started", "done"]]
     org: Link[Organization]
-    tasks: BackLink[Task] = BackLink(link=Task.project)
+    tasks: BackLink[Task] = BackLink(to=Task.project)
     members: Table[User, Membership]
 
 
-class Organization(RecUUID):
+class Organization(Entity):
     """A generic organization record."""
 
     name: Value[str]
     address: Value[str]
     city: Value[str]
-    projects: BackLink[Project] = BackLink(link=Project.org, default=True)
+    projects: BackLink[Project] = BackLink(to=Project.org, default=True)
     countries: Array[str, int]

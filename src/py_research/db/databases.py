@@ -9,7 +9,7 @@ from decimal import Decimal
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
-from itertools import groupby
+from itertools import groupby, product
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
@@ -217,7 +217,7 @@ RwT = TypeVar("RwT", bound=C | R, default=RU, covariant=True)
 class Ctx(Generic[ParT]):
     """Context record of a dataset."""
 
-    record_type: type[ParT]
+    record_types: set[type[ParT]]
 
 
 CtxT = TypeVar("CtxT", bound="Ctx| None", covariant=True, default=None)
@@ -275,7 +275,9 @@ DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
 Params = ParamSpec("Params")
 
 
-type LinkItem = Table[Record | None, None, Any, Any, Any, Any]
+type LinkItem = Link[Record | None, Any, Any, Any] | BackLink[
+    Record, Any, Any, Any, Any
+]
 
 type PropPath[LeafT] = tuple[Data[LeafT, Any, Any, None, None, Any]] | tuple[
     Table[Record, None, Any, Any, None, Any],
@@ -338,7 +340,7 @@ def _get_pl_schema(
         name: (
             (match, col.value_type)
             if match is not None
-            else (_pl_type_map.get(col.target_type), col.value_type)
+            else (_pl_type_map.get(col.target_base_type), col.value_type)
         )
         for name, (match, col) in exact_matches.items()
     }
@@ -509,6 +511,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         str
         | SingleTypeDef[Data[ValT, Any, Any, Any, Any, Any]]
         | SingleTypeDef[ValT]
+        | set[type[ValT]]
+        | UnionType
         | None
     ) = None
     _typevar_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
@@ -521,7 +525,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         | list[tuple[Hashable, ...]]
         | tuple[slice | Hashable, ...]
     ] = field(default_factory=list)
-    _tuple_selection: tuple[Data[Any, Any, Any, Any, Any, BaseT], ...] | None = None
+    _alignment: tuple[Data[Any, Any, Any, Any, Any, BaseT], ...] | None = None
 
     _sql_col: sqla.ColumnElement | None = None
     _sql_from: sqla_sel.NamedFromClause | None = None
@@ -545,16 +549,28 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return self._generic_type
 
     @cached_prop
-    def target_type(self) -> type[ValT]:
-        """Value type of this dataset."""
-        return self._typedef_to_type(self.value_type)
+    def target_types(self) -> set[type[ValT]]:
+        """Target value types of this dataset (>1 in case of union)."""
+        return self._typedef_to_typeset(self.value_type)
 
     @cached_prop
-    def record_type(self: Data[RecT2 | None, Any, Any, Any, Any, Any]) -> type[RecT2]:
-        """Record target type of this dataset."""
-        t = self.target_type
-        assert issubclass(t, Record)
-        return t
+    def target_base_type(self) -> type:
+        """Common base type of the target types."""
+        return get_lowest_common_base(
+            self._typedef_to_typeset(self.value_type, remove_null=True)
+        )
+
+    @cached_prop
+    def target_record_types(self) -> set[type[Record]]:
+        """Target value types of this dataset (>1 in case of union)."""
+        types: set[type[Record | Schema]] = self._typedef_to_typeset(
+            self.value_type, remove_null=True
+        )
+        return {
+            r
+            for t in types
+            for r in ([t] if issubclass(t, Record) else t._schema_types)
+        }
 
     @cached_prop
     def relation_type(self) -> type[RelT]:
@@ -563,7 +579,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if isinstance(typearg, int):
             typearg = self._hint_to_typedef(self._generic_args[typearg])
 
-        rec_type = self._typedef_to_type(typearg)
+        rec_types = self._typedef_to_typeset(typearg)
+        if len(rec_types) != 1:
+            return cast(type[RelT], NoneType)
+
+        rec_type = next(iter(rec_types))
         if not issubclass(rec_type, Record):
             return cast(type[RelT], NoneType)
 
@@ -579,6 +599,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self._db = db
         return db
 
+    @cached_prop
+    def path(self) -> PropPath[ValT]:
+        """Relational path of this dataset."""
+        if self._ctx_table is None:
+            return (cast(Data[ValT, Any, Any, None, None, Any], self),)
+
+        return cast(PropPath[ValT], (*self._ctx_table.path, self))
+
     @property
     def ctx(
         self: Data[Any, Any, Any, Any, Ctx[RecT2], Any]
@@ -588,16 +616,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return (
             cast(Table[RecT2, Any, Any, Any, Any, BaseT], self._ctx)
             if isinstance(self._ctx, Data)
-            else Table(_db=self.db, _type=Table[self._ctx.record_type])
+            else Table(_db=self.db, _type=self._ctx.record_types)
         )
-
-    @cached_prop
-    def path(self) -> PropPath[ValT]:
-        """Relational path of this dataset."""
-        if self._ctx_table is None:
-            return (cast(Data[ValT, Any, Any, None, None, Any], self),)
-
-        return cast(PropPath[ValT], (*self._ctx_table.path, self))
 
     @property
     def rel(
@@ -612,17 +632,17 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Path-aware accessor to the record type of this dataset."""
         return cast(
             type[RecT2],
-            new_class(
-                self.record_type.__name__,
-                (self.record_type,),
-                None,
-                lambda ns: ns.update(
-                    {
-                        "_ctx": self,
-                        "_derivate": True,
-                        "_src_mod": getmodule(self.record_type),
-                    }
+            dynamic_record_type(
+                Record,
+                f"{self.name}.x",
+                props=reduce(
+                    set.intersection,
+                    (set(t._props.values()) for t in self.target_record_types),
                 ),
+                extra_attrs={
+                    "_ctx": self,
+                    "_derivate": True,
+                },
             ),
         )
 
@@ -630,8 +650,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def fqn(self) -> str:
         """Fully qualified name of this dataset based on relational path."""
         if self._ctx_table is None:
-            if issubclass(self.target_type, Record):
-                return self.target_type._fqn
+            if issubclass(self.target_base_type, Record):
+                return self.target_base_type._fqn
             else:
                 return self.name
 
@@ -641,14 +661,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             fqn += f"[{gen_str_hash(self._filters, length=6)}]"
 
         return fqn
-
-    @property
-    def tuple_selection(
-        self: Data[tuple, Any, Any, Any, Any, Any]
-    ) -> tuple[Data[Any, Any, Any, Any, Any, Any], ...]:
-        """Tuple-selection of data in the sub-grpah, if any."""
-        assert self._tuple_selection is not None
-        return self._tuple_selection
 
     @cached_prop
     def select(
@@ -709,9 +721,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if self._sql_col is not None:
             return self._sql_col
 
+        assert self._table is not None
+
         col = sqla.column(
-            self.name,
-            _selectable=self._table.sql_from if self._table is not None else None,
+            self.fqn if len(self._table.target_record_types) > 1 else self.name,
+            _selectable=self._table.sql_from,
         )
         setattr(col, "_data", self)
 
@@ -723,43 +737,99 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> sqla_sel.NamedFromClause:
         """Recursively join all bases of this record to get the full data."""
         if self.db.backend_type == "excel-file":
-            self.db._load_from_excel(
-                {self.record_type, *self.record_type._record_superclasses}
-            )
+            self.db._load_from_excel(self._all_record_base_types)
 
         if self._sql_from is not None:
             return self._sql_from
 
-        base_table = self._gen_sql_base_table("read")
+        rec_query_map: dict[type[Record], sqla.Select | sqla.Table] = {}
 
-        if len(self.record_type._record_superclasses) == 0:
-            table = base_table.alias(self.fqn)
-        else:
-            table = base_table
-            cols = {col.name: col for col in base_table.columns}
-            for superclass in self.record_type._record_superclasses:
-                superclass_table = Table(_db=self.db, _type=Table[superclass]).sql_from
-                cols |= {col.key: col for col in superclass_table.columns}
+        for rec in self.target_record_types:
+            base_table = self.db._get_sql_base_table(rec, "read")
 
-                table = table.join(
-                    superclass_table,
+            if len(rec._record_superclasses) == 0:
+                rec_query_map[rec] = base_table
+            else:
+                query = base_table.select()
+                cols = {col.name: col for col in base_table.columns}
+
+                for superclass in rec._record_superclasses:
+                    superclass_table = self.db._get_sql_base_table(superclass, "read")
+                    cols |= {col.key: col for col in superclass_table.columns}
+
+                    query = query.join(
+                        superclass_table,
+                        reduce(
+                            sqla.and_,
+                            (
+                                base_table.c[pk_name] == superclass_table.c[pk_name]
+                                for pk_name in rec._pk_values
+                            ),
+                        ),
+                    )
+
+                query = query.with_only_columns(
+                    *(col.label(col_name) for col_name, col in cols.items())
+                )
+                rec_query_map[rec] = query
+
+        def _union(
+            union_stage: tuple[type[Record] | None, sqla.Select],
+            next_union: tuple[type[Record], sqla.Select | sqla.Table],
+        ) -> tuple[type[Record] | None, sqla.Select]:
+            left_rec, left_table = union_stage
+            right_rec, right_table = next_union
+
+            right_table = right_table.select().with_only_columns(
+                *(
+                    right_table.c[col.name].label(col.fqn)
+                    for col in right_rec._col_values.values()
+                )
+            )
+
+            if (
+                left_rec is not None
+                and len(left_rec._pk_values) == len(right_rec._pk_values)
+                and all(
+                    hash(pk1) == hash(pk2)
+                    for pk1, pk2 in zip(
+                        left_rec._pk_values.values(), right_rec._pk_values.values()
+                    )
+                )
+            ):
+                return left_rec, left_table.join(
+                    right_table.alias(),
                     reduce(
                         sqla.and_,
                         (
-                            base_table.c[pk_name] == superclass_table.c[pk_name]
-                            for pk_name in self.record_type._pk_values
+                            left_table.c[pk1] == right_table.c[pk2]
+                            for pk1, pk2 in left_rec._pk_values
                         ),
                     ),
                 )
+            else:
+                return None, left_table.union().select()
 
-            table = (
-                sqla.select(*(col.label(col_name) for col_name, col in cols.items()))
-                .select_from(table)
-                .alias(self.fqn)
+        if len(rec_query_map) > 1:
+            rec_query_items = list(rec_query_map.items())
+            first_rec, first_select = rec_query_items[0]
+            first: tuple[type[Record] | None, sqla.Select] = (
+                first_rec,
+                first_select.select().with_only_columns(
+                    *(
+                        first_select.c[col.name].label(col.fqn)
+                        for col in first_rec._col_values.values()
+                    )
+                ),
             )
 
-        self._sql_from = table
-        return table
+            _, select = reduce(_union, rec_query_items[1:], first)
+            fromclause = select.alias(self.fqn)
+        else:
+            fromclause = list(rec_query_map.values())[0].alias(self.fqn)
+
+        self._sql_from = fromclause
+        return fromclause
 
     @cached_prop
     def sql_joins(
@@ -780,13 +850,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         sqla.and_,
                         (
                             (
-                                target[fk] == _parent[pk]
-                                for fk, pk in target.link._fk_map.items()
+                                fk.sql_col == pk.sql_col
+                                for fk_map in target.link._abs_fk_maps.values()
+                                for fk, pk in fk_map.items()
                             )
                             if isinstance(target, BackLink)
                             else (
                                 _parent[fk] == target[pk]
-                                for fk, pk in target._fk_map.items()
+                                for fk_map in target._abs_fk_maps.values()
+                                for fk, pk in fk_map.items()
                             )
                         ),
                     ),
@@ -868,9 +940,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if isinstance(dfs, pl.DataFrame):
             dfs = (dfs,)
 
-        selection = (
-            list(self._tuple_selection) if self._tuple_selection is not None else [self]
-        )
+        selection = list(self._alignment) if self._alignment is not None else [self]
 
         valid_caches = {
             sel.record_type: self.db._get_valid_cache_set(sel.record_type)
@@ -1090,8 +1160,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
             merged_df = merged_df.sort(sort_cols)
 
-            if not index_only and not without_index and isinstance(self, Table):
-                rec_type: type[Record] = self.record_type
+            if (
+                not index_only
+                and not without_index
+                and len(self.target_record_types) == 1
+            ):
+                rec_type = self.target_record_types.pop()
                 drop_fqns = {
                     copy_and_override(Value, pk, _ctx=self).fqn
                     for pk in rec_type._pk_values.values()
@@ -1319,13 +1393,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
         )
         node_tables = [db[n] for n in nodes]
-        node_types = [n if isinstance(n, type) else n.record_type for n in nodes]
+        node_types = {
+            t
+            for n in nodes
+            for t in ([n] if isinstance(n, type) else n.target_record_types)
+        }
 
         # Concat all node tables into one.
         node_dfs = [
-            n.df(kind=pd.DataFrame, force_fqns=True)
-            .reset_index()
-            .assign(table=n.target_type._default_table_name())
+            n.df(kind=pd.DataFrame, force_fqns=True).reset_index().assign(table=n.fqn)
             for n in node_tables
         ]
         node_df = (
@@ -1362,68 +1438,75 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 ],
                 (rel._from, rel._to),  # type: ignore
             )
-            if left.target_type in node_types and right.target_type in node_types:
+            if (left.target_record_types & node_types) and (
+                right.target_record_types & node_types
+            ):
                 undirected_edges[rel].add((left, right))
 
         direct_edge_dfs = [
             node_df.loc[node_df["table"] == str(parent._default_table_name())]
             .rename(columns={"node_id": "source"})
             .merge(
-                node_df.loc[
-                    node_df["table"] == str(link.record_type._default_table_name())
-                ],
-                left_on=[c.fqn for c in link._fk_map.keys()],
-                right_on=[c.fqn for c in link._fk_map.values()],
+                node_df.loc[node_df["table"] == str(rec_type._default_table_name())],
+                left_on=[c.fqn for c in fk_map.keys()],
+                right_on=[c.fqn for c in fk_map.values()],
             )
             .rename(columns={"node_id": "target"})[["source", "target"]]
             .assign(
-                ltr=",".join(c.name for c in link._fk_map.keys()),
+                ltr=",".join(c.name for c in fk_map.keys()),
                 rtl=None,
             )
             for parent, link in directed_edges
+            for rec_type, fk_map in link._abs_fk_maps.items()
         ]
 
         rel_edge_dfs = []
         for assoc_table, rels in undirected_edges.items():
             for left, right in rels:
-                rel_df = (
-                    self[assoc_table]
-                    .df(kind=pd.DataFrame, force_fqns=True)
-                    .reset_index()
-                )
+                for left_target, right_target in product(
+                    left.target_record_types, right.target_record_types
+                ):
+                    left_fk_map = left._abs_fk_maps[left_target]
+                    right_fk_map = right._abs_fk_maps[right_target]
 
-                left_merged = rel_df.merge(
-                    node_df.loc[
-                        node_df["table"] == str(left.record_type._default_table_name())
-                    ][[*(c.fqn for c in left._fk_map.values()), "node_id"]],
-                    left_on=[c.fqn for c in left._fk_map.keys()],
-                    right_on=[c.fqn for c in left._fk_map.values()],
-                    how="inner",
-                ).rename(columns={"node_id": "source"})
-
-                both_merged = left_merged.merge(
-                    node_df.loc[
-                        node_df["table"] == str(right.record_type._default_table_name())
-                    ][[*(c.fqn for c in right._fk_map.values()), "node_id"]],
-                    left_on=[c.fqn for c in right._fk_map.keys()],
-                    right_on=[c.fqn for c in right._fk_map.values()],
-                    how="inner",
-                ).rename(columns={"node_id": "target"})[
-                    list(
-                        {
-                            "source",
-                            "target",
-                            *(c.fqn for c in assoc_table._col_values.values()),
-                        }
+                    rel_df = (
+                        self[assoc_table]
+                        .df(kind=pd.DataFrame, force_fqns=True)
+                        .reset_index()
                     )
-                ]
 
-                rel_edge_dfs.append(
-                    both_merged.assign(
-                        ltr=",".join(c.name for c in right._fk_map.keys()),
-                        rtl=",".join(c.name for c in left._fk_map.keys()),
+                    left_merged = rel_df.merge(
+                        node_df.loc[
+                            node_df["table"] == str(left_target._default_table_name())
+                        ][[*(c.fqn for c in left_fk_map.values()), "node_id"]],
+                        left_on=[c.fqn for c in left_fk_map.keys()],
+                        right_on=[c.fqn for c in left_fk_map.values()],
+                        how="inner",
+                    ).rename(columns={"node_id": "source"})
+
+                    both_merged = left_merged.merge(
+                        node_df.loc[
+                            node_df["table"] == str(right_target._default_table_name())
+                        ][[*(c.fqn for c in right_fk_map.values()), "node_id"]],
+                        left_on=[c.fqn for c in right_fk_map.keys()],
+                        right_on=[c.fqn for c in right_fk_map.values()],
+                        how="inner",
+                    ).rename(columns={"node_id": "target"})[
+                        list(
+                            {
+                                "source",
+                                "target",
+                                *(c.fqn for c in assoc_table._col_values.values()),
+                            }
+                        )
+                    ]
+
+                    rel_edge_dfs.append(
+                        both_merged.assign(
+                            ltr=",".join(c.name for c in right_fk_map.keys()),
+                            rtl=",".join(c.name for c in left_fk_map.keys()),
+                        )
                     )
-                )
 
         # Concat all edges into one table.
         edge_df = pd.concat(
@@ -1457,7 +1540,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         name_map = [
             {col.fqn: col.name for col in col_set}
-            for col_set in self._abs_col_sets.values()
+            for col_set in self._abs_aligned_cols.values()
         ]
 
         return cast(
@@ -1907,7 +1990,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self._mutate([], mode="delete")
 
     @overload
-    def __irshift__(
+    def __ilshift__(
         self: Data[
             Record[KeyT2] | None,
             Any,
@@ -1920,7 +2003,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
-    def __irshift__(
+    def __ilshift__(
         self: Data[
             Record[*KeyTt2] | None,
             Any,
@@ -1936,7 +2019,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
-    def __irshift__(
+    def __ilshift__(
         self: Data[
             ValT2,
             Any,
@@ -1948,7 +2031,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         other: Data[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
-    def __irshift__(
+    def __ilshift__(
         self: Data[Any, Any, RU, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
@@ -1960,7 +2043,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
     @overload
-    def __ilshift__(
+    def __ixor__(
         self: Data[
             Record[KeyT2] | None,
             Any,
@@ -1973,7 +2056,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
-    def __ilshift__(
+    def __ixor__(
         self: Data[
             Record[*KeyTt2] | None,
             Any,
@@ -1989,7 +2072,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
     @overload
-    def __ilshift__(
+    def __ixor__(
         self: Data[
             ValT2,
             Any,
@@ -2001,7 +2084,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         other: Data[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]: ...
 
-    def __ilshift__(
+    def __ixor__(
         self: Data[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Data[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
     ) -> Data[ValT, IdxT, CrudT, RelT, CtxT, BaseT]:
@@ -2163,17 +2246,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return copy_and_override(
             Data[tuple, IdxT, CrudT, RelT, CtxT, BaseT],
             self,
-            _tuple_selection=(
-                *(
-                    self._tuple_selection
-                    if self._tuple_selection is not None
-                    else [self]
-                ),
-                *(
-                    other._tuple_selection
-                    if other._tuple_selection is not None
-                    else [other]
-                ),
+            _alignment=(
+                *(self._alignment if self._alignment is not None else [self]),
+                *(other._alignment if other._alignment is not None else [other]),
             ),
         )
 
@@ -2185,14 +2260,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @overload
     def __get__(
-        self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
+        self: Data[Any, Any, Any, RelIndex[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: None,
         owner: type[RecT4],
     ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
 
     @overload
     def __get__(
-        self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
+        self: Data[Any, Any, Any, RelIndex[Any, Any, KeyT2], Any, Any],
         instance: None,
         owner: type[RecT4],
     ) -> Data[ValT, Idx[KeyT2], CrudT, RelT, Ctx[RecT4], Symbolic]: ...
@@ -2227,14 +2302,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
     @overload
     def __get__(
-        self: Data[Any, Any, Any, IndexedRelation[Any, Any, tuple[*KeyTt2]], Any, Any],
+        self: Data[Any, Any, Any, RelIndex[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
     ) -> Data[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
 
     @overload
     def __get__(
-        self: Data[Any, Any, Any, IndexedRelation[Any, Any, KeyT2], Any, Any],
+        self: Data[Any, Any, Any, RelIndex[Any, Any, KeyT2], Any, Any],
         instance: RecT4,
         owner: type[RecT4],
     ) -> Data[ValT, Idx[KeyT2], CrudT, RelT, Ctx[RecT4], DynBackendID]: ...
@@ -2270,7 +2345,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[Any, Any, Any, Any, Any, Any] | ValT:
         """Get the value of this dataset when used as property."""
         owner = (
-            self._symbolic_ctx.record_type if self._symbolic_ctx is not None else owner
+            self._ctx_table.target_base_type
+            if isinstance(self._ctx_table, Data)
+            else owner
         )
 
         if (
@@ -2382,7 +2459,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 self.relation_type,
                 self._ctx_table,
                 self._filters,
-                self._tuple_selection,
+                self._alignment,
             )
         )
 
@@ -2408,10 +2485,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def _generic_type(self) -> SingleTypeDef | UnionType:
         """Resolve the generic property type reference."""
-        hint = self._type or Data
-        generic = self._hint_to_typedef(hint)
+        if isinstance(self._type, set):
+            return Union[*self._type]
 
-        return generic
+        hint = self._type or Data
+        return self._hint_to_typedef(hint)
 
     @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef, ...]:
@@ -2425,22 +2503,24 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return args
 
     @cached_prop
-    def _symbolic_ctx(self) -> CtxT:
-        """Context record type."""
-        return (
-            cast(CtxT, Ctx(self._ctx.record_type))
-            if isinstance(self._ctx, Data)
-            else self._ctx if self._ctx else cast(CtxT, None)
-        )
+    def _all_record_base_types(self) -> set[type[Record]]:
+        return {
+            base_rec
+            for rec in self.target_record_types
+            for base_rec in [
+                rec,
+                *rec._record_superclasses,
+            ]
+        }
 
     @cached_prop
     def _ctx_table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT] | None:
         """Context table."""
         return (
-            self._ctx
-            if isinstance(self._ctx, Table)
+            cast(Table[Record | None, Any, Any, Any, Any, BaseT], self._ctx)
+            if isinstance(self._ctx, Data)
             else (
-                Table(_db=self.db, _type=Table[self._ctx.record_type])
+                Table(_db=self.db, _type=self._ctx.record_types)
                 if self._ctx is not None
                 else None
             )
@@ -2449,30 +2529,13 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def _ctx_module(self) -> ModuleType | None:
         """Module of the context record type."""
-        if self._symbolic_ctx is None:
+        if self._ctx_table is None:
             return None
 
-        assert issubclass(self._symbolic_ctx.record_type, Record)
-        return self._symbolic_ctx.record_type._src_mod or getmodule(self._symbolic_ctx)
-
-    @cached_prop
-    def _owner_type(self) -> type[Record] | None:
-        """Get the original owner type of the property."""
-        if self._symbolic_ctx is None:
-            return None
-
-        direct_owner = self._symbolic_ctx.record_type
-        assert issubclass(direct_owner, Record)
-        all_bases = [
-            direct_owner,
-            *direct_owner._record_superclasses,
-        ]
-
-        original_owners = [
-            base for base in all_bases if self.name in base._get_class_props()
-        ]
-        assert len(original_owners) == 1
-        return original_owners[0]
+        assert issubclass(self._ctx_table.target_base_type, Record)
+        return self._ctx_table.target_base_type._src_mod or getmodule(
+            self._ctx_table.target_base_type
+        )
 
     @cached_prop
     def _backlink(
@@ -2485,19 +2548,21 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if self._ctx_table is None:
             return None
 
-        rec_type = (
-            self.relation_type
-            if is_subtype(self.relation_type, Record)
-            else self.record_type if isinstance(self, Table) else None
+        rec_types = cast(
+            set[type[RecT2 | RecT3]],
+            (
+                {self.relation_type}
+                if is_subtype(self.relation_type, Record)
+                else self.target_record_types if isinstance(self, Table) else set()
+            ),
         )
-        if rec_type is None:
-            return None
 
         links = [
-            r
-            for r in rec_type._links.values()
-            if isinstance(r, Link)
-            and issubclass(self._ctx_table.record_type, r.record_type)
+            rel
+            for rec in rec_types
+            for rel in rec._links.values()
+            if isinstance(rel, Link)
+            and issubclass(self._ctx_table.target_base_type, rel.target_base_type)
         ]
 
         if len(links) != 1:
@@ -2506,20 +2571,20 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         index_by = self.index_by if isinstance(self, Table) else None
 
         link = links[0]
-        return BackLink[RecT2 | RecT3, Any, Any, RecT4, BaseT](
+        return BackLink(
             _db=self.db,
             _ctx=self._ctx,
             _name=(
                 self.name
-                if issubclass(rec_type, Item)
+                if issubclass(self.relation_type, Item)
                 else (
                     f"{self.name}._rel"
-                    if issubclass(rec_type, Relation)
+                    if issubclass(self.relation_type, Relation)
                     else gen_str_hash((link._ctx, link._name), 6)
                 )
             ),
-            _type=BackLink[cast(type[RecT2 | RecT3], rec_type)],
-            link=cast(Link[Any, Any, Any, Any], link),
+            _type=rec_types,
+            to=cast(Link[Any, Any, Any, Any], link),
             index_by=index_by,
         )
 
@@ -2533,18 +2598,21 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if self._ctx_table is None:
             return None
 
-        rec_type = (
-            self.relation_type
-            if is_subtype(self.relation_type, Record)
-            else self.record_type if isinstance(self, Table) else None
+        rec_types = cast(
+            set[type[RecT2 | RecT3]],
+            (
+                {self.relation_type}
+                if is_subtype(self.relation_type, Record)
+                else self.target_record_types if isinstance(self, Table) else set()
+            ),
         )
-        if rec_type is None:
-            return None
 
         links = [
-            r
-            for r in rec_type._links.values()
-            if isinstance(r, Link) and issubclass(self.target_type, r.record_type)
+            rel
+            for rec in rec_types
+            for rel in rec._links.values()
+            if isinstance(rel, Link)
+            and issubclass(self._ctx_table.target_base_type, rel.target_base_type)
         ]
 
         if len(links) != 1:
@@ -2562,12 +2630,12 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     def _table(self) -> Table[Record | None, Any, Any, Any, Any, BaseT] | None:
         if isinstance(self, Table):
             return self
-        if issubclass(self.target_type, Record):
-            return Table(_db=self.db, _type=self.target_type)
         if self._backlink is not None:
             return self._backlink
         if self._ctx_table is not None:
             return self._ctx_table
+        if len(self.target_record_types) > 0:
+            return Table(_db=self.db, _type=self.target_record_types)
 
         return None
 
@@ -2596,18 +2664,22 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         cols = (
             [
                 v._prepend_ctx(self._table)
-                for sel in self._tuple_selection
+                for sel in self._alignment
                 for v in sel._abs_cols.values()
             ]
-            if self._tuple_selection is not None
+            if self._alignment is not None
             else (
                 [
                     copy_and_override(
-                        Value[Any, Any, Any, Any, BaseT], v, _db=self.db, _ctx=self
+                        Value[Any, Any, Any, Any, BaseT],
+                        v,
+                        _db=self.db,
+                        _ctx=self._table,
                     )
-                    for v in self.target_type._col_values.values()
+                    for rec in self.target_record_types
+                    for v in rec._col_values.values()
                 ]
-                if has_type(self, Table[Record, Any, Any, Any, Any, Any])
+                if len(self.target_record_types) > 0
                 else [
                     cast(Value[Any, Any, Any, Any, BaseT], v)
                     for v in (
@@ -2621,7 +2693,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         return (
             {col.fqn: col for col in cols}
-            if issubclass(self.target_type, tuple)
+            if self._alignment is not None or len(self.target_record_types) > 1
             else {col.name: col for col in cols}
         )
 
@@ -2641,13 +2713,16 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         pk,
                         _ctx=node,
                     ).fqn: link_node[pk]
-                    for pk in link_node._fk_map.values()
+                    for target_type, fk_map in link_node._abs_fk_maps.items()
+                    if target_type in node.target_record_types
+                    for pk in fk_map.values()
                 }
             elif isinstance(link_node, Table) and not issubclass(
                 node.relation_type, Relation
             ):
                 cols = []
-                rec_type: type[Record] = link_node.record_type
+                rec_type = link_node.target_base_type
+                assert issubclass(rec_type, Record)
 
                 if link_node.index_by is not None:
                     cols = (
@@ -2657,8 +2732,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                     )
                 elif issubclass(rec_type, Item):
                     cols = [rec_type.idx]  # type: ignore
-                elif issubclass(rec_type, IndexedRelation):
-                    cols = [rec_type._rel_id]  # type: ignore
+                elif issubclass(rec_type, RelIndex):
+                    cols = [rec_type._rel_idx]  # type: ignore
                 else:
                     cols = rec_type._pk_values.values()
 
@@ -2676,8 +2751,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return abs_idx_cols
 
     @cached_prop
-    def _abs_col_sets(
-        self: Data[tuple, Any, Any, Any, Any, Any]
+    def _abs_aligned_cols(
+        self,
     ) -> dict[
         Data[Any, Any, Any, Any, Any, Any], set[Value[Any, Any, Any, Any, BaseT]]
     ]:
@@ -2688,26 +2763,23 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 )
                 for v in sel._abs_cols.values()
             }
-            for sel in self.tuple_selection
+            for sel in (self._alignment if self._alignment is not None else [self])
         }
 
     @cached_prop
     def _base_table_map(
         self: Data[Record | None, Any, Any, Any, Any, Any],
     ) -> dict[
-        Data[Record | None, Any, Any, Any, Any, Any],
+        type[Record],
         dict[str, Value[Any, Any, Any, Any, BaseT]],
     ]:
         return {
-            self.db[base_rec]: {
+            rec: {
                 v_name: v
                 for v_name, v in (*self._abs_idx_cols.items(), *self._abs_cols.items())
-                if v.name in base_rec._values
+                if v.name in rec._values
             }
-            for base_rec in [
-                self.record_type,
-                *self.record_type._record_superclasses,
-            ]
+            for rec in self._all_record_base_types
         }
 
     @cached_prop
@@ -2762,26 +2834,26 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         ], merge
 
     @cached_prop
-    def _abs_froms(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
+    def _abs_tables(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
         return (
             [
                 v._prepend_ctx(self._table)
-                for sel in self._tuple_selection
-                for v in sel._abs_froms
+                for sel in self._alignment
+                for v in sel._abs_tables
             ]
-            if self._tuple_selection is not None
+            if self._alignment is not None
             else [self._table] if self._table is not None else []
         )
 
     @cached_prop
-    def _total_froms(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
-        return self._abs_froms + self._abs_filters[1]
+    def _total_tables(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
+        return self._abs_tables + self._abs_filters[1]
 
     @cached_prop
     def _total_join_dict(self) -> JoinDict:
         tree: JoinDict = {}
 
-        for rel in self._total_froms:
+        for rel in self._total_tables:
             subtree = tree
             for node in rel._abs_link_path.keys():
                 if node not in subtree:
@@ -2789,43 +2861,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 subtree = subtree[node]
 
         return tree
-
-    @cached_prop
-    def _fk_map(self: Data[Record | None, Idx[()], Any, None, Ctx, Any]) -> bidict[
-        Value[Any, Any, Any, Any, Symbolic],
-        Value[Any, Any, Any, Any, Symbolic],
-    ]:
-        """Map source link foreign keys to target cols."""
-        fks = self.fks if isinstance(self, Link) else None
-
-        match fks:
-            case None:
-                return bidict(
-                    {
-                        Value[Any, Any, Any, Any, Symbolic](
-                            _name=f"{self.name}_{pk.name}",
-                            _type=pk._type,
-                            init=False,
-                            index=self.index if isinstance(self, Link) else False,
-                            primary_key=(
-                                self.primary_key if isinstance(self, Link) else False
-                            ),
-                            _ctx=Ctx(self.ctx.record_type),
-                        ): pk
-                        for pk in self.record_type._pk_values.values()
-                    }
-                )
-            case dict():
-                return bidict({fk: pk for fk, pk in fks.items()})
-            case Value() | list():
-                fks = fks if isinstance(fks, list) else [fks]
-
-                pks = [
-                    getattr(self.record_type, name)
-                    for name in self._symbolic_ctx.record_type._pk_values
-                ]
-
-                return bidict(dict(zip(fks, pks)))
 
     def _hint_to_typedef(
         self,
@@ -2860,63 +2895,70 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         return cast(SingleTypeDef, typedef)
 
-    def _typedef_to_type(
-        self, hint: SingleTypeDef | UnionType | None, remove_null: bool = False
-    ) -> type:
-        if hint is None:
-            return NoneType
-
-        if isinstance(hint, type):
-            return hint
-
-        typedef = (
-            self._hint_to_typedef(hint.__value__)
-            if isinstance(hint, TypeAliasType)
-            else self._hint_to_typedef(hint) if isinstance(hint, TypeVar) else hint
-        )
+    def _typedef_to_typeset(
+        self, typedef: SingleTypeDef | UnionType | None, remove_null: bool = False
+    ) -> set[type]:
+        typedef_set: set[SingleTypeDef | UnionType | None] = {typedef}
 
         if isinstance(typedef, UnionType):
-            union_types: set[type] = {
+            typedef_set = {
                 get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
             }
 
             if remove_null:
-                union_types = {
+                typedef_set &= {
                     t
-                    for t in union_types
-                    if t is not None and not issubclass(t, NoneType)
+                    for t in typedef_set
+                    if t is not None and not is_subtype(t, NoneType)
                 }
-                assert len(union_types) == 1
-                return next(iter(union_types))
 
-            typedef = get_lowest_common_base(union_types)
+        typeset: set[type] = set()
 
-        orig = get_origin(typedef)
+        for t in typedef_set:
+            if t is None:
+                typeset.add(NoneType)
+                continue
 
-        if orig is None or orig is Literal:
-            return object
+            if isinstance(t, type):
+                typeset.add(t)
+                continue
 
-        assert isinstance(orig, type)
-        if isinstance(hint, TypeAliasType):
-            cls = _type_alias_classes.get(hint) or new_class(
-                hint.__name__,
-                (typedef,),
-                None,
-                lambda ns: ns.update(
-                    {"_src_mod": (self._ctx_module or getmodule(hint))}
-                ),
+            t_parsed = (
+                self._hint_to_typedef(t.__value__)
+                if isinstance(t, TypeAliasType)
+                else t
             )
-            _type_alias_classes[hint] = cls
-            return cls
-        else:
-            return new_class(
-                orig.__name__ + "_" + gen_str_hash(get_args(typedef), 5),
-                (typedef,),
-                None,
-                lambda ns: ns.update(
-                    {"_src_mod": (self._ctx_module or getmodule(hint))}
-                ),
-            )
+
+            orig = get_origin(t_parsed)
+            if orig is None or orig is Literal:
+                typeset.add(object)
+                continue
+
+            if isinstance(t, TypeAliasType):
+                cls = _type_alias_classes.get(t) or new_class(
+                    t.__name__,
+                    (t_parsed,),
+                    None,
+                    lambda ns: ns.update(
+                        {"_src_mod": (self._ctx_module or getmodule(t))}
+                    ),
+                )
+                _type_alias_classes[t] = cls
+                typeset.add(cls)
+            else:
+                assert isinstance(orig, type)
+                typeset.add(
+                    new_class(
+                        orig.__name__ + "_" + gen_str_hash(get_args(t), 5),
+                        (t,),
+                        None,
+                        lambda ns: ns.update(
+                            {"_src_mod": (self._ctx_module or getmodule(t))}
+                        ),
+                    )
+                )
+
+        return typeset
 
     def _has_ancestor(
         self, other: Table[Record | None, Any, Any, Any, Any, BaseT]
@@ -2936,7 +2978,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         root, *path = self.path
         assert (
-            left.record_type == root.target_type
+            left.target_record_types == root.target_record_types
         ), "Context table must be of same type as root table."
 
         prefixed = cast(
@@ -2973,156 +3015,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         return None
 
-    def _gen_sql_base_cols(
-        self: Data[Record | None, Any, Any, Any, Any, Any]
-    ) -> dict[str, sqla.Column]:
-        """Columns of this record type's table."""
-        registry = orm.registry(
-            metadata=self.db._metadata,
-            type_annotation_map=self.record_type._type_map,
-        )
-
-        return {
-            name: sqla.Column(
-                attr.name,
-                registry._resolve_type(
-                    attr.value_type  # pyright: ignore[reportArgumentType]
-                ),
-                primary_key=attr.primary_key,
-                autoincrement=False,
-                index=attr.index,
-                nullable=has_type(None, attr.value_type),
-            )
-            for name, attr in self.record_type._class_values.items()
-        }
-
-    def _gen_sql_base_fks(
-        self: Data[Record | None, Any, Any, Any, Any, Any]
-    ) -> list[sqla.ForeignKeyConstraint]:
-        fks: list[sqla.ForeignKeyConstraint] = []
-
-        for rt in self.record_type._links.values():
-            rel_table = self[rt]._gen_sql_base_table()
-            fks.append(
-                sqla.ForeignKeyConstraint(
-                    [fk.name for fk in rt._fk_map.keys()],
-                    [rel_table.c[pk.name] for pk in rt._fk_map.values()],
-                    name=f"{self.record_type._get_table_name(self.db._subs)}_{rt.name}_fk",
-                )
-            )
-
-        for superclass in self.record_type._record_superclasses:
-            base_table = Table(
-                _db=self.db, _type=Table[superclass]
-            )._gen_sql_base_table()
-
-            fks.append(
-                sqla.ForeignKeyConstraint(
-                    [pk_name for pk_name in self.record_type._pk_values],
-                    [base_table.c[pk_name] for pk_name in self.record_type._pk_values],
-                    name=(
-                        self.record_type._get_table_name(self.db._subs)
-                        + "_base_fk_"
-                        + gen_str_hash(superclass._get_table_name(self.db._subs), 5)
-                    ),
-                )
-            )
-
-        return fks
-
-    def _gen_sql_base_table(
-        self: Data[Record | None, Any, Any, Any, Any, Any],
-        mode: Literal["read", "replace", "upsert"] = "read",
-        without_auto_fks: bool = False,
-    ) -> sqla.Table:
-        """Return the base SQLAlchemy table object for this data's record type."""
-        orig_table: sqla.Table | None = None
-
-        if (
-            mode != "read"
-            and self.db.write_to_overlay is not None
-            and self.record_type not in self.db._subs
-        ):
-            orig_table = self._gen_sql_base_table("read")
-
-            # Create an empty overlay table for the record type
-            self.db._subs[self.record_type] = sqla.table(
-                (
-                    (
-                        self.db.write_to_overlay
-                        + "/"
-                        + self.record_type._default_table_name()
-                    )
-                    if self.db.overlay_type == "name_prefix"
-                    else self.record_type._default_table_name()
-                ),
-                schema=(
-                    self.db.write_to_overlay
-                    if self.db.overlay_type == "db_schema"
-                    else None
-                ),
-            )
-
-        table_name = self.record_type._get_table_name(self.db._subs)
-
-        if not without_auto_fks and table_name in self.db._metadata.tables:
-            # Return the table object from metadata if it already exists.
-            # This is necessary to avoid circular dependencies.
-            return self.db._metadata.tables[table_name]
-
-        sub = self.db._subs.get(self.record_type)
-
-        cols = self._gen_sql_base_cols()
-        if without_auto_fks:
-            cols = {
-                name: col
-                for name, col in cols.items()
-                if name in self.record_type._values
-            }
-
-        # Create a partial SQLAlchemy table object from the class definition
-        # without foreign keys to avoid circular dependencies.
-        # This adds the table to the metadata.
-        sqla.Table(
-            table_name,
-            self.db._metadata,
-            *cols.values(),
-            schema=(sub.schema if sub is not None else None),
-        )
-
-        fks = self._gen_sql_base_fks()
-        if without_auto_fks:
-            fks = [
-                fk
-                for fk in fks
-                if not any(
-                    c.name in self.record_type._fk_values
-                    and c.name not in self.record_type._values
-                    for c in fk.columns
-                )
-            ]
-
-        # Re-create the table object with foreign keys and return it.
-        table = sqla.Table(
-            table_name,
-            self.db._metadata,
-            *fks,
-            schema=(sub.schema if sub is not None else None),
-            extend_existing=True,
-        )
-
-        self.db._create_sqla_table(table)
-
-        if orig_table is not None and mode == "upsert":
-            with self.db.engine.begin() as conn:
-                conn.execute(
-                    sqla.insert(table).from_select(
-                        orig_table.columns.keys(), orig_table.select()
-                    )
-                )
-
-        return table
-
     def _gen_idx_value_map(self, idx: Any) -> dict[str, Hashable]:
         idx_names = list(self._abs_idx_cols.keys())
 
@@ -3131,17 +3023,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         assert isinstance(idx, tuple) and len(idx) == len(idx_names)
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, idx)}
-
-    def _gen_fk_value_map(
-        self: Data[Record | None, Any, Any, None, Any, Any], val: Any
-    ) -> dict[str, Hashable]:
-        fk_names = [col.name for col in self._fk_map.keys()]
-
-        if len(fk_names) == 1:
-            return {fk_names[0]: val}
-
-        assert isinstance(val, tuple) and len(val) == len(fk_names)
-        return {idx_name: idx_val for idx_name, idx_val in zip(fk_names, val)}
 
     def _values_to_df(
         self: Data[Any, Any, Any, Any, Any, DynBackendID],
@@ -3158,11 +3039,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 )
             }
             for val_def, val in (
-                zip(self._tuple_selection, vals)
-                if self._tuple_selection is not None and len(self._tuple_selection) > 1
+                zip(self._alignment, vals)
+                if self._alignment is not None and len(self._alignment) > 1
                 else [(self, vals)]
             ):
-                if issubclass(val_def.target_type, Record):
+                if issubclass(val_def.target_base_type, Record):
                     if isinstance(val, Record):
                         rec_dict = val._to_dict()
                         row_data |= {
@@ -3193,14 +3074,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         self,
         include: list[str] | None = None,
     ) -> sqla.Table:
-        type_map = (
-            self.target_type._type_map
-            if issubclass(self.target_type, Record)
-            else (
-                self._ctx_table.record_type._type_map
-                if self._ctx_table is not None
-                else {}
-            )
+        assert self._table is not None
+
+        type_map = reduce(
+            lambda x, y: x | y,
+            (rec._type_map for rec in self._table.target_record_types),
         )
 
         metadata = sqla.MetaData()
@@ -3409,8 +3287,100 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         value_table.drop(self.db.engine)
         return
 
+
+@final
+class Public:
+    """Demark public status of attribute."""
+
+
+@final
+class Private:
+    """Demark private status of attribute."""
+
+
+PubT = TypeVar("PubT", bound="Public | Private", default="Public")
+
+
+@dataclass(kw_only=True, eq=False)
+class Value(
+    Data[ValT, Idx[()], RwT, None, Ctx[ParT], BaseT],
+    Generic[ValT, RwT, PubT, ParT, BaseT],
+):
+    """Single-value attribute or column."""
+
+    _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
+        ValT: 0,
+        IdxT: Idx[()],
+        CrudT: 1,
+        RelT: NoneType,
+        CtxT: Ctx,
+        BaseT: 4,
+    }
+
+    alias: str | None = None
+    init: bool = True
+    default: ValT | type[Undef] = (
+        Undef  # pyright: ignore[reportIncompatibleVariableOverride]
+    )
+    default_factory: Callable[[], ValT] | None = None
+
+    getter: Callable[[Record], ValT] | None = None
+    setter: Callable[[Record, ValT], None] | None = None
+    pub_status: type[PubT] = Public  # pyright: ignore[reportAssignmentType]
+
+    primary_key: bool = False
+    index: bool = False
+    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None
+
+    def __post_init__(self) -> None:
+        """Post init."""
+        if self.pub_status is Public:
+            self._selection = [cast(Value[Any, Any, Public, Any, Any], self)]
+
+    @cached_prop
+    def name(self) -> str:
+        """Property name."""
+        if self.alias is not None:
+            return self.alias
+
+        return super().name
+
+
+# Redefine IdxT in an attempt to fix randomly occuring type error,
+# in which IdxT isn't recognized as a type variable below anymore.
+TdxT = TypeVar(
+    "TdxT",
+    covariant=True,
+    bound=Idx | BaseIdx,
+    default=BaseIdx,
+)
+
+
+@dataclass(kw_only=True, eq=False)
+class Table(
+    Data[RefT, TdxT, CrudT, RelT, CtxT, BaseT],
+    Generic[RefT, RelT, CrudT, TdxT, CtxT, BaseT],
+):
+    """Record set."""
+
+    _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
+        ValT: 0,
+        IdxT: 3,
+        CrudT: 2,
+        RelT: 1,
+        CtxT: 4,
+        BaseT: 5,
+    }
+
+    index_by: (
+        Value[Any, Any, Public, Any, Symbolic]
+        | Iterable[Value[Any, Any, Public, Any, Symbolic]]
+        | None
+    ) = None
+    default: bool = False
+
     def _mutate_from_records(
-        self: Data[Record | None, Any, CRUD, Relation | None, Ctx | None, DynBackendID],
+        self: Table[Record | None, Any, Any, Any, Any, DynBackendID],
         values: Mapping[Any, Record],
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
@@ -3425,7 +3395,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         }
 
         unconnected_records = db_grouped.get(None, {})
-        local_records = db_grouped.get(self.db, {})
+        local_records = db_grouped.get(cast(DataBase[Any, Any, Any, Any], self.db), {})
 
         remote_records = {
             db: recs
@@ -3443,7 +3413,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         value_table.drop(self.db.engine)
 
         if local_records and has_type(
-            self, Data[Record | None, Any, Any, Record, Ctx, Any]
+            self, Table[Record | None, Record, Any, Any, Ctx, Any]
         ):
             # Only update relations for records already existing in this db.
             self._mutate_rels_from_rec_ids(
@@ -3476,7 +3446,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return
 
     def _mutate_rels_from_rec_ids(
-        self: Data[Record | None, Any, CRUD, Record | None, Ctx, DynBackendID],
+        self: Table[Record | None, Record, Any, Any, Ctx, DynBackendID],
         values: Mapping[Hashable, Hashable],
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
@@ -3503,7 +3473,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         )
 
     def _mutate_from_sql(  # noqa: C901
-        self: Data[Record | None, Any, Any, Any, Any, Any],
+        self,
         value_table: sqla.FromClause,
         mode: Literal["update", "upsert", "replace", "insert", "delete"] = "update",
     ) -> None:
@@ -3517,7 +3487,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ctx_table = Data.select(self.ctx, cols=self.ctx._abs_idx_cols).subquery()
 
             pk_fk_cols = {
-                self.ctx[pk].fqn: fk.name for fk, pk in self.link._fk_map.items()
+                self.ctx[pk].fqn: fk.name
+                for target_type, fk_map in self.link._abs_fk_maps.items()
+                if target_type in self.ctx.target_record_types
+                for fk, pk in fk_map.items()
             }
 
             if not all(col in value_table.c for col in pk_fk_cols.keys()):
@@ -3560,14 +3533,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 )
 
         table_values: dict[sqla.Table, dict[str, Value[Any, Any, Any, Any, Any]]] = {}
-        for tab, vals in self._base_table_map.items():
+        for rec, vals in self._base_table_map.items():
             unique_vals: dict[str, Value[Any, Any, Any, Any, Any]] = {}
             for col_name, col in vals.items():
                 if col_name in value_table.columns and col not in unique_vals.values():
                     unique_vals[col_name] = col
 
-            sqla_tab = tab._gen_sql_base_table(
-                "upsert" if mode in ("update", "insert", "upsert") else "replace"
+            sqla_tab = self.db._get_sql_base_table(
+                rec, "upsert" if mode in ("update", "insert", "upsert") else "replace"
             )
             table_values[sqla_tab] = unique_vals
 
@@ -3768,8 +3741,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if isinstance(self, Link):
             # Update link from parents to this table.
             to_fk_cols: list[sqla.ColumnElement] = [
-                value_table.c[self[pk].fqn].label(fk.name)
-                for fk, pk in self._fk_map.items()
+                value_table.c[pk.fqn].label(fk.name)
+                for fk_map in self._abs_fk_maps.values()
+                for fk, pk in fk_map.items()
             ]
 
             self.ctx._mutate_from_sql(
@@ -3785,96 +3759,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return
 
 
-@final
-class Public:
-    """Demark public status of attribute."""
-
-
-@final
-class Private:
-    """Demark private status of attribute."""
-
-
-PubT = TypeVar("PubT", bound="Public | Private", default="Public")
-
-
-@dataclass(kw_only=True, eq=False)
-class Value(
-    Data[ValT, Idx[()], RwT, None, Ctx[ParT], BaseT],
-    Generic[ValT, RwT, PubT, ParT, BaseT],
-):
-    """Single-value attribute or column."""
-
-    _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
-        ValT: 0,
-        IdxT: Idx[()],
-        CrudT: 1,
-        RelT: NoneType,
-        CtxT: Ctx,
-        BaseT: 4,
-    }
-
-    alias: str | None = None
-    init: bool = True
-    default: ValT | type[Undef] = (
-        Undef  # pyright: ignore[reportIncompatibleVariableOverride]
-    )
-    default_factory: Callable[[], ValT] | None = None
-
-    getter: Callable[[Record], ValT] | None = None
-    setter: Callable[[Record, ValT], None] | None = None
-    pub_status: type[PubT] = Public  # pyright: ignore[reportAssignmentType]
-
-    primary_key: bool = False
-    index: bool = False
-    sql_getter: Callable[[sqla.FromClause], sqla.ColumnElement] | None = None
-
-    def __post_init__(self) -> None:
-        """Post init."""
-        if self.pub_status is Public:
-            self._selection = [cast(Value[Any, Any, Public, Any, Any], self)]
-
-    @cached_prop
-    def name(self) -> str:
-        """Property name."""
-        if self.alias is not None:
-            return self.alias
-
-        return super().name
-
-
-# Redefine IdxT in an attempt to fix randomly occuring type error,
-# in which IdxT isn't recognized as a type variable below anymore.
-TdxT = TypeVar(
-    "TdxT",
-    covariant=True,
-    bound=Idx | BaseIdx,
-    default=BaseIdx,
+type SymbolicValue = Value[Any, Any, Public, Any, Symbolic]
+type SingleFkMap = (
+    SymbolicValue | dict[SymbolicValue, SymbolicValue] | set[SymbolicValue]
 )
-
-
-@dataclass(kw_only=True, eq=False)
-class Table(
-    Data[RefT, TdxT, CrudT, RelT, CtxT, BaseT],
-    Generic[RefT, RelT, CrudT, TdxT, CtxT, BaseT],
-):
-    """Record set."""
-
-    _typearg_map: ClassVar[dict[TypeVar, int | SingleTypeDef]] = {
-        ValT: 0,
-        IdxT: 3,
-        CrudT: 2,
-        RelT: 1,
-        CtxT: 4,
-        BaseT: 5,
-    }
-
-    index_by: (
-        Value[Any, Any, Public, Any, Symbolic]
-        | Iterable[Value[Any, Any, Public, Any, Symbolic]]
-        | None
-    ) = None
-    default: bool = False
+type MultiFkMap = dict[type[Record], SingleFkMap]
 
 
 @dataclass(kw_only=True, eq=False)
@@ -3893,14 +3782,111 @@ class Link(
         BaseT: 3,
     }
 
-    fks: (
-        Value[Any, Any, Any, Any, Symbolic]
-        | dict[Value[Any, Any, Any, Any, Symbolic], Value[Any, Any, Any, Any, Symbolic]]
-        | list[Value[Any, Any, Any, Any, Symbolic]]
-    ) | None = None
+    fks: SingleFkMap | MultiFkMap | None = None
 
-    index: bool = False
+    index: bool = True
     primary_key: bool = False
+
+    @cached_prop
+    def _abs_fk_maps(self) -> dict[
+        type[Record],
+        bidict[
+            Value[Any, Any, Public, RecT2, BaseT],
+            Value[Any, Any, Public, Any, BaseT],
+        ],
+    ]:
+        """Map source link foreign keys to target cols."""
+        fk_dict = self.fks if isinstance(self, Link) else None
+
+        nullable = len(self.target_record_types) > 1
+
+        if fk_dict is None:
+            return {
+                rec: bidict(
+                    {
+                        Value[Any, Any, Public, RecT2, BaseT](
+                            _name=f"{self.name}_{pk.name}",
+                            _type=(
+                                pk._type
+                                if not nullable
+                                else Union[pk._type, NoneType]  # noqa: UP007
+                            ),
+                            init=False,
+                            index=self.index if isinstance(self, Link) else False,
+                            primary_key=(
+                                self.primary_key if isinstance(self, Link) else False
+                            ),
+                            _ctx=self._table,
+                            _db=self.db,
+                        ): copy_and_override(
+                            Value[Any, Any, Public, Any, BaseT],
+                            pk,
+                            _ctx=self._table,
+                            _db=self.db,
+                        )
+                        for pk in rec._pk_values.values()
+                    }
+                )
+                for rec in self.target_record_types
+            }
+
+        if not has_type(fk_dict, dict[type[Record], Any]):
+            assert len(self.target_record_types) == 1
+            fk_dict = {self.target_base_type: fk_dict}
+
+        fk_maps: dict[
+            type[Record],
+            bidict[
+                Value[Any, Any, Public, RecT2, BaseT],
+                Value[Any, Any, Public, Any, BaseT],
+            ],
+        ] = {}
+        for target_type, fks in fk_dict.items():
+            match fks:
+                case dict():
+                    fks = cast(dict[SymbolicValue, SymbolicValue], fks)
+                    fk_items = fks.items()
+                case Value() | set():
+                    fks = fks if isinstance(fks, set) else {fks}
+                    fks = cast(set[SymbolicValue], fks)
+
+                    pks = target_type._pk_values.values()
+
+                    fk_items = zip(fks, pks)
+                case _:
+                    raise ValueError(
+                        f"Invalid foreign key mapping for `{target_type}`."
+                    )
+
+            fk_maps[target_type] = bidict(
+                {
+                    copy_and_override(
+                        Value[Any, Any, Public, Any, BaseT],
+                        fk,
+                        _ctx=self._table,
+                        _db=self.db,
+                    ): copy_and_override(
+                        Value[Any, Any, Public, Any, BaseT],
+                        pk,
+                        _ctx=self._table,
+                        _db=self.db,
+                    )
+                    for fk, pk in fk_items
+                }
+            )
+
+        return fk_maps
+
+    def _gen_fk_value_map(
+        self, rec_type: type[Record], val: Any
+    ) -> dict[str, Hashable]:
+        fk_names = [col.name for col in self._abs_fk_maps[rec_type].keys()]
+
+        if len(fk_names) == 1:
+            return {fk_names[0]: val}
+
+        assert isinstance(val, tuple) and len(val) == len(fk_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(fk_names, val)}
 
 
 @dataclass(kw_only=True, eq=False)
@@ -3919,7 +3905,14 @@ class BackLink(
         BaseT: 4,
     }
 
-    link: Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
+    to: Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
+
+    @property
+    def link(self) -> Link[ParT, Any, RecT, BaseT]:
+        """Return the link object."""
+        return copy_and_override(
+            Link[ParT, Any, RecT, BaseT], self.to, _db=self.db, _ctx=self._table
+        )
 
 
 type ItemType = Item
@@ -3962,18 +3955,20 @@ class Array(
     @cached_prop
     def relation_type(self) -> type[Item[ValT, KeyT, OwnT]]:
         """Return the dynamic relation record type."""
-        base_array_fqn = copy_and_override(Array, self, _ctx=self._symbolic_ctx).fqn
+        assert self._ctx_table is not None
+        assert issubclass(self._ctx_table.target_base_type, Record)
+        base_array_fqn = copy_and_override(Array, self, _ctx=self._ctx_table).fqn
 
         rec = _item_classes.get(
             base_array_fqn,
             dynamic_record_type(
-                Item[self.target_type, self._key_type, self._symbolic_ctx.record_type],
-                f"{self._symbolic_ctx.record_type.__name__}.{self.name}",
-                src_module=self._symbolic_ctx.record_type._src_mod
-                or getmodule(self._symbolic_ctx.record_type),
+                Item[self.value_type, self._key_type, self._ctx_table.target_base_type],
+                f"{self._ctx_table.target_base_type.__name__}.{self.name}",
+                src_module=self._ctx_table.target_base_type._src_mod
+                or getmodule(self._ctx_table.target_base_type),
                 extra_attrs={
                     "_array": copy_and_override(
-                        Array, self, _db=symbol_db, _ctx=self._symbolic_ctx
+                        Array, self, _db=symbol_db, _ctx=self._ctx_table
                     )
                 },
             ),
@@ -3986,7 +3981,7 @@ class Array(
 RootKeyT = TypeVar("RootKeyT", bound=Hashable, default=None)
 
 
-@dataclass
+@dataclass(eq=False)
 class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
     """Database connection."""
 
@@ -4234,7 +4229,7 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
         types = {rec: isinstance(req, Require) for rec, req in self._def_types.items()}
 
         tables = {
-            self[b_rec]._gen_sql_base_table(): required
+            self._get_sql_base_table(b_rec): required
             for rec, required in types.items()
             for b_rec in [rec, *rec._record_superclasses]
         }
@@ -4340,7 +4335,7 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
 
         return db
 
-    def __lshift__(
+    def __xor__(
         self: DataBase[Any, Any, Any, BackT2],
         other: DataBase[SchemaT2, Any, Any, DynBackendID],
     ) -> DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2]:
@@ -4360,7 +4355,7 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
 
         return db
 
-    def __rshift__(
+    def __lshift__(
         self: DataBase[Any, Any, Any, BackT2],
         other: DataBase[SchemaT2, Any, Any, DynBackendID],
     ) -> DataBase[SchemaT | SchemaT2, Any, CRUD, BackT2]:
@@ -4446,6 +4441,147 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
 
         return self._instance_map[rec]
 
+    def _get_sql_base_cols(self, rec_type: type[Record]) -> dict[str, sqla.Column]:
+        """Columns of this record type's table."""
+        registry = orm.registry(
+            metadata=self.db._metadata,
+            type_annotation_map=rec_type._type_map,
+        )
+
+        return {
+            name: sqla.Column(
+                attr.name,
+                registry._resolve_type(
+                    attr.value_type  # pyright: ignore[reportArgumentType]
+                ),
+                primary_key=attr.primary_key,
+                autoincrement=False,
+                index=attr.index,
+                nullable=has_type(None, attr.value_type),
+            )
+            for name, attr in rec_type._class_values.items()
+        }
+
+    def _get_sql_base_fks(
+        self, rec_type: type[Record]
+    ) -> list[sqla.ForeignKeyConstraint]:
+        fks: list[sqla.ForeignKeyConstraint] = []
+
+        for rt in rec_type._links.values():
+            for rec in self[rt]._base_table_map:
+                rel_table = self._get_sql_base_table(rec)
+                fk_map = rt._abs_fk_maps[rec]
+
+                fks.append(
+                    sqla.ForeignKeyConstraint(
+                        [fk.name for fk in fk_map.keys()],
+                        [rel_table.c[pk.name] for pk in fk_map.values()],
+                        name=f"{rec_type._get_table_name(self.db._subs)}_{rt.name}_fk",
+                    )
+                )
+
+        for superclass in rec_type._record_superclasses:
+            base_table = self._get_sql_base_table(superclass)
+
+            fks.append(
+                sqla.ForeignKeyConstraint(
+                    [pk_name for pk_name in rec_type._pk_values],
+                    [base_table.c[pk_name] for pk_name in rec_type._pk_values],
+                    name=(
+                        rec_type._get_table_name(self.db._subs)
+                        + "_base_fk_"
+                        + gen_str_hash(superclass._get_table_name(self.db._subs), 5)
+                    ),
+                )
+            )
+
+        return fks
+
+    def _get_sql_base_table(
+        self,
+        rec_type: type[Record],
+        mode: Literal["read", "replace", "upsert"] = "read",
+        without_auto_fks: bool = False,
+    ) -> sqla.Table:
+        """Return the base SQLAlchemy table object for this data's record type."""
+        orig_table: sqla.Table | None = None
+
+        if (
+            mode != "read"
+            and self.db.write_to_overlay is not None
+            and rec_type not in self.db._subs
+        ):
+            orig_table = self._get_sql_base_table(rec_type, "read")
+
+            # Create an empty overlay table for the record type
+            self.db._subs[rec_type] = sqla.table(
+                (
+                    (self.db.write_to_overlay + "/" + rec_type._default_table_name())
+                    if self.db.overlay_type == "name_prefix"
+                    else rec_type._default_table_name()
+                ),
+                schema=(
+                    self.db.write_to_overlay
+                    if self.db.overlay_type == "db_schema"
+                    else None
+                ),
+            )
+
+        table_name = rec_type._get_table_name(self.db._subs)
+
+        if not without_auto_fks and table_name in self.db._metadata.tables:
+            # Return the table object from metadata if it already exists.
+            # This is necessary to avoid circular dependencies.
+            return self.db._metadata.tables[table_name]
+
+        sub = self.db._subs.get(rec_type)
+
+        cols = self._get_sql_base_cols(rec_type)
+        if without_auto_fks:
+            cols = {name: col for name, col in cols.items() if name in rec_type._values}
+
+        # Create a partial SQLAlchemy table object from the class definition
+        # without foreign keys to avoid circular dependencies.
+        # This adds the table to the metadata.
+        sqla.Table(
+            table_name,
+            self.db._metadata,
+            *cols.values(),
+            schema=(sub.schema if sub is not None else None),
+        )
+
+        fks = self._get_sql_base_fks(rec_type)
+        if without_auto_fks:
+            fks = [
+                fk
+                for fk in fks
+                if not any(
+                    c.name in rec_type._fk_values and c.name not in rec_type._values
+                    for c in fk.columns
+                )
+            ]
+
+        # Re-create the table object with foreign keys and return it.
+        table = sqla.Table(
+            table_name,
+            self.db._metadata,
+            *fks,
+            schema=(sub.schema if sub is not None else None),
+            extend_existing=True,
+        )
+
+        self.db._create_sqla_table(table)
+
+        if orig_table is not None and mode == "upsert":
+            with self.db.engine.begin() as conn:
+                conn.execute(
+                    sqla.insert(table).from_select(
+                        orig_table.columns.keys(), orig_table.select()
+                    )
+                )
+
+        return table
+
     def _create_sqla_table(self, sqla_table: sqla.Table) -> None:
         """Create SQL-side table from Table class."""
         if self.remove_cross_fks:
@@ -4477,7 +4613,7 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
 
         with open(path, "rb") as file:
             for rec in recs:
-                table = self[rec]._gen_sql_base_table("replace")
+                table = self._get_sql_base_table(rec, "replace")
 
                 with self.engine.begin() as conn:
                     conn.execute(table.delete().where(sqla.true()))
@@ -4499,7 +4635,7 @@ class DataBase(Data[SchemaT, RootIdx[RootKeyT], CrudT, None, None, BaseT]):
         with ExcelWorkbook(file) as wb:
             for rec in recs:
                 pl.read_database(
-                    self[rec]._gen_sql_base_table().select(),
+                    self._get_sql_base_table(rec).select(),
                     self.engine.connect(),
                 ).write_excel(wb, worksheet=rec._get_table_name(self._subs))
 
@@ -4599,7 +4735,7 @@ class RecordMeta(type):
             return cls.__class_props
 
         ctx: Ctx | Data[Record | None, Any, Any, Any, Any, Any] = (
-            Ctx(cast(type["Record"], cls))
+            Ctx({cast(type["Record"], cls)})
             if not hasattr(cls, "_ctx")
             else getattr(cls, "_ctx")
         )
@@ -4709,10 +4845,13 @@ class RecordMeta(type):
     def _class_fk_values(cls) -> dict[str, Value[Any, Any, Any, Any, Symbolic]]:
         """The foreign key columns of this record type without superclasses."""
         return {
-            a.name: a
+            a.name: copy_and_override(
+                Value[Any, Any, Any, Any, Symbolic], a, _db=symbol_db, _ctx=Ctx({cls})
+            )
             for ref in cls._class_links.values()
             if isinstance(ref, Link)
-            for a in ref._fk_map.keys()
+            for fk_map in ref._abs_fk_maps.values()
+            for a in fk_map.keys()
         }
 
     @property
@@ -4793,7 +4932,9 @@ class RecordMeta(type):
     def _rel_types(
         cls, _traversed: set[type[Record]] | None = None, with_relations: bool = True
     ) -> set[type[Record]]:
-        direct_rel_types = {t.record_type for t in cls._tables.values()}
+        direct_rel_types = {
+            r for t in cls._tables.values() for r in t.target_record_types
+        }
 
         if with_relations:
             direct_rel_types |= {
@@ -4918,13 +5059,13 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
         """Get all direct relations from a target record type to this type."""
         return {
             BackLink(
-                link=cast(Link[Self, Any, RecT2, Symbolic], ln),
-                _ctx=Ctx(cls),
+                to=cast(Link[Self, Any, RecT2, Symbolic], ln),
+                _ctx=Ctx({cls}),
                 _type=BackLink[target],
                 _db=symbol_db,
             )
             for ln in target._links.values()
-            if issubclass(cls, ln.target_type)
+            if ({cls} & ln.target_record_types)
         }
 
     @classmethod
@@ -5079,7 +5220,12 @@ class Record(Generic[*KeyTt], metaclass=RecordMeta):
             for a in cls._non_fk_values.values()
             if a.init is not False
         ) and all(
-            r.name in data or all(fk.name in data for fk in r._fk_map.keys())
+            r.name in data
+            or all(
+                fk.name in data
+                for fk_map in r._abs_fk_maps.values()
+                for fk in fk_map.keys()
+            )
             for r in cls._links.values()
         )
 
@@ -5108,7 +5254,7 @@ class DynRecordMeta(RecordMeta):
         cls: type[Record], name: str
     ) -> Value[Any, Any, Any, Any, Symbolic]:
         """Get dynamic attribute by dynamic name."""
-        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx(cls), _name=name)
+        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx({cls}), _name=name)
 
     def __getattr__(
         cls: type[Record], name: str
@@ -5116,7 +5262,7 @@ class DynRecordMeta(RecordMeta):
         """Get dynamic attribute by name."""
         if not TYPE_CHECKING and name.startswith("__"):
             return super().__getattribute__(name)
-        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx(cls), _name=name)
+        return Value(_db=symbol_db, _type=Value[cls], _ctx=Ctx({cls}), _name=name)
 
 
 class DynRecord(Record, metaclass=DynRecordMeta):
@@ -5145,7 +5291,7 @@ def dynamic_record_type(
             lambda ns: ns.update(
                 {
                     **{p.name: p for p in props},
-                    "__annotations__": {p.name: p._type for p in props},
+                    "__annotations__": {p.name: p._generic_type for p in props},
                     "_src_mod": src_module or base._src_mod or getmodule(base),
                     **extra_attrs,
                 }
@@ -5154,14 +5300,7 @@ def dynamic_record_type(
     )
 
 
-class RecUUID(Record[UUID4]):
-    """Record type with a default UUID4 primary key."""
-
-    _template = True
-    _id: Value[UUID4] = Value(primary_key=True, default_factory=lambda: UUID4(uuid4()))
-
-
-class RecHashed(Record[str]):
+class HashRec(Record[str]):
     """Record type with a default hashed primary key."""
 
     _template = True
@@ -5176,6 +5315,13 @@ class RecHashed(Record[str]):
                 if a.name != "_id"
             }
         )
+
+
+class Entity(Record[UUID4]):
+    """Record type with a default UUID4 primary key."""
+
+    _template = True
+    _id: Value[UUID4] = Value(primary_key=True, default_factory=lambda: UUID4(uuid4()))
 
 
 class BacklinkRecord(Record[KeyT2], Generic[KeyT2, RecT2]):
@@ -5197,17 +5343,19 @@ class Item(BacklinkRecord[KeyT2, RecT2], Generic[ValT, KeyT2, RecT2]):
     value: Value[ValT]
 
 
-class Relation(RecHashed, BacklinkRecord[str, RecT2], Generic[RecT2, RecT3]):
+class Relation(BacklinkRecord[str, RecT2], Generic[RecT2, RecT3]):
     """Automatically defined relation record type."""
 
     _template = True
 
-    _to: Link[RecT3] = Link(index=True)
+    _from: Link[RecT2] = Link(primary_key=True)
+    _to: Link[RecT3] = Link(primary_key=True)
 
 
-class IndexedRelation(Relation[RecT2, RecT3], Generic[RecT2, RecT3, KeyT]):
+class RelIndex(Relation[RecT2, RecT3], Generic[RecT2, RecT3, KeyT]):
     """Automatically defined relation record type with index substitution."""
 
     _template = True
 
-    _rel_id: Value[KeyT] = Value(index=True)
+    _to: Link[RecT3] = Link(primary_key=False)
+    _rel_idx: Value[KeyT] = Value(primary_key=True)

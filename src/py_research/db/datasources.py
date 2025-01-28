@@ -703,7 +703,7 @@ async def _load_records(
         if isinstance(table_map, SubTableMap) and isinstance(
             table_map.target, BackLink
         ):
-            rec_inj |= table_map.target.link._gen_fk_value_map(parent_idx)
+            rec_inj |= table_map.target.to._gen_fk_value_map(parent_idx)
 
         rec = await _load_record(table, table_map, path_idx, data, rec_inj)
 
