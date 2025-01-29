@@ -1362,7 +1362,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         (
                             (
                                 fk.sql_col == pk.sql_col
-                                for fk_map in target.link._abs_fk_maps.values()
+                                for link in target.links
+                                for fk_map in link._abs_fk_maps.values()
                                 for fk, pk in fk_map.items()
                             )
                             if isinstance(target, BackLink)
@@ -1744,7 +1745,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 and not without_index
                 and len(self.target_record_types) == 1
             ):
-                rec_type = self.target_record_types.pop()
+                rec_type = next(iter(self.target_record_types))
                 drop_fqns = {
                     copy_and_override(Value, pk, _ctx=self).fqn
                     for pk in rec_type._pk_values.values()
@@ -2016,9 +2017,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 ],
                 (rel._from, rel._to),  # type: ignore
             )
-            if (left.target_record_types & node_types) and (
-                right.target_record_types & node_types
-            ):
+            if is_subtype(
+                Union[*node_types], Union[*left.target_record_types]
+            ) and is_subtype(Union[*node_types], Union[*right.target_record_types]):
                 undirected_edges[rel].add((left, right))
 
         direct_edge_dfs = [
@@ -3389,7 +3390,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                         _ctx=node,
                     ).fqn: link_node[pk]
                     for target_type, fk_map in link_node._abs_fk_maps.items()
-                    if target_type in node.target_record_types
+                    if is_subtype(Union[*node.target_record_types], target_type)
                     for pk in fk_map.values()
                 }
             elif isinstance(link_node, Table) and not issubclass(
@@ -3604,8 +3605,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return self
 
         root, *path = self.path
-        assert (
-            left.target_record_types == root.target_record_types
+        assert is_subtype(
+            Union[*left.target_record_types], Union[*root.target_record_types]
         ), "Context table must be of same type as root table."
 
         prefixed = cast(
@@ -4024,9 +4025,10 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ctx_table = Data.select(self.ctx, cols=self.ctx._abs_idx_cols).subquery()
 
             pk_fk_cols = {
-                self.ctx[pk].fqn: fk.name
-                for target_type, fk_map in self.link._abs_fk_maps.items()
-                if target_type in self.ctx.target_record_types
+                pk.fqn: fk.name
+                for link in self.links
+                for target_type, fk_map in link._abs_fk_maps.items()
+                if is_subtype(Union[*self.ctx.target_record_types], target_type)
                 for fk, pk in fk_map.items()
             }
 
@@ -4259,14 +4261,21 @@ class BackLink(
         BaseT: 4,
     }
 
-    to: Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
+    to: (
+        Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]
+        | set[Data[ParT, Idx[()], Any, None, Ctx[RecT], Symbolic]]
+    )
 
-    @property
-    def link(self) -> Link[ParT, Any, RecT, BaseT]:
+    @cached_prop
+    def links(self) -> set[Link[ParT, Any, RecT, BaseT]]:
         """Return the link object."""
-        return copy_and_override(
-            Link[ParT, Any, RecT, BaseT], self.to, _base=self.base, _ctx=self._table
-        )
+        to = self.to if isinstance(self.to, set) else {self.to}
+        return {
+            copy_and_override(
+                Link[ParT, Any, RecT, BaseT], ln, _base=self.base, _ctx=self._table
+            )
+            for ln in to
+        }
 
 
 type ItemType = Item
