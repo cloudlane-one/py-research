@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field
-from datetime import date, datetime, time, timedelta
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
@@ -46,13 +45,6 @@ import sqlparse
 import yarl
 from bidict import bidict
 from cloudpathlib import CloudPath
-from pandas.api.types import (
-    is_bool_dtype,
-    is_datetime64_dtype,
-    is_integer_dtype,
-    is_numeric_dtype,
-    is_string_dtype,
-)
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
 
@@ -73,7 +65,13 @@ from py_research.reflect.types import (
 )
 from py_research.types import UUID4, Keep, Ordinal, Undef
 
-from .sqlite_utils import register_sqlite_adapters
+from .utils import (
+    pd_to_py_dtype,
+    pl_type_map,
+    register_sqlite_adapters,
+    remove_cross_fk,
+    sql_to_py_dtype,
+)
 
 register_sqlite_adapters()
 
@@ -283,41 +281,18 @@ class Agg(Generic[RecT]):
     map: AggMap[RecT]
 
 
-_pl_type_map: dict[
-    Any, pl.DataType | type | Callable[[SingleTypeDef | UnionType], pl.DataType]
-] = {
-    **{
-        t: t
-        for t in (
-            int,
-            float,
-            complex,
-            str,
-            bool,
-            datetime,
-            date,
-            time,
-            timedelta,
-            bytes,
-        )
-    },
-    Literal: lambda t: pl.Enum([str(a) for a in get_args(t)]),
-    UUID4: pl.String,
-}
-
-
 def _get_pl_schema(
     col_map: Mapping[str, Value[Any, Any, Any, Any, Any]]
 ) -> dict[str, pl.DataType | type | None]:
     """Return the schema of the dataset."""
     exact_matches = {
-        name: (_pl_type_map.get(col.value_type), col) for name, col in col_map.items()
+        name: (pl_type_map.get(col.value_type), col) for name, col in col_map.items()
     }
     matches = {
         name: (
             (match, col.value_type)
             if match is not None
-            else (_pl_type_map.get(col.target_base_type), col.value_type)
+            else (pl_type_map.get(col.target_base_type), col.value_type)
         )
         for name, (match, col) in exact_matches.items()
     }
@@ -330,55 +305,6 @@ def _get_pl_schema(
     }
 
 
-def _pd_to_py_dtype(c: pd.Series | pl.Series) -> type | None:
-    """Map pandas dtype to Python type."""
-    if isinstance(c, pd.Series):
-        if is_datetime64_dtype(c):
-            return datetime
-        elif is_bool_dtype(c):
-            return bool
-        elif is_integer_dtype(c):
-            return int
-        elif is_numeric_dtype(c):
-            return float
-        elif is_string_dtype(c):
-            return str
-    else:
-        if c.dtype.is_temporal():
-            return datetime
-        elif c.dtype.is_integer():
-            return int
-        elif c.dtype.is_float():
-            return float
-        elif c.dtype.is_(pl.String):
-            return str
-
-    return None
-
-
-def _sql_to_py_dtype(c: sqla.ColumnElement) -> type | None:
-    """Map sqla column type to Python type."""
-    match c.type:
-        case sqla.DateTime():
-            return datetime
-        case sqla.Date():
-            return date
-        case sqla.Time():
-            return time
-        case sqla.Boolean():
-            return bool
-        case sqla.Integer():
-            return int
-        case sqla.Float():
-            return float
-        case sqla.String() | sqla.Text() | sqla.Enum():
-            return str
-        case sqla.LargeBinary():
-            return bytes
-        case _:
-            return None
-
-
 def _gen_prop(
     name: str,
     data: pd.Series | pl.Series | sqla.ColumnElement,
@@ -387,9 +313,9 @@ def _gen_prop(
 ) -> Data[Any, Any, Any, Any, Any, Any]:
     is_link = name in fks
     value_type = (
-        _pd_to_py_dtype(data)
+        pd_to_py_dtype(data)
         if isinstance(data, pd.Series | pl.Series)
-        else _sql_to_py_dtype(data)
+        else sql_to_py_dtype(data)
     ) or Any
     attr = Value(
         primary_key=pk,
@@ -430,29 +356,6 @@ def props_from_data(
         _gen_prop(str(col.name), col, col.name in primary_keys, foreign_keys)
         for col in columns
     ]
-
-
-def _remove_cross_fk(table: sqla.Table):
-    """Dirty vodoo to remove external FKs from existing table."""
-    for c in table.columns.values():
-        c.foreign_keys = set(
-            fk
-            for fk in c.foreign_keys
-            if fk.constraint and fk.constraint.referred_table.schema == table.schema
-        )
-
-    table.foreign_keys = set(  # pyright: ignore[reportAttributeAccessIssue]
-        fk
-        for fk in table.foreign_keys
-        if fk.constraint and fk.constraint.referred_table.schema == table.schema
-    )
-
-    table.constraints = set(
-        c
-        for c in table.constraints
-        if not isinstance(c, sqla.ForeignKeyConstraint)
-        or c.referred_table.schema == table.schema
-    )
 
 
 @cache
@@ -1109,7 +1012,7 @@ class Base(Generic[SchemaT, BaseT]):
             # That way, local metadata will retain info on the FKs
             # (for automatic joins) but the FKs won't be created in the DB.
             sqla_table = sqla_table.to_metadata(sqla.MetaData())  # temporary metadata
-            _remove_cross_fk(sqla_table)
+            remove_cross_fk(sqla_table)
 
         sqla_table.create(self.engine, checkfirst=True)
 
