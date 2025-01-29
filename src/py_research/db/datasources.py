@@ -713,11 +713,13 @@ async def _load_records(
         if isinstance(table_map, SubTableMap) and isinstance(
             table_map.target, BackLink
         ):
-            link = table_map.target.to
+            assert len(table_map.target.links) == 1
+            link = next(iter(table_map.target.links))
+
             assert len(link.target_record_types) == 1
             link_rec_type = next(iter(link.target_record_types))
 
-            rec_inj |= table_map.target.to._gen_fk_value_map(link_rec_type, parent_idx)
+            rec_inj |= link._gen_fk_value_map(link_rec_type, parent_idx)
 
         rec = await _load_record(table, table_map, path_idx, data, rec_inj)
 
