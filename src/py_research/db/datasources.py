@@ -681,7 +681,7 @@ async def _load_records(
             }
 
             link_recs = await _load_records(
-                table.db[rel.record_type],
+                table.base[rel.record_type],
                 target_map,
                 link_data,
                 rest_data,
@@ -763,7 +763,7 @@ async def _load_records(
 
         if len(loaded_in_data) > 0:
             await _load_records(
-                table.db[rel_map.target.record_type],
+                table.base[rel_map.target.record_type],
                 rel_map,
                 loaded_in_data,
                 rest_data,
@@ -798,7 +798,7 @@ async def _load_records(
             }
 
             await _load_records(
-                table.db[rel_map.target.record_type],
+                table.base[rel_map.target.record_type],
                 rel_map,
                 rel_data,
                 rest_data,
