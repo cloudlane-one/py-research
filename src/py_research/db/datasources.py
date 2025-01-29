@@ -266,6 +266,9 @@ class TableMap[Rec: Record, Dat]:
     def record_type(self) -> type[Rec]:
         """Get the record type."""
         assert self.target_type is not None
+        assert isinstance(
+            self.target_type, type
+        ), "Mapping only possible for concrete record types (no unions)."
         return self.target_type
 
     @cached_property
@@ -279,7 +282,7 @@ class TableMap[Rec: Record, Dat]:
             ),
             **{
                 tgt: (
-                    copy_and_override(SubMap, sel, target_type=tgt.record_type)
+                    copy_and_override(SubMap, sel, target_type=tgt.value_type)
                     if isinstance(sel, SubMap) and isinstance(tgt, Data)
                     else DataSelect.parse(sel)
                 )
@@ -398,7 +401,9 @@ class SubTableMap[Rec: Record, Dat, Rec2: Record](TableMap[Rec, Dat]):
     """Mapping to optional attributes of the relation record."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        self.target_type = self.target.record_type
+        assert isinstance(self.target.value_type, type)
+        self.target_type = self.target.value_type
+
         if self.rel_map is not None:
             self.rel_map.target_type = self.target.relation_type
 
@@ -534,7 +539,7 @@ type RecMatchExpr = list[Hashable] | sqla.ColumnElement[bool]
 
 
 def _gen_match_expr(
-    table: Data[Record | None, Any, Any, Any, Any, Any],
+    rec_type: type[Record],
     rec_idx: Hashable | None,
     rec_dict: dict[str, Any],
     match_by: RecMatchBy,
@@ -544,7 +549,7 @@ def _gen_match_expr(
         return [rec_idx]
     else:
         match_cols = (
-            list(table.record_type._values.values())
+            list(rec_type._values.values())
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Data) else match_by
         )
@@ -566,12 +571,15 @@ type RestData = list[tuple[TableMap[Record, TreeNode], InData]]
 
 
 async def _load_record(
-    table: Data[Record | None, Any, Any, Any, Any, Any],
+    table: Data[Record, Any, Any, Any, Any, Any],
     table_map: TableMap[Record, Any],
     path_idx: DirectPath,
     data: TreeNode,
     injections: dict[str, Hashable] | None,
 ) -> Hashable | Record | None:
+    assert len(table.target_record_types) == 1
+    rec_type = next(iter(table.target_record_types))
+
     if table_map.loader is not None:
         if table_map.async_loader:
             data = await cast(
@@ -588,7 +596,7 @@ async def _load_record(
         if isinstance(idx, Index)
     }
     if len(indexes) > 0:
-        rec_pks = list(table.record_type._pk_values.values())
+        rec_pks = list(rec_type._pk_values.values())
         idx_maps = [
             dict(
                 zip(
@@ -638,7 +646,7 @@ async def _load_record(
         return None
 
     match_expr = _gen_match_expr(
-        table,
+        rec_type,
         rec_idx,
         rec_dict,
         table_map.match_by,
@@ -659,7 +667,7 @@ async def _load_record(
 
 
 async def _load_records(
-    table: Data[Record | None, Any, Any, Any, Any, Any],
+    table: Data[Record, Any, Any, Any, Any, Any],
     table_map: TableMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
@@ -681,7 +689,7 @@ async def _load_records(
             }
 
             link_recs = await _load_records(
-                table.base[rel.record_type],
+                Table(_base=table.base, _type=target_map.record_type),
                 target_map,
                 link_data,
                 rest_data,
@@ -690,7 +698,9 @@ async def _load_records(
             )
 
             for link_idx, _, path_idx in link_recs.keys():
-                injects[path_idx] |= rel._gen_fk_value_map(link_idx)
+                injects[path_idx] |= rel._gen_fk_value_map(
+                    target_map.record_type, link_idx
+                )
 
     # Define function for async-loading records.
     async def _load_rec_from_item(
@@ -703,7 +713,11 @@ async def _load_records(
         if isinstance(table_map, SubTableMap) and isinstance(
             table_map.target, BackLink
         ):
-            rec_inj |= table_map.target.to._gen_fk_value_map(parent_idx)
+            link = table_map.target.to
+            assert len(link.target_record_types) == 1
+            link_rec_type = next(iter(link.target_record_types))
+
+            rec_inj |= table_map.target.to._gen_fk_value_map(link_rec_type, parent_idx)
 
         rec = await _load_record(table, table_map, path_idx, data, rec_inj)
 
@@ -751,7 +765,9 @@ async def _load_records(
         )
 
         rel_injects = {
-            path_idx: table_map.target._link._gen_fk_value_map(rec_idx)
+            path_idx: table_map.target._link._gen_fk_value_map(
+                table_map.record_type, rec_idx
+            )
             for rec_idx, _, path_idx in records.keys()
         }
 
@@ -763,7 +779,7 @@ async def _load_records(
 
         if len(loaded_in_data) > 0:
             await _load_records(
-                table.base[rel_map.target.record_type],
+                Table(_base=table.base, _type=rel_map.record_type),
                 rel_map,
                 loaded_in_data,
                 rest_data,
@@ -775,19 +791,19 @@ async def _load_records(
     for tgt, sel in table_map.full_map.items():
         if isinstance(tgt, Table) and not isinstance(tgt, Link):
             # Load relation table.
-            rel_map = (
-                copy_and_override(SubTableMap, sel, target=tgt)
-                if isinstance(sel, SubMap)
-                else SubTableMap[Record, TreeNode, Record](
+            if isinstance(sel, SubMap):
+                rel_map = copy_and_override(SubTableMap, sel, target=tgt)
+            else:
+                assert len(tgt.target_record_types) == 1
+                rel_map = SubTableMap[Record, TreeNode, Record](
                     pull={
                         v: v.name
                         for v in cast(
-                            type[Record], tgt.record_type
+                            type[Record], next(iter(tgt.target_record_types))
                         )._col_values.values()
                     },
                     target=tgt,
                 )
-            )
 
             rel_data = {
                 (rec_idx, item_path): item_data
@@ -798,7 +814,7 @@ async def _load_records(
             }
 
             await _load_records(
-                table.base[rel_map.target.record_type],
+                Table(_base=table.base, _type=rel_map.record_type),
                 rel_map,
                 rel_data,
                 rest_data,

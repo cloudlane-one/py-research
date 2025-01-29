@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import MISSING, Field, asdict, dataclass, field
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
 from io import BytesIO
@@ -18,13 +17,11 @@ from typing import (
     TYPE_CHECKING,
     Any,
     ClassVar,
-    ForwardRef,
     Generic,
     Literal,
     LiteralString,
     ParamSpec,
     Self,
-    TypeAliasType,
     TypeVarTuple,
     Union,
     cast,
@@ -70,16 +67,15 @@ from py_research.reflect.types import (
     SingleTypeDef,
     get_lowest_common_base,
     has_type,
+    hint_to_typedef,
     is_subtype,
+    typedef_to_typeset,
 )
+from py_research.types import UUID4, Keep, Ordinal, Undef
 
 from .sqlite_utils import register_sqlite_adapters
 
 register_sqlite_adapters()
-
-
-class UUID4(str):
-    """UUID4 string."""
 
 
 RecT = TypeVar("RecT", bound="Record", covariant=True, default=Any)
@@ -100,26 +96,7 @@ ParT = TypeVar("ParT", contravariant=True, bound="Record", default=Any)
 SchemaT = TypeVar("SchemaT", bound="Record | Schema", covariant=True)
 SchemaT2 = TypeVar("SchemaT2", bound="Record | Schema")
 
-
-type Ordinal = (
-    bool | int | float | Decimal | datetime | date | time | timedelta | UUID4 | str
-)
-
 OrdT = TypeVar("OrdT", bound=Ordinal)
-
-
-@final
-class Undef:
-    """Demark undefined status."""
-
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
-
-
-@final
-class Keep:
-    """Demark unchanged status."""
-
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
 
 
 type Input[Val, Key: Hashable] = pd.DataFrame | pl.DataFrame | Iterable[Val] | Mapping[
@@ -1145,9 +1122,6 @@ class Base(Generic[SchemaT, BaseT]):
         return schema_name
 
 
-_type_alias_classes: dict[TypeAliasType, type] = {}
-
-
 @dataclass(kw_only=True, eq=False)
 class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     """Relational dataset."""
@@ -1197,7 +1171,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         if is_subtype(self._generic_type, Data[Any, Any, Any, Any, Any, Any]):
             typearg = self._typearg_map[ValT]
             if isinstance(typearg, int):
-                typearg = self._hint_to_typedef(self._generic_args[typearg])
+                typearg = hint_to_typedef(
+                    self._generic_args[typearg], self._typevar_map, self._ctx_module
+                )
 
             return typearg
 
@@ -1206,20 +1182,22 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     @cached_prop
     def target_types(self) -> set[type[ValT]]:
         """Target value types of this dataset (>1 in case of union)."""
-        return self._typedef_to_typeset(self.value_type)
+        return typedef_to_typeset(self.value_type, self._typevar_map, self._ctx_module)
 
     @cached_prop
     def target_base_type(self) -> type:
         """Common base type of the target types."""
         return get_lowest_common_base(
-            self._typedef_to_typeset(self.value_type, remove_null=True)
+            typedef_to_typeset(
+                self.value_type, self._typevar_map, self._ctx_module, remove_null=True
+            )
         )
 
     @cached_prop
     def target_record_types(self) -> set[type[Record]]:
         """Target value types of this dataset (>1 in case of union)."""
-        types: set[type[Record | Schema]] = self._typedef_to_typeset(
-            self.value_type, remove_null=True
+        types: set[type[Record | Schema]] = typedef_to_typeset(
+            self.value_type, self._typevar_map, self._ctx_module, remove_null=True
         )
         return {
             r
@@ -1232,9 +1210,11 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Relation record type, if any."""
         typearg = self._typearg_map[RelT]
         if isinstance(typearg, int):
-            typearg = self._hint_to_typedef(self._generic_args[typearg])
+            typearg = hint_to_typedef(
+                self._generic_args[typearg], self._typevar_map, self._ctx_module
+            )
 
-        rec_types = self._typedef_to_typeset(typearg)
+        rec_types = typedef_to_typeset(typearg, self._typevar_map, self._ctx_module)
         if len(rec_types) != 1:
             return cast(type[RelT], NoneType)
 
@@ -2469,8 +2449,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
     ) -> Data[Any, Any, Any, Any, Any, Any] | ValT:
         """Select into the relational subgraph or filte ron the current level."""
         match key:
-            case type():
-                return Table(_base=self.base, _type=Table[key])
+            case type() | UnionType():
+                return Table(_base=self.base, _type=key)
             case Data():
                 return (
                     copy_and_override(type(key), key, _base=self)
@@ -3243,7 +3223,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             return Union[*self._type]
 
         hint = self._type or Data
-        return self._hint_to_typedef(hint)
+        return hint_to_typedef(hint, self._typevar_map, self._ctx_module)
 
     @cached_prop
     def _generic_args(self) -> tuple[SingleTypeDef, ...]:
@@ -3700,104 +3680,6 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
                 subtree = subtree[node]
 
         return tree
-
-    def _hint_to_typedef(
-        self,
-        hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    ) -> SingleTypeDef | UnionType:
-        typedef = hint
-
-        if isinstance(typedef, str):
-            typedef = eval(
-                typedef,
-                {**globals(), **(vars(self._ctx_module) if self._ctx_module else {})},
-            )
-
-        if isinstance(typedef, TypeVar):
-            type_res = self._typevar_map.get(typedef, Undef)
-
-            if type_res is Undef and typedef.has_default():
-                type_res = typedef.__default__
-            if type_res is Undef:
-                raise TypeError(
-                    f"Type variable `{typedef}` not bound for typehint `{hint}`."
-                )
-
-            typedef = type_res
-
-        if isinstance(typedef, ForwardRef):
-            typedef = typedef._evaluate(
-                {**globals(), **(vars(self._ctx_module) if self._ctx_module else {})},
-                {},
-                recursive_guard=frozenset(),
-            )
-
-        return cast(SingleTypeDef, typedef)
-
-    def _typedef_to_typeset(
-        self, typedef: SingleTypeDef | UnionType | None, remove_null: bool = False
-    ) -> set[type]:
-        typedef_set: set[SingleTypeDef | UnionType | None] = {typedef}
-
-        if isinstance(typedef, UnionType):
-            typedef_set = {
-                get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
-            }
-
-            if remove_null:
-                typedef_set &= {
-                    t
-                    for t in typedef_set
-                    if t is not None and not is_subtype(t, NoneType)
-                }
-
-        typeset: set[type] = set()
-
-        for t in typedef_set:
-            if t is None:
-                typeset.add(NoneType)
-                continue
-
-            if isinstance(t, type):
-                typeset.add(t)
-                continue
-
-            t_parsed = (
-                self._hint_to_typedef(t.__value__)
-                if isinstance(t, TypeAliasType)
-                else t
-            )
-
-            orig = get_origin(t_parsed)
-            if orig is None or orig is Literal:
-                typeset.add(object)
-                continue
-
-            if isinstance(t, TypeAliasType):
-                cls = _type_alias_classes.get(t) or new_class(
-                    t.__name__,
-                    (t_parsed,),
-                    None,
-                    lambda ns: ns.update(
-                        {"_src_mod": (self._ctx_module or getmodule(t))}
-                    ),
-                )
-                _type_alias_classes[t] = cls
-                typeset.add(cls)
-            else:
-                assert isinstance(orig, type)
-                typeset.add(
-                    new_class(
-                        orig.__name__ + "_" + gen_str_hash(get_args(t), 5),
-                        (t,),
-                        None,
-                        lambda ns: ns.update(
-                            {"_src_mod": (self._ctx_module or getmodule(t))}
-                        ),
-                    )
-                )
-
-        return typeset
 
     def _has_ancestor(
         self, other: Table[Record | None, Any, Any, Any, Any, BaseT]

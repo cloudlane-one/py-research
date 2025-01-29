@@ -2,23 +2,27 @@
 
 from collections.abc import Iterable
 from functools import reduce
-from inspect import getmro
-from types import GenericAlias, NoneType, UnionType
+from inspect import getmodule, getmro
+from types import GenericAlias, ModuleType, NoneType, UnionType, new_class
 from typing import (
     Any,
     ForwardRef,
+    Literal,
     NewType,
     Protocol,
     TypeAliasType,
     TypeGuard,
-    TypeVar,
     Union,
+    cast,
     get_args,
     get_origin,
-    runtime_checkable,
 )
 
 from beartype.door import is_bearable, is_subhint
+from typing_extensions import TypeVar, runtime_checkable
+
+from py_research.hashing import gen_str_hash
+from py_research.types import Undef
 
 T = TypeVar("T", covariant=True)
 T_cov = TypeVar("T_cov", covariant=True)
@@ -123,3 +127,108 @@ def get_inheritance_distance(cls: type, base: type) -> int | None:
         distance += 1
 
     return distance * sign
+
+
+_type_alias_classes: dict[TypeAliasType, type] = {}
+
+
+def hint_to_typedef(
+    hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
+    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
+    ctx_module: ModuleType | None = None,
+) -> SingleTypeDef | UnionType:
+    """Convert type hint to type definition."""
+    typevar_map = typevar_map or {}
+
+    typedef = hint
+
+    if isinstance(typedef, str):
+        typedef = eval(
+            typedef,
+            {**globals(), **(vars(ctx_module) if ctx_module else {})},
+        )
+
+    if isinstance(typedef, TypeVar):
+        type_res = typevar_map.get(typedef, Undef)
+
+        if type_res is Undef and typedef.has_default():
+            type_res = typedef.__default__
+        if type_res is Undef:
+            raise TypeError(
+                f"Type variable `{typedef}` not bound for typehint `{hint}`."
+            )
+
+        typedef = type_res
+
+    if isinstance(typedef, ForwardRef):
+        typedef = typedef._evaluate(
+            {**globals(), **(vars(ctx_module) if ctx_module else {})},
+            {},
+            recursive_guard=frozenset(),
+        )
+
+    return cast(SingleTypeDef, typedef)
+
+
+def typedef_to_typeset(
+    typedef: SingleTypeDef | UnionType | None,
+    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
+    ctx_module: ModuleType | None = None,
+    remove_null: bool = False,
+) -> set[type]:
+    """Convert type definition to set of types (>1 in case of union)."""
+    typedef_set: set[SingleTypeDef | UnionType | None] = {typedef}
+
+    if isinstance(typedef, UnionType):
+        typedef_set = {
+            get_origin(union_arg) or union_arg for union_arg in get_args(typedef)
+        }
+
+        if remove_null:
+            typedef_set &= {
+                t for t in typedef_set if t is not None and not is_subtype(t, NoneType)
+            }
+
+    typeset: set[type] = set()
+
+    for t in typedef_set:
+        if t is None:
+            typeset.add(NoneType)
+            continue
+
+        if isinstance(t, type):
+            typeset.add(t)
+            continue
+
+        t_parsed = (
+            hint_to_typedef(t.__value__, typevar_map, ctx_module)
+            if isinstance(t, TypeAliasType)
+            else t
+        )
+
+        orig = get_origin(t_parsed)
+        if orig is None or orig is Literal:
+            typeset.add(object)
+            continue
+
+        if isinstance(t, TypeAliasType):
+            cls = _type_alias_classes.get(t) or new_class(
+                t.__name__,
+                (t_parsed,),
+                None,
+                lambda ns: ns.update({"_src_mod": (ctx_module or getmodule(t))}),
+            )
+            _type_alias_classes[t] = cls
+            typeset.add(cls)
+        else:
+            assert isinstance(orig, type)
+            typeset.add(
+                new_class(
+                    orig.__name__ + "_" + gen_str_hash(get_args(t), 5),
+                    (t,),
+                    None,
+                    lambda ns: ns.update({"_src_mod": (ctx_module or getmodule(t))}),
+                )
+            )
+
+    return typeset
