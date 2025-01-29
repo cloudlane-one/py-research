@@ -3100,6 +3100,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
         )
 
+    def __repr__(self) -> str:  # noqa: D105
+        return f"{type(self).__name__}({repr(self.describe())})"
+
     @property
     def _data_type(self) -> type[Data] | type[None]:
         """Resolve the data container type reference."""
