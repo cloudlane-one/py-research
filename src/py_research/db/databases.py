@@ -75,6 +75,7 @@ from .utils import (
 
 register_sqlite_adapters()
 
+TypeT = TypeVar("TypeT", bound=type)
 
 RecT = TypeVar("RecT", bound="Record", covariant=True, default=Any)
 RecT2 = TypeVar("RecT2", bound="Record")
@@ -1226,8 +1227,8 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         select = sqla.select(*sql_cols)
 
-        if self._root._table is not None:
-            select = select.select_from(self._root._table.sql_from)
+        if len(self._total_root_tables) > 0:
+            select = select.select_from(*(t.sql_from for t in self._total_root_tables))
 
         for join in self.sql_joins:
             select = select.join(*join)
@@ -1351,33 +1352,34 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         """Extract join operations from the relational tree."""
         joins: list[SqlJoin] = []
         _subtree = _subtree if _subtree is not None else self._total_join_dict
-        _parent = _parent if _parent is not None else self._root
+        _parent = _parent if _parent is not None else self._root_table
 
-        for target, next_subtree in _subtree.items():
-            joins.append(
-                (
-                    target.sql_from,
-                    reduce(
-                        sqla.and_,
-                        (
+        if _parent is not None:
+            for target, next_subtree in _subtree.items():
+                joins.append(
+                    (
+                        target.sql_from,
+                        reduce(
+                            sqla.and_,
                             (
-                                fk.sql_col == pk.sql_col
-                                for link in target.links
-                                for fk_map in link._abs_fk_maps.values()
-                                for fk, pk in fk_map.items()
-                            )
-                            if isinstance(target, BackLink)
-                            else (
-                                _parent[fk] == target[pk]
-                                for fk_map in target._abs_fk_maps.values()
-                                for fk, pk in fk_map.items()
-                            )
+                                (
+                                    fk.sql_col == pk.sql_col
+                                    for link in target.links
+                                    for fk_map in link._abs_fk_maps.values()
+                                    for fk, pk in fk_map.items()
+                                )
+                                if isinstance(target, BackLink)
+                                else (
+                                    _parent[fk] == target[pk]
+                                    for fk_map in target._abs_fk_maps.values()
+                                    for fk, pk in fk_map.items()
+                                )
+                            ),
                         ),
-                    ),
+                    )
                 )
-            )
 
-            joins.extend(type(self).sql_joins(self, next_subtree, target))
+                joins.extend(type(self).sql_joins(self, next_subtree, target))
 
         return joins
 
@@ -3301,8 +3303,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         return self._backlink
 
     @property
-    def _root(self) -> Data[Any, Any, Any, None, None, BaseT]:
-        return self.path[0]
+    def _root_table(self) -> Table[Record | None, None, Any, Any, None, BaseT] | None:
+        first = self.path[0]
+        return first if isinstance(first, Table) else None
 
     @cached_prop
     def _abs_link_path(self) -> dict[LinkItem, Data[Any, Any, Any, Any, Any, Any]]:
@@ -3379,7 +3382,14 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
         path_dict: dict[
             Data[Record | None, Any, Any, Any, Any, Any],
             Data[Any, Any, Any, Any, Any, Any],
-        ] = {self._root: self._root, **self._abs_link_path}
+        ] = {
+            **(
+                {self._root_table: self._root_table}
+                if self._root_table is not None
+                else {}
+            ),
+            **self._abs_link_path,
+        }
 
         for link_node, node in path_dict.items():
             if isinstance(link_node, Link) and issubclass(node.relation_type, Relation):
@@ -3571,9 +3581,15 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
 
         return fk_maps
 
-    @cached_prop
+    @property
     def _total_tables(self) -> list[Table[Record | None, Any, Any, Any, Any, BaseT]]:
         return self._abs_tables + self._abs_filters[1]
+
+    @property
+    def _total_root_tables(
+        self,
+    ) -> set[Table[Record | None, None, Any, Any, None, BaseT]]:
+        return {t for t in (self._root_table, *self._abs_tables) if t is not None}
 
     @cached_prop
     def _total_join_dict(self) -> JoinDict:
@@ -3636,7 +3652,7 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             )
             prefixed = data._prepend_ctx(self._table)
 
-            if prefixed.ctx != self._root:
+            if prefixed.ctx != self._root_table:
                 join_set.add(prefixed.ctx)
 
             return prefixed.sql_col
@@ -4678,6 +4694,16 @@ class RecordMeta(type):
                     for t in to_traverse
                 ),
             )
+        )
+
+    def __matmul__(
+        cls: TypeT, other: type[RecT3]
+    ) -> Data[tuple[TypeT, RecT3], BaseIdx, Any, None, None, Symbolic]:
+        """Align this record type's base table with another."""
+        return Data(
+            _base=symbol_db,
+            _type=tuple[cls, other],
+            _alignment=tuple(Table(_base=symbol_db, _type=t) for t in (cls, other)),
         )
 
 
