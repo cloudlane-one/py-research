@@ -577,8 +577,8 @@ async def _load_record(
     data: TreeNode,
     injections: dict[str, Hashable] | None,
 ) -> Hashable | Record | None:
-    assert len(table.target_record_types) == 1
-    rec_type = next(iter(table.target_record_types))
+    assert len(table.target_type_set) == 1
+    rec_type = next(iter(table.target_type_set))
 
     if table_map.loader is not None:
         if table_map.async_loader:
@@ -716,8 +716,8 @@ async def _load_records(
             assert len(table_map.target.links) == 1
             link = next(iter(table_map.target.links))
 
-            assert len(link.target_record_types) == 1
-            link_rec_type = next(iter(link.target_record_types))
+            assert len(link.target_type_set) == 1
+            link_rec_type = next(iter(link.target_type_set))
 
             rec_inj |= link._gen_fk_value_map(link_rec_type, parent_idx)
 
@@ -796,12 +796,12 @@ async def _load_records(
             if isinstance(sel, SubMap):
                 rel_map = copy_and_override(SubTableMap, sel, target=tgt)
             else:
-                assert len(tgt.target_record_types) == 1
+                assert len(tgt.target_type_set) == 1
                 rel_map = SubTableMap[Record, TreeNode, Record](
                     pull={
                         v: v.name
                         for v in cast(
-                            type[Record], next(iter(tgt.target_record_types))
+                            type[Record], next(iter(tgt.target_type_set))
                         )._col_values.values()
                     },
                     target=tgt,

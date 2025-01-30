@@ -2,7 +2,7 @@
 
 import locale
 from collections.abc import Callable
-from dataclasses import MISSING, Field, fields
+from dataclasses import MISSING, Field, dataclass, fields
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from fractions import Fraction
@@ -30,6 +30,17 @@ Params = ParamSpec("Params")
 DC = TypeVar("DC", bound=DataclassInstance)
 
 
+@dataclass
+class MaskedInit[**P, T]:
+    """Mask a type constructor with a compatible type."""
+
+    mask: Callable[P, T]
+    constructor: type
+
+    def __call__(self, *args: P.args, **kwds: P.kwargs) -> T:  # noqa: D102
+        return self.constructor(*args, **kwds)
+
+
 def copy_and_override(
     _init: Callable[Params, DC],
     _obj: DataclassInstance | tuple[DataclassInstance, ...],
@@ -41,6 +52,8 @@ def copy_and_override(
     Warning:
         Does not work for kw_only dataclasses and InitVars (yet).
     """
+    if isinstance(_init, MaskedInit):
+        _init = _init.constructor
     if not isinstance(_init, type):
         orig_init = get_origin(_init)
         assert orig_init is not None
