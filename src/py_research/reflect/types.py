@@ -139,26 +139,28 @@ _type_alias_classes: dict[TypeAliasType, type] = {}
 @overload
 def hint_to_typedef(
     hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
-    ctx_module: ModuleType | None = None,
-    missing_typevars: Literal["raise"] = ...,
+    *,
+    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
+    ctx_module: ModuleType | None = ...,
+    unresolved_typevars: Literal["raise"] = ...,
 ) -> SingleTypeDef | UnionType: ...
 
 
 @overload
 def hint_to_typedef(
     hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
-    ctx_module: ModuleType | None = None,
-    missing_typevars: Literal["keep"] = ...,
+    *,
+    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
+    ctx_module: ModuleType | None = ...,
+    unresolved_typevars: Literal["keep"] = ...,
 ) -> SingleTypeDef | UnionType | TypeVar: ...
 
 
 def hint_to_typedef(
     hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
+    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = None,
     ctx_module: ModuleType | None = None,
-    missing_typevars: Literal["raise", "keep"] = "raise",
+    unresolved_typevars: Literal["raise", "keep"] = "raise",
 ) -> SingleTypeDef | UnionType | TypeVar:
     """Convert type hint to type definition."""
     typevar_map = typevar_map or {}
@@ -181,7 +183,7 @@ def hint_to_typedef(
         ):
             type_res = typedef.__default__
         if type_res is Undef:
-            if missing_typevars == "keep":
+            if unresolved_typevars == "keep":
                 return typedef
             else:
                 raise TypeError(
@@ -206,7 +208,12 @@ def hint_to_typedef(
     ):
         typedef = orig[
             *(
-                hint_to_typedef(arg, typevar_map, ctx_module, missing_typevars)
+                hint_to_typedef(
+                    arg,
+                    typevar_map=typevar_map,
+                    ctx_module=ctx_module,
+                    unresolved_typevars=unresolved_typevars,
+                )
                 for arg in args
             )
         ]
@@ -246,7 +253,7 @@ def typedef_to_typeset(
             continue
 
         t_parsed = (
-            hint_to_typedef(t.__value__, typevar_map, ctx_module)
+            hint_to_typedef(t.__value__, typevar_map=typevar_map, ctx_module=ctx_module)
             if isinstance(t, TypeAliasType)
             else t
         )
@@ -337,72 +344,53 @@ def get_typevar_map(
     elif isinstance(c, tuple):
         # Tuple represents a type intersection via multiple base classes.
         # Just concat all typevar maps of the base classes.
-        typevar_map = (
-            reduce(
-                lambda x, y: x | y,
-                (get_typevar_map(base, subs=subs, subs_defaults=False) for base in c),
-            )
-            if len(c) > 0
-            else {}
+        typevar_map = reduce(
+            lambda x, y: x | y,
+            (get_typevar_map(base, subs=subs, subs_defaults=False) for base in c),
         )
 
     elif c is not Generic and orig is not Generic:
         # Anything else means we have a pure type or a generic typehint.
 
         # First get the typevar params of the typehint.
-        params: tuple[TypeVar, ...] | None = None
+        local_typevar_map = {}
         if hasattr(orig, "__parameters__"):
             params = getattr(orig, "__parameters__")
-        elif hasattr(orig, "__class_getitem__"):
-            # This likely means it's a built-in generic type
-            arg_count = arg_count if arg_count is not None else len(args)
-            params = tuple(TypeVar(f"_T{i}") for i in range(arg_count))
 
-        # Map typevar params to typeargs, which may be typevars themselves.
-        local_typevar_map = {}
-        if params is not None:
+            # Map typevar params to typeargs, which may be typevars themselves.
             if len(args) > 0:
                 local_typevar_map = dict(zip(params, args))
             else:
                 local_typevar_map = {p: p for p in getattr(orig, "__parameters__")}
 
+        # Apply substitutions.
+        subs_typevar_map = {
+            k: hint_to_typedef(v, typevar_map=subs, unresolved_typevars="keep")
+            for k, v in local_typevar_map.items()
+        }
+
         # Ascend to generic base classes or the value type
         # in case of a named type alias.
         base_typevar_map = {}
         if isinstance(orig, type):
-            base_typevar_map = get_typevar_map(
-                tuple[type, ...](
-                    getattr(orig, "__orig_bases__")
-                    if hasattr(orig, "__orig_bases__")
-                    else orig.__bases__
-                ),
-                subs=subs,
-                subs_defaults=False,
+            bases = tuple[type, ...](
+                getattr(orig, "__orig_bases__")
+                if hasattr(orig, "__orig_bases__")
+                else orig.__bases__
             )
+            if len(bases) > 1:
+                base_typevar_map = get_typevar_map(
+                    bases if len(bases) > 1 else bases[0],
+                    subs=subs_typevar_map,
+                    subs_defaults=False,
+                )
         elif isinstance(orig, TypeAliasType):
             base_typevar_map = get_typevar_map(
-                orig.__value__, subs=subs, subs_defaults=False
+                orig.__value__, subs=subs_typevar_map, subs_defaults=False
             )
 
-        # Extend substitutions with the local typevar map.
-        # Pick out resolved types.
-        sub_typevar_map = local_typevar_map | {
-            k: (subs[v] if isinstance(v, TypeVar) and v in subs else v)
-            for k, v in local_typevar_map.items()
-        }
-        resolved_typevars = {
-            k: v for k, v in subs.items() if not isinstance(v, TypeVar)
-        }
-
-        # Apply all typevar substitutions and merge.
-        typevar_map = sub_typevar_map | {
-            k: (
-                hint_to_typedef(v, resolved_typevars, missing_typevars="keep")
-                if not isinstance(v, TypeVar)
-                else sub_typevar_map[v] if v in sub_typevar_map else v
-            )
-            for k, v in base_typevar_map.items()
-        }
+        # Merge with base typevar map.
+        typevar_map = subs_typevar_map | base_typevar_map
 
     if subs_defaults:
         # Substitute defaults.

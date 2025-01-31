@@ -3164,7 +3164,9 @@ class Data(Generic[ValT, IdxT, CrudT, RelT, CtxT, BaseT]):
             ]
         else:
             hint = hint_to_typedef(
-                self._type or Data, self._typevar_subs, self._ctx_module
+                self._type or Data,
+                typevar_map=self._typevar_subs,
+                ctx_module=self._ctx_module,
             )
 
             if not is_subtype(hint, Data):
