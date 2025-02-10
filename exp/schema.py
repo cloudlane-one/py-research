@@ -14,7 +14,7 @@ from py_research.db import (
     Relation,
     Schema,
     Table,
-    Value,
+    Var,
 )
 
 
@@ -25,14 +25,14 @@ class TestSchema(Schema):
 class SearchResult(Relation["Search", "Project"]):
     """Link search to a result."""
 
-    score: Value[float]
+    score: Var[float]
 
 
 class Search(Record[str], TestSchema):
     """Defined search against the API."""
 
-    term: Value[str] = Value(primary_key=True)
-    result_count: Value[int]
+    term: Var[str] = Var(primary_key=True)
+    result_count: Var[int]
     results: Table[Project, SearchResult] = Table(default=True)
 
 
@@ -42,17 +42,17 @@ type Assignment = Relation["User", "Task"]
 class Task(Entity):
     """Link search to a result."""
 
-    name: Value[str]
+    name: Var[str]
     project: Link[Project]
     assignees: Table[User, Assignment]
-    status: Value[Literal["todo", "done"]]
+    status: Var[Literal["todo", "done"]]
 
 
 class User(Entity):
     """A generic user."""
 
-    name: Value[str]
-    age: Value[int]
+    name: Var[str]
+    age: Var[int]
     tasks: Table[Task, Assignment]
 
     @property
@@ -64,17 +64,17 @@ class User(Entity):
 class Membership(Relation["User", "Project"]):
     """Link user to a project."""
 
-    role: Value[str] = Value(default="member")
+    role: Var[str] = Var(default="member")
 
 
 class Project(Record[int]):
     """A generic project record."""
 
-    number: Value[int] = Value(primary_key=True)
-    name: Value[str]
-    start: Value[date]
-    end: Value[date]
-    status: Value[Literal["planned", "started", "done"]]
+    number: Var[int] = Var(primary_key=True)
+    name: Var[str]
+    start: Var[date]
+    end: Var[date]
+    status: Var[Literal["planned", "started", "done"]]
     org: Link[Organization]
     tasks: BackLink[Task] = BackLink(to=Task.project)
     members: Table[User, Membership]
@@ -83,8 +83,8 @@ class Project(Record[int]):
 class Organization(Entity):
     """A generic organization record."""
 
-    name: Value[str]
-    address: Value[str]
-    city: Value[str]
+    name: Var[str]
+    address: Var[str]
+    city: Var[str]
     projects: BackLink[Project] = BackLink(to=Project.org, default=True)
     countries: Array[str, int]

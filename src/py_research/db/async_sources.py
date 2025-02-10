@@ -26,19 +26,19 @@ from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
 from .conflicts import DataConflictPolicy
-from .databases import (
+from .rel_records import (
     Array,
     BackLink,
     Ctx,
-    Data,
     DataBase,
     Idx,
     Item,
     Link,
     Record,
+    Rel,
     Symbolic,
     Table,
-    Value,
+    Var,
 )
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -162,9 +162,9 @@ type NodeSelector = str | int | TreePath | type[All]
 """Select a node in a hierarchical data structure."""
 
 
-type ValueTarget[Val, Rec: Record] = Data[Val, Idx[()], Any, Any, Ctx[Rec], Symbolic]
-type TableTarget[Rec: Record] = Data[Rec, Any, Any, Any, Any, Symbolic]
-type ArrayTarget[Val, Rec: Record] = Data[Val, Idx, Any, Item, Ctx[Rec], Symbolic]
+type ValueTarget[Val, Rec: Record] = Rel[Val, Idx[()], Any, Any, Ctx[Rec], Symbolic]
+type TableTarget[Rec: Record] = Rel[Rec, Any, Any, Any, Any, Symbolic]
+type ArrayTarget[Val, Rec: Record] = Rel[Val, Idx, Any, Item, Ctx[Rec], Symbolic]
 
 type PropTarget[Rec: Record] = ValueTarget[Any, Rec] | TableTarget[Rec] | ArrayTarget[
     Any, Rec
@@ -282,8 +282,8 @@ class TableMap[Rec: Record, Dat]:
             ),
             **{
                 tgt: (
-                    copy_and_override(SubMap, sel, target_type=tgt.value_type)
-                    if isinstance(sel, SubMap) and isinstance(tgt, Data)
+                    copy_and_override(SubMap, sel, target_type=tgt.target_typeform)
+                    if isinstance(sel, SubMap) and isinstance(tgt, Rel)
                     else DataSelect.parse(sel)
                 )
                 for tgt, sel in (self.pull or {}).items()
@@ -296,7 +296,7 @@ class TableMap[Rec: Record, Dat]:
     ) -> dict[TableTarget | ArrayTarget, SubMap]:
         """Get all relation mappings."""
         return {
-            cast(Data[Any, Any, Any, Any, Ctx[Rec], Symbolic], rel): sel
+            cast(Rel[Any, Any, Any, Any, Ctx[Rec], Symbolic], rel): sel
             for rel, sel in self.full_map.items()
             if isinstance(rel, Table) and isinstance(sel, SubMap)
         }
@@ -394,15 +394,15 @@ class SubMap(TableMap, DataSelect):
 class SubTableMap[Rec: Record, Dat, Rec2: Record](TableMap[Rec, Dat]):
     """Map nested data via a relation to another record."""
 
-    target: Data[Rec, Any, Any, Any, Ctx[Rec2], Symbolic]
+    target: Rel[Rec, Any, Any, Any, Ctx[Rec2], Symbolic]
     """Relation to use for mapping."""
 
     rel_map: TableMap | None = None
     """Mapping to optional attributes of the relation record."""
 
     def __post_init__(self) -> None:  # noqa: D105
-        assert isinstance(self.target.value_type, type)
-        self.target_type = self.target.value_type
+        assert isinstance(self.target.target_typeform, type)
+        self.target_type = self.target.target_typeform
 
         if self.rel_map is not None:
             self.rel_map.target_type = self.target.relation_type
@@ -413,11 +413,11 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
     match push_map:
         case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
             return push_map
-        case Data() | SubTableMap() | str() | Index():
+        case Rel() | SubTableMap() | str() | Index():
             return {All: push_map}
-        case Iterable() if has_type(push_map, Iterable[Data | SubTableMap]):
+        case Iterable() if has_type(push_map, Iterable[Rel | SubTableMap]):
             return {
-                k.name if isinstance(k, Data) else k.target.name: True for k in push_map
+                k.name if isinstance(k, Rel) else k.target.name: True for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -442,11 +442,11 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
         **{
             (
                 target
-                if isinstance(target, Data | Index)
+                if isinstance(target, Rel | Index)
                 else getattr(rec, _get_selector_name(sel))
             ): DataSelect(sel)
             for sel, target in mapping.items()
-            if isinstance(target, Data | Index | bool)
+            if isinstance(target, Rel | Index | bool)
         },
         **{
             (
@@ -462,7 +462,7 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
             )
             for sel, targets in mapping.items()
             if has_type(targets, TableMap)
-            or (has_type(targets, Iterable[TableMap]) and not isinstance(targets, Data))
+            or (has_type(targets, Iterable[TableMap]) and not isinstance(targets, Rel))
             for target in ([targets] if isinstance(targets, TableMap) else targets)
         },
     }
@@ -551,7 +551,7 @@ def _gen_match_expr(
         match_cols = (
             list(rec_type._values.values())
             if isinstance(match_by, str) and match_by == "all"
-            else [match_by] if isinstance(match_by, Data) else match_by
+            else [match_by] if isinstance(match_by, Rel) else match_by
         )
         return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))
 
@@ -571,14 +571,14 @@ type RestData = list[tuple[TableMap[Record, TreeNode], InData]]
 
 
 async def _load_record(
-    table: Data[Record, Any, Any, Any, Any, Any],
+    table: Rel[Record, Any, Any, Any, Any, Any],
     table_map: TableMap[Record, Any],
     path_idx: DirectPath,
     data: TreeNode,
     injections: dict[str, Hashable] | None,
 ) -> Hashable | Record | None:
-    assert len(table.target_type_set) == 1
-    rec_type = next(iter(table.target_type_set))
+    assert len(table.origin_type_set) == 1
+    rec_type = next(iter(table.origin_type_set))
 
     if table_map.loader is not None:
         if table_map.async_loader:
@@ -628,7 +628,7 @@ async def _load_record(
     attrs = {
         a.name: (a, *list(sel.select(data, path_idx).items())[0])
         for a, sel in table_map.full_map.items()
-        if isinstance(a, Value)
+        if isinstance(a, Var)
     }
 
     rec_dict = {
@@ -667,7 +667,7 @@ async def _load_record(
 
 
 async def _load_records(
-    table: Data[Record, Any, Any, Any, Any, Any],
+    table: Rel[Record, Any, Any, Any, Any, Any],
     table_map: TableMap[Any, Any],
     in_data: InData,
     rest_data: RestData,
@@ -716,8 +716,8 @@ async def _load_records(
             assert len(table_map.target.links) == 1
             link = next(iter(table_map.target.links))
 
-            assert len(link.target_type_set) == 1
-            link_rec_type = next(iter(link.target_type_set))
+            assert len(link.origin_type_set) == 1
+            link_rec_type = next(iter(link.origin_type_set))
 
             rec_inj |= link._gen_fk_value_map(link_rec_type, parent_idx)
 
@@ -796,12 +796,12 @@ async def _load_records(
             if isinstance(sel, SubMap):
                 rel_map = copy_and_override(SubTableMap, sel, target=tgt)
             else:
-                assert len(tgt.target_type_set) == 1
+                assert len(tgt.origin_type_set) == 1
                 rel_map = SubTableMap[Record, TreeNode, Record](
                     pull={
                         v: v.name
                         for v in cast(
-                            type[Record], next(iter(tgt.target_type_set))
+                            type[Record], next(iter(tgt.origin_type_set))
                         )._col_values.values()
                     },
                     target=tgt,

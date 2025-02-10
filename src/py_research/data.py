@@ -66,7 +66,7 @@ def copy_and_override(
 
     obj_fields: dict[Field, Any] = {}
     for obj in objs:
-        src_fields = set(f.name for f in fields(obj))
+        src_fields = set(f.name for f in obj.__dataclass_fields__.values())
         all_obj_fields = {
             f: getattr(obj, f.name)
             for f in target_fields
