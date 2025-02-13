@@ -65,7 +65,7 @@ from py_research.reflect.types import (
     is_subtype,
     typedef_to_typeset,
 )
-from py_research.types import UUID4, Keep, Ordinal, Undef
+from py_research.types import UUID4, Not.changed, Ordinal, Not.defined
 
 from .utils import pd_to_py_dtype, pl_type_map, sql_to_py_dtype
 

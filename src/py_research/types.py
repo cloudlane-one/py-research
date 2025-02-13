@@ -3,7 +3,10 @@
 from dataclasses import Field
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any, ClassVar, Protocol, final, runtime_checkable
+from enum import auto
+from typing import Any, ClassVar, Protocol, runtime_checkable
+
+from py_research.enums import StrEnum
 
 
 @runtime_checkable
@@ -43,15 +46,17 @@ type Ordinal = (
 )
 
 
-@final
-class Undef:
-    """Demark undefined status."""
+class Not(StrEnum):
+    """Demark some kind of unresolved or unhandled status."""
 
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+    defined = auto()
+    """State in question is entirely undefined."""
 
+    resolved = auto()
+    """State in question is defined, but not fully resolved."""
 
-@final
-class Keep:
-    """Demark unchanged status."""
+    handled = auto()
+    """Requested state change is not handled."""
 
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+    changed = auto()
+    """State in question is not changed."""

@@ -39,9 +39,9 @@ from py_research.data import copy_and_override
 from py_research.files import HttpFile
 from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import has_type
-from py_research.types import UUID4, Undef
+from py_research.types import UUID4, Not.defined
 
-from .data_models import CRU, CRUD, Attr, C, CrudT, D, Model, Prop, R, U, Ungot, Unset
+from .props import CRU, CRUD, Attr, C, CrudT, D, Model, Prop, R, U, Ungot, Unset
 from .sql_utils import coalescent_join, safe_delete, safe_insert, safe_update
 from .utils import pl_type_map, register_sqlite_adapters, remove_cross_fk
 
@@ -54,6 +54,7 @@ RecT2 = TypeVar("RecT2", bound="Record")
 
 type TableInput[T: Record] = pd.DataFrame | pl.DataFrame | Iterable[T] | sqla.FromClause
 
+sqla.schema.ColumnCollectionMixin
 
 @final
 class Symbolic:
@@ -987,7 +988,7 @@ class Column(
             instance._load_dict()
 
         if self.name not in instance.__dict__:
-            if self.default is not Undef:
+            if self.default is not Not.defined:
                 instance.__dict__[self.name] = self.default
             else:
                 assert self.default_factory is not None

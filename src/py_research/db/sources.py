@@ -26,7 +26,7 @@ from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
 from .conflicts import DataConflictPolicy
-from .rel_records import (
+from .records import (
     Array,
     BackLink,
     Ctx,

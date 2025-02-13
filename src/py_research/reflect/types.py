@@ -26,7 +26,7 @@ from beartype.door import is_bearable, is_subhint
 from typing_extensions import TypeVar, runtime_checkable
 
 from py_research.hashing import gen_str_hash
-from py_research.types import Undef
+from py_research.types import Not.defined
 
 T = TypeVar("T", covariant=True)
 T_cov = TypeVar("T_cov", covariant=True)
@@ -174,15 +174,15 @@ def hint_to_typedef(
         )
 
     if isinstance(typedef, TypeVar):
-        type_res = typevar_map.get(typedef, Undef)
+        type_res = typevar_map.get(typedef, Not.defined)
 
         if (
-            type_res is Undef
+            type_res is Not.defined
             and hasattr(typedef, "__default__")
             and typedef.has_default()
         ):
             type_res = typedef.__default__
-        if type_res is Undef:
+        if type_res is Not.defined:
             if unresolved_typevars == "keep":
                 return typedef
             else:

@@ -64,9 +64,9 @@ from py_research.reflect.types import (
     is_subtype,
     typedef_to_typeset,
 )
-from py_research.types import UUID4, Keep, Ordinal, Undef
+from py_research.types import UUID4, Not.changed, Ordinal, Not.defined
 
-from .data_models import CRUD, RUD, CrudT, Prop, R, ValT
+from .props import CRUD, RUD, CrudT, Prop, R, ValT
 from .sql_tables import Base, Column, DbT, KeyT, Record, RecT, Symbolic
 from .utils import pd_to_py_dtype, pl_type_map, sql_to_py_dtype
 
@@ -182,7 +182,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     # Internal attributes:
 
     __target: (set[type[ValT]] | sqla.ColumnElement[ValT] | sqla.Selectable) | None
-    __default: ValT | Rel[ValT, Any, Any, DbT, Any] | type[Undef] = Undef
+    __default: ValT | Rel[ValT, Any, Any, DbT, Any] | type[Not.defined] = Not.defined
     __index: Rel[Any, SelfIdx, Any, DbT, Ctx] | None
     __joins: set[Join[Any, ValT, Any, CrudT]] | None
     __crud: CrudT
@@ -218,7 +218,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             | sqla.Selectable
             | Callable[[Record], ValT2]
         ) | None = None,
-        default: ValT2 | Rel[ValT2, Any, Any, DbT, Any] | type[Undef] = Undef,
+        default: ValT2 | Rel[ValT2, Any, Any, DbT, Any] | type[Not.defined] = Not.defined,
         index: Rel[tuple[*KeyTt3], SelfIdx, Any, DbT, Ctx[TabT2]] | None = None,
         joins: set[Join[TabT2, ValT2, Idx[*KeyTt3], CrudT2]] | None = None,
         crud: CrudT2 | None = None,
@@ -1377,7 +1377,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             assert count is not None
             return count
 
-        # Relational selection and filtering:
+    # Relational selection and filtering:
 
     @cached_prop
     def symbol(self) -> Rel[ValT, IdxT, CrudT, Symbolic, CtxT]:
@@ -1799,17 +1799,17 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     value = (
                         self.getter(instance)
                         if self.getter is not None
-                        else instance.__dict__.get(self.name, Undef)
+                        else instance.__dict__.get(self.name, Not.defined)
                     )
 
-                    if value is Undef:
+                    if value is Not.defined:
                         if self.default_factory is not None:
                             value = self.default_factory()
                         else:
                             value = self.default
 
                         assert (
-                            value is not Undef
+                            value is not Not.defined
                         ), f"Property value for `{self.name}` could not be fetched."
                         setattr(instance, self.name, value)
 
@@ -2945,7 +2945,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     def __set__(
         self,
         instance: Record,
-        value: Rel[ValT, Idx[()], Any, Any, Any, Any] | ValT | type[Keep],
+        value: Rel[ValT, Idx[()], Any, Any, Any, Any] | ValT | type[Not.changed],
     ) -> None: ...
 
     @overload
@@ -2961,7 +2961,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         value: Any,
     ) -> None:
         """Set the value of this dataset when used as property."""
-        if value is Keep:
+        if value is Not.changed:
             return
 
         if isinstance(instance, Record):

@@ -13,7 +13,7 @@ import sqlalchemy.dialects.sqlite as sqlite
 
 JoinCondition = Callable[[sqla.FromClause, sqla.FromClause], sqla.ColumnElement[bool]]
 
-type SqlJoin = tuple[sqla.FromClause, JoinCondition]
+type RelJoin = tuple[sqla.FromClause, JoinCondition]
 
 
 def coalescent_join(
@@ -64,7 +64,7 @@ def coalescent_join(
 def recursive_join(
     cols: Iterable[sqla.ColumnElement],
     fromclause: sqla.FromClause,
-    join_loops: Iterable[Iterable[SqlJoin]],
+    join_loops: Iterable[Iterable[RelJoin]],
 ) -> sqla.CTE:
     """Recursively join and union a fromclause via loops.
 
