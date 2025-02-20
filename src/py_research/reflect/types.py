@@ -26,7 +26,7 @@ from beartype.door import is_bearable, is_subhint
 from typing_extensions import TypeVar, runtime_checkable
 
 from py_research.hashing import gen_str_hash
-from py_research.types import Not.defined
+from py_research.types import Not
 
 T = TypeVar("T", covariant=True)
 T_cov = TypeVar("T_cov", covariant=True)
@@ -134,6 +134,16 @@ def get_inheritance_distance(cls: type, base: type) -> int | None:
 
 
 _type_alias_classes: dict[TypeAliasType, type] = {}
+
+
+@overload
+def hint_to_typedef(
+    hint: SingleTypeDef,
+    *,
+    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
+    ctx_module: ModuleType | None = ...,
+    unresolved_typevars: Literal["raise", "keep"] = ...,
+) -> SingleTypeDef: ...
 
 
 @overload

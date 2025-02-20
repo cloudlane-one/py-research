@@ -31,5 +31,6 @@
     "python.testing.pytestEnabled": true,
     "[sql]": {
         "editor.defaultFormatter": "adpyke.vscode-sql-formatter"
-    }
+    },
+    "python.analysis.autoImportCompletions": true
 }

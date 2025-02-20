@@ -95,7 +95,7 @@ def _rel_tables(
     )
 
 
-OrdT = TypeVar("OrdT", bound=Ordinal)
+
 
 
 type IdxStartEnd[Key: Hashable, Key2: Hashable] = tuple[Key, *tuple[Any, ...], Key2]
@@ -309,10 +309,10 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         if left is None:
             return self
 
-        if len(self.path) == 1:
+        if len(self.ctx_path) == 1:
             return self.copy(__context=left)
 
-        root, *path = self.path
+        root, *path = self.ctx_path
         assert is_subtype(
             Union[*left.record_type_set], Union[*root.record_type_set]
         ), "Context table must be of same type as root table."
@@ -335,12 +335,12 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         return cast(Rel[TabT2, IdxT2, CrudT2, BaseT2, CtxT2], self.__context)
 
     @cached_prop
-    def path(self) -> PropPath[ValT]:
+    def ctx_path(self) -> PropPath[ValT]:
         """Relational path of this dataset."""
         if self.__context is None:
             return (cast(Rel[ValT, Any, Any, None, Any], self),)
 
-        return cast(PropPath[ValT], (*self.__context.path, self))
+        return cast(PropPath[ValT], (*self.__context.ctx_path, self))
 
     @cached_prop
     def fqn(self) -> str:
@@ -351,9 +351,9 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     target_type._fqn for target_type in self.record_type_set
                 )
             else:
-                return self.name
+                return self._name
 
-        fqn = f"{self.__context.fqn}.{self.name}"
+        fqn = f"{self.__context.fqn}.{self._name}"
 
         if len(self.__filters) > 0:
             fqn += f"[{gen_str_hash(self.__filters, length=6)}]"
@@ -362,7 +362,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
 
     @property
     def _root(self) -> Rel[Record | None, Any, Any, Any, None] | None:
-        first = self.path[0]
+        first = self.ctx_path[0]
         return (
             first
             if Rel._has_type(first, Rel[Record | None, Any, Any, Any, Any])
@@ -501,7 +501,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 self.fqn
                 if self.__context is not None
                 and len(self.__context.record_type_set) > 1
-                else self.name
+                else self._name
             ),
             _selectable=(
                 self.__context._sql_join() if self.__context is not None else None
@@ -510,23 +510,6 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         setattr(col, "_data", self)
 
         return col
-
-    def _parse_sql_filter(
-        self,
-        element: sqla_visitors.ExternallyTraversible,
-        join_set: set[Rel[Any, Any, Any, DbT, Any]] = set(),
-        **kw: Any,
-    ) -> sqla.ColumnElement | None:
-        if hasattr(element, "_data"):
-            data = cast(Rel[Any, Idx[()], Any, Any, AnyCtx], getattr(element, "_data"))
-            prefixed = data.__prepend_ctx(self._abs_table)
-
-            if prefixed.ctx != self._root:
-                join_set.add(prefixed.ctx)
-
-            return prefixed._sql_col()
-
-        return None
 
     # Normalized query construction:
 
@@ -697,7 +680,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         return [
             *sql_filt,
             *key_filt,
-        ], merge
+        ], mergea
 
     @cached_prop
     def _abs_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, DbT]]:
@@ -1001,7 +984,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 elif isinstance(sel, Array):
                     val_list.append(row["value"])
                 else:
-                    val_list.append(row[sel.name])
+                    val_list.append(row[sel._name])
 
             vals.append(tuple(val_list) if len(val_list) > 1 else val_list[0])
 
@@ -1387,9 +1370,9 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             (
                 reduce(
                     lambda ctx, data: data.copy(__context=ctx, base=symbol_base),
-                    self.path,
+                    self.ctx_path,
                 )
-                if len(self.path) > 1
+                if len(self.ctx_path) > 1
                 else self.copy(base=symbol_base)
             ),
         )
@@ -1401,7 +1384,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             type[TabT2],
             dynamic_record_type(
                 Record,
-                f"{self.name}.x",
+                f"{self._name}.x",
                 props=reduce(
                     set.intersection,
                     (set(t._props.values()) for t in self.record_type_set),
@@ -1799,7 +1782,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     value = (
                         self.getter(instance)
                         if self.getter is not None
-                        else instance.__dict__.get(self.name, Not.defined)
+                        else instance.__dict__.get(self._name, Not.defined)
                     )
 
                     if value is Not.defined:
@@ -1810,14 +1793,14 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
 
                         assert (
                             value is not Not.defined
-                        ), f"Property value for `{self.name}` could not be fetched."
-                        setattr(instance, self.name, value)
+                        ), f"Property value for `{self._name}` could not be fetched."
+                        setattr(instance, self._name, value)
 
                     return value
                 else:
                     self_ref = cast(
                         Rel[ValT, Idx[()], CrudT, RelT, Ctx, Symbolic],
-                        getattr(owner, self.name),
+                        getattr(owner, self._name),
                     )
                     table = Table(_base=instance._base, _type=owner)
                     return table[self_ref][instance._index]
@@ -1846,7 +1829,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     ) -> sqla.ColumnElement[bool] | bool:
         identical = hash(self) == hash(other)
 
-        if identical or self._ctx is None:
+        if identical or self._context is None:
             return identical
 
         if isinstance(other, Rel):
@@ -2026,7 +2009,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
 
         return Table(
             _base=self.base,
-            _ctx=self._ctx,
+            _ctx=self._context,
             _name=table.name,
             _type=cast(set[type[TabT2]], self.record_type_set),
             _sql_join=table,
@@ -2969,20 +2952,20 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 if self.setter is not None:
                     self.setter(instance, value)
                 else:
-                    instance.__dict__[self.name] = value
+                    instance.__dict__[self._name] = value
 
             if not isinstance(self, Var) or (
                 self.pub_status is Public and instance._published
             ):
                 owner = type(instance)
                 sym_rel: Rel[Any, Any, Any, Any, Any, Symbolic] = getattr(
-                    owner, self.name
+                    owner, self._name
                 )
                 instance._table[[instance._index]][sym_rel]._mutate(value)
 
             if not isinstance(self, Var):
                 instance._update_dict()
         else:
-            instance.__dict__[self.name] = value
+            instance.__dict__[self._name] = value
 
         return

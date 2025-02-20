@@ -532,7 +532,7 @@ class Base(Generic[BaseT, BackT, CrudT]):
         """Columns of this record type's table."""
         return {
             k: sqla.Index(
-                f"{self._get_base_table_name(rec_type)}_key_{k.name}",
+                f"{self._get_base_table_name(rec_type)}_key_{k._name}",
                 *(col.name for col in k.columns),
                 unique=True,
             )
@@ -560,7 +560,7 @@ class Base(Generic[BaseT, BackT, CrudT]):
             fks[fk] = sqla.ForeignKeyConstraint(
                 [col.name for col in fk.column_map.keys()],
                 [target_table.c[col.name] for col in fk.column_map.values()],
-                name=f"{self._get_base_table_name(rec_type)}_fk_{fk.name}_{target_type._fqn}",
+                name=f"{self._get_base_table_name(rec_type)}_fk_{fk._name}_{target_type._fqn}",
             )
 
         return fks
@@ -1048,7 +1048,7 @@ class ColTuple(Prop[TupT, OwnT, R]):
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val)}
 
     def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.name, self._owner, self.columns))
+        return gen_int_hash((self._name, self._context, self.columns))
 
 
 @dataclass(eq=False)
@@ -1063,9 +1063,9 @@ class Key(ColTuple[KeyT, OwnT]):
         if len(self.columns) == 0:
             self.columns = (
                 Column(
-                    _name=self.name,
+                    _name=self._name,
                     _type=Column[self.common_value_type],
-                    _owner=self._owner,
+                    _owner=self._context,
                 ),
             )
             setattr(owner, f"{name}_col", self.columns[0])
@@ -1097,9 +1097,9 @@ class ForeignKey(ColTuple[KeyT, OwnT], Generic[TgtT, KeyT, OwnT]):
 
             col_map = {
                 Column(
-                    _name=f"{self.name}_{pk_col.name}_fk",
+                    _name=f"{self._name}_{pk_col.name}_fk",
                     _type=Column[pk_col.common_value_type],
-                    _owner=self._owner,
+                    _owner=self._context,
                 ): pk_col
                 for pk_col in pk_cols
             }
@@ -1173,12 +1173,12 @@ class Record(Model, Generic[KeyT]):
                     setattr(cls, col.name, col)
 
                 pk = Key[super_pk.typeargs[KeyT], cls](columns=tuple(col_map.keys()))
-                setattr(cls, pk.name, pk)
+                setattr(cls, pk._name, pk)
 
                 fk = ForeignKey[superclass, super_pk.typeargs[KeyT], cls](
                     column_map=col_map
                 )
-                setattr(cls, fk.name, fk)
+                setattr(cls, fk._name, fk)
 
     @classmethod
     def _default_table_name(cls) -> str:

@@ -328,3 +328,152 @@ class DataBase(Data[SchemaT, BaseIdx, CrudT, BaseT, None], Base[SchemaT, BaseT])
                 else Union[*self._def_types] if len(self._def_types) > 0 else None
             ),
         )
+        
+    def graph(
+        self: Rel[Schema | Record, Any, Any, Any, Any, DynBackendID],
+        nodes: (
+            Sequence[type[Record] | Rel[Record, BaseIdx, Any, None, None, Symbolic]]
+            | None
+        ) = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        db = self.extract()
+
+        nodes = (
+            nodes
+            if nodes is not None
+            else list(type(self)._rel_record_types(self, with_relations=False))
+        )
+        node_tables = [db[n] for n in nodes]
+        node_types = {
+            t
+            for n in nodes
+            for t in ([n] if isinstance(n, type) else n.record_type_set)
+        }
+        edge_types = {t for t in db._rel_record_types if issubclass(t, Relation)}
+
+        # Concat all node tables into one.
+        node_dfs = [
+            n.df(kind=pd.DataFrame, force_fqns=True).reset_index().assign(table=n.fqn)
+            for n in node_tables
+        ]
+        node_df = (
+            pd.concat(node_dfs, ignore_index=True)
+            .reset_index()
+            .rename(columns={"index": "node_id"})
+        )
+        node_df = node_df[
+            [
+                "node_id",
+                "table",
+                *(c for c in node_df.columns if c not in ("node_id", "table")),
+            ]
+        ]
+
+        directed_edges = reduce(
+            set.union, (set((n, r) for r in n._links.values()) for n in node_types)
+        )
+
+        undirected_edges: dict[
+            type[Record],
+            set[
+                tuple[
+                    Link[Record, Any, Any, Symbolic],
+                    Link[Record, Any, Any, Symbolic],
+                ]
+            ],
+        ] = {t: set() for t in edge_types}
+
+        for rel in edge_types:
+            left, right = cast(
+                tuple[
+                    Link[Record, Any, Any, Symbolic],
+                    Link[Record, Any, Any, Symbolic],
+                ],
+                (rel._from, rel._to),  # type: ignore
+            )
+            if is_subtype(
+                Union[*node_types], Union[*left.record_type_set]
+            ) and is_subtype(Union[*node_types], Union[*right.record_type_set]):
+                undirected_edges[rel].add((left, right))
+
+        direct_edge_dfs = [
+            node_df.loc[node_df["table"] == str(parent._default_table_name())]
+            .rename(columns={"node_id": "source"})
+            .merge(
+                node_df.loc[node_df["table"] == str(rec_type._default_table_name())],
+                left_on=[c.fqn for c in fk_map.keys()],
+                right_on=[c.fqn for c in fk_map.values()],
+            )
+            .rename(columns={"node_id": "target"})[["source", "target"]]
+            .assign(
+                ltr=",".join(c.name for c in fk_map.keys()),
+                rtl=None,
+            )
+            for parent, link in directed_edges
+            for rec_type, fk_map in link._abs_fk_maps.items()
+        ]
+
+        rel_edge_dfs = []
+        for assoc_table, rels in undirected_edges.items():
+            for left, right in rels:
+                for left_target, right_target in product(
+                    left.record_type_set, right.record_type_set
+                ):
+                    left_fk_map = left._abs_fk_maps[left_target]
+                    right_fk_map = right._abs_fk_maps[right_target]
+
+                    rel_df = (
+                        self[assoc_table]
+                        .df(kind=pd.DataFrame, force_fqns=True)
+                        .reset_index()
+                    )
+
+                    left_merged = rel_df.merge(
+                        node_df.loc[
+                            node_df["table"] == str(left_target._default_table_name())
+                        ][[*(c.fqn for c in left_fk_map.values()), "node_id"]],
+                        left_on=[c.fqn for c in left_fk_map.keys()],
+                        right_on=[c.fqn for c in left_fk_map.values()],
+                        how="inner",
+                    ).rename(columns={"node_id": "source"})
+
+                    both_merged = left_merged.merge(
+                        node_df.loc[
+                            node_df["table"] == str(right_target._default_table_name())
+                        ][[*(c.fqn for c in right_fk_map.values()), "node_id"]],
+                        left_on=[c.fqn for c in right_fk_map.keys()],
+                        right_on=[c.fqn for c in right_fk_map.values()],
+                        how="inner",
+                    ).rename(columns={"node_id": "target"})[
+                        list(
+                            {
+                                "source",
+                                "target",
+                                *(c.fqn for c in assoc_table._col_values.values()),
+                            }
+                        )
+                    ]
+
+                    rel_edge_dfs.append(
+                        both_merged.assign(
+                            ltr=",".join(c.name for c in right_fk_map.keys()),
+                            rtl=",".join(c.name for c in left_fk_map.keys()),
+                        )
+                    )
+
+        # Concat all edges into one table.
+        edge_df = pd.concat(
+            [
+                *direct_edge_dfs,
+                *rel_edge_dfs,
+            ],
+            ignore_index=True,
+        )
+
+        return node_df, edge_df
