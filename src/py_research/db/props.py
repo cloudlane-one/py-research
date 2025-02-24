@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from calendar import day_abbr
 from collections.abc import (
     Callable,
     Hashable,
@@ -30,12 +31,14 @@ from typing import (
     final,
     get_origin,
     overload,
+    runtime_checkable,
 )
 
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.sql.visitors as sqla_visitors
+import sqlparse
 from typing_extensions import TypeVar, TypeVarTuple
 
 from py_research.caching import cached_prop
@@ -184,32 +187,25 @@ type CRUD = C | R | U | D
 
 CrudT = TypeVar("CrudT", bound=CRUD, default=Any, contravariant=True)
 CrudT2 = TypeVar("CrudT2", bound=CRUD)
-CrudCtxT = TypeVar("CrudCtxT", bound=CRUD, covariant=True)
+
+ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=AnyIdx, default=Any)
+ArgSqlT = TypeVar("ArgSqlT", contravariant=True, bound=SqlExpr | None, default=Any)
 
 
-@dataclass
-class Ctx(Generic[ValT, IdxT, CrudT, SqlT]):
-    """Node in context path."""
+class Root(Generic[SchemaT, ArgIdxT, CrudT, ArgSqlT]):
+    """Root type of a data instance."""
 
 
-CtxT = TypeVar("CtxT", bound=Ctx | None, default=Any, contravariant=True)
-CtxT2 = TypeVar("CtxT2", bound=Ctx | None)
-CtxT3 = TypeVar("CtxT3", bound=Ctx | None)
-
-PfxT = TypeVar("PfxT", bound=Ctx, contravariant=True)
-PfxT2 = TypeVar("PfxT2", bound=Ctx)
-PfxT3 = TypeVar("PfxT3", bound=Ctx)
-
-CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[Any, ...]])
-CtxTt2 = TypeVarTuple("CtxTt2")
-CtxTt3 = TypeVarTuple("CtxTt3")
+RootT = TypeVar("RootT", bound=Root, default=Any, covariant=True)
+RootT2 = TypeVar("RootT2", bound=Root)
+RootT3 = TypeVar("RootT3", bound=Root)
 
 
-class Base(Protocol[SchemaT, CrudT]):  # pyright: ignore[reportInvalidTypeVarUse]
+class Base(Root[SchemaT, Any, CrudT, sqla.SelectBase]):
     """Base for retrieving/storing data."""
 
     @property
-    def instance_registry(self) -> MutableMapping[Any, Any]:
+    def instance_map(self) -> MutableMapping[Any, Any]:
         """Mapping of FQNs to base-aware instances like FromClauses or Records."""
         ...
 
@@ -218,17 +214,23 @@ class Base(Protocol[SchemaT, CrudT]):  # pyright: ignore[reportInvalidTypeVarUse
         """SQLAlchemy connection to the database."""
         ...
 
-    def get_base_data[
+    def registry[
         T: AutoIndexable
-    ](self, value_type: type[T]) -> Data[
-        T, AutoIdx[T], CrudT, sqla.FromClause, Self, None
-    ]:
+    ](self, value_type: type[T]) -> Registry[T, CrudT, Self]:
         """Get the base data instance for a type in this base."""
         ...
 
 
-BaseT = TypeVar("BaseT", bound=Base | None, default=Any, covariant=True)
-BaseT2 = TypeVar("BaseT2", bound=Base | None)
+BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
+
+
+class Ctx(Generic[ValT, IdxT, CrudT, SqlT]):
+    """Node in context path."""
+
+
+CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[Any, ...]])
+CtxTt2 = TypeVarTuple("CtxTt2")
+CtxTt3 = TypeVarTuple("CtxTt3")
 
 
 type Input[Val, Sql: SqlExpr | None] = Val | Iterable[Val] | Mapping[
@@ -265,43 +267,19 @@ def _map_data_type_name(name: str) -> type[Prop | None]:
 
 
 @dataclass(kw_only=True)
-class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
+class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
     """Property definition for a model."""
 
     # Core attributes:
 
-    _base: BaseT
     _type: TypeRef[Prop[ValT]] | None = None
-
-    _context: (
-        type[AutoIndexable]
-        | Data[Any, Any, CrudT, Any, BaseT, CtxT, *tuple[Any, ...]]
-        | None
-    ) = field(init=False)
+    _context: RootT | Data[Any, Any, CrudT, Any, RootT, *tuple[Any, ...]]
 
     # Extension methods:
 
     def _name(self) -> str:
         """Name of the property."""
         return gen_str_hash(self)
-
-    @overload
-    def _index(
-        self: Data[Any, Idx[*KeyTt2], Any, None]
-    ) -> Data[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, None, BaseT, CtxT, *CtxTt]: ...
-
-    @overload
-    def _index(
-        self: Data[Any, Idx[*KeyTt2], Any, SqlExpr]
-    ) -> Data[
-        tuple[*KeyTt2], SelfIdx[*KeyTt2], R, sqla.FromClause, BaseT, CtxT, *CtxTt
-    ]: ...
-
-    def _index(
-        self: Data[Any, Idx[*KeyTt2]]
-    ) -> Data[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, Any, BaseT, CtxT, *CtxTt]:
-        """Get the index of this data."""
-        raise NotImplementedError()
 
     def _sql(self) -> SqlT:
         """Get SQL-side reference to this property."""
@@ -317,6 +295,15 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     def _value(self, row: Mapping[str, Any]) -> ValT | Literal[Not.handled]:
         """Transform dataframe row to scalar property value."""
         return Not.handled
+
+    def _index(
+        self: Data[Any, AnyIdx[*KeyTt2]]
+    ) -> (
+        Alignment[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, SqlT, Base]
+        | Literal[Not.defined]
+    ):
+        """Get the index of this data."""
+        return Not.defined
 
     def _sql_mutation(
         self: Data[Any, Any, CrudT2, *tuple[Any, ...]],
@@ -385,123 +372,59 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
 
     # Context:
 
-    @overload
-    def _add_ctx(  # noqa: D107
-        self: Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *CtxTt2],
-        ctx: None,
-    ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *CtxTt2]: ...
-
-    @overload
-    def _add_ctx(  # noqa: D107
+    def _to_ctx(  # noqa: D107
         self: Data[
             ValT2,
             IdxT2,
             CrudT2,
             SqlT2,
-            BaseT2,
-            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+            Root[ValT3, IdxT3, CrudT2, SqlT3],
             *CtxTt2,
         ],
-        ctx: Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, CtxT3, *CtxTt3],
-    ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, CtxT3, *CtxTt3, *CtxTt3]: ...
-
-    def _add_ctx(  # noqa: D107
-        self: Data[*tuple[Any, ...]],
-        ctx: Data[*tuple[Any, ...]] | None,
-    ) -> Data[*tuple[Any, ...]]:
+        ctx: Data[ValT3, IdxT3, CrudT2, SqlT3, RootT3, *CtxTt3],
+    ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, RootT3, *CtxTt3, *CtxTt2]:
         """Add a context to this property."""
-        if self._context is None:
-            return self
+        return copy_and_override(
+            Data[ValT2, IdxT2, CrudT2, SqlT2, RootT3, *CtxTt3, *CtxTt2],
+            self,
+            _context=(
+                ctx if isinstance(self._context, Root) else self._context._to_ctx(ctx)
+            ),
+        )
 
-        data = copy(self)
-        ctx = self.context()
-        data._context = ctx._add_ctx(ctx) if ctx is not None else None
-        return data
+    @cached_prop
+    def root(self) -> RootT:
+        """Get the root of this property."""
+        if isinstance(self._context, Data):
+            return self._context.root
 
-    @overload
-    def context(
-        self: Data[
-            ValT2,
-            IdxT2,
-            CrudT2,
-            SqlT2,
-            BaseT2,
-            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
-            *tuple[()],
-        ]
-    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, None]: ...
-
-    @overload
-    def context(
-        self: Data[
-            ValT2,
-            IdxT2,
-            CrudT2,
-            SqlT2,
-            BaseT2,
-            PfxT3,
-            *CtxTt3,
-            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
-        ]
-    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, PfxT3, *CtxTt3]: ...
-
-    @overload
-    def context(
-        self: Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *tuple[Any, ...]]
-    ) -> None: ...
-
-    @overload
-    def context(self: Data[*tuple[Any, ...]]) -> Data[*tuple[Any, ...]] | None: ...
-
-    def context(self) -> Data[*tuple[Any, ...]] | None:
-        """Get the context of this property."""
-        if self.typeargs[CtxT] is NoneType:
-            return None
-
-        if isinstance(self._context, type):
-            return (
-                self._base.get_base_data(self._context)
-                if self._base is not None
-                else Data[self._context, AutoIdx[self._context]](_base=None)
-            )
-
-        assert isinstance(self._context, Data)
         return self._context
+
+    @cached_prop
+    def context(
+        self: Data[
+            ValT2,
+            IdxT2,
+            CrudT2,
+            SqlT2,
+            RootT2,
+            *CtxTt2,
+            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+        ]
+    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, RootT2, *CtxTt2]:
+        """Get the context of this property."""
+        assert isinstance(self._context, Data)
+        return self._context  # type: ignore
 
     @cached_prop
     def fqn(self) -> str:
         """Fully qualified name of this dataset based on relational path."""
-        ctx = self.context()
-
-        if ctx is None:
+        if not isinstance(self._context, Data):
             return self._name()
 
-        return ctx.fqn + "." + self._name()
+        return self._context.fqn + "." + self._name()
 
     # SQL:
-
-    def _tag_sql_expr(self, expr: SqlExpr) -> SqlExpr:
-        """Tag SQL expression with this property."""
-        expr = copy(expr)
-        setattr(expr, "_dbase_data", self)
-        return expr
-
-    def _parse_sql_expr(
-        self,
-        element: sqla_visitors.ExternallyTraversible,
-        join_set: set[Prop[Any, Any, Any, sqla.Join, *tuple[Any, ...]]] = set(),
-        **kw: Any,
-    ) -> sqla.ColumnElement | None:
-        if hasattr(element, "_dbase_prop"):
-            data = cast(Prop[*tuple[Any, ...]], getattr(element, "_dbase_prop"))
-            prefixed = data.__prepend_ctx(self._abs_table)
-
-            if prefixed.ctx != self._root:
-                join_set.add(prefixed.ctx)
-
-            return prefixed._sql_col()
-
-        return None
 
     @property
     def select_str(self) -> str:
@@ -952,9 +875,9 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     # Alignment:
 
     def __matmul__(
-        self: Prop[Any, CtxT2, CrudT2, Any],
-        other: Prop[ValT2, CtxT2, CrudT2, IdxT2],
-    ) -> Alignment[tuple[ValT, ValT2], CtxT2, CrudT2, IdxT | IdxT2]:
+        self: Prop[Any, RootT2, CrudT2, Any],
+        other: Prop[ValT2, RootT2, CrudT2, IdxT2],
+    ) -> Alignment[tuple[ValT, ValT2], RootT2, CrudT2, IdxT | IdxT2]:
         """Align two properties."""
         ...
 
@@ -962,7 +885,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
 
     @overload
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, None, Any, CtxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, None, Any, RootT2],
         other: (
             Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
             | Prop[
@@ -976,11 +899,11 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, CtxT2]: ...
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, RootT2]: ...
 
     @overload
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, CtxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, RootT2],
         other: (
             Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, SqlT3, BaseT, Ctx[ValT2]]
             | Prop[
@@ -994,10 +917,10 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, CtxT2]: ...
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, RootT2]: ...
 
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, CtxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, RootT2],
         other: (
             Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
             | Prop[
@@ -1011,9 +934,9 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2]:
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, RootT2]:
         """Chain two matching properties together."""
-        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2](
+        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, RootT2](
             props=(*self.props, other) if isinstance(self, Path) else (self, other)  # type: ignore
         )
 
@@ -1108,11 +1031,11 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     # Summary:
 
 
-BValT = TypeVar("BValT", covariant=True, bound=AutoIndexable)
+RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)
 
 
 @dataclass(kw_only=True)
-class BaseData(Data[BValT, AutoIdx[BValT], CrudT, SqlT, BaseT, None]):
+class Registry(Data[RegT, AutoIdx[RegT], CrudT, sqla.FromClause, BaseT, None]):
     """Represent a base data type collection."""
 
     def _name(self) -> str:
@@ -1128,13 +1051,11 @@ class BaseData(Data[BValT, AutoIdx[BValT], CrudT, SqlT, BaseT, None]):
         )
 
 
-RuT = TypeVar("RuT", bound=R | U, default=R, covariant=True)
+RuTi = TypeVar("RuTi", bound=R | U, default=R)
 
 
 @dataclass(kw_only=True)
-class Filter(
-    Data[ValTi, IdxTi, RuT, SqlTi, BaseT, Ctx[ValTi, IdxTi, RuT, SqlTi], *CtxTt]
-):
+class Filter(Data[ValTi, IdxTi, RuTi, SqlTi, Root[ValTi, IdxTi, RuTi, SqlTi], *CtxTt]):
     """Property definition for a model."""
 
     # Attributes:
@@ -1199,14 +1120,14 @@ class Filter(
 
 
 @dataclass(kw_only=True)
-class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
+class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT, *CtxTt]):
     """Property definition for a model."""
 
     # Attributes:
 
     init_after: ClassVar[set[type[Prop]]] = set()
 
-    _owner: type[CtxT] | None = None
+    _owner: type[RootT] | None = None
 
     alias: str | None = None
     default: ValT | Input[ValT, SqlT] | Literal[Not.defined] = Not.defined
@@ -1219,20 +1140,20 @@ class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     # Extension methods:
 
     def _value_get(
-        self, instance: CtxT
+        self, instance: RootT
     ) -> ValT | Literal[Not.handled, Not.resolved, Not.defined]:
         """Get the scalar value of this property given an object instance."""
         return Not.handled
 
     def _value_set(
-        self: Prop[Any, Any, C | U], instance: CtxT, value: Any
+        self: Prop[Any, Any, C | U], instance: RootT, value: Any
     ) -> None | Literal[Not.handled]:
         """Set the scalar value of this property given an object instance."""
         return Not.handled
 
     # Ownership:
 
-    def __set_name__(self, owner: type[CtxT], name: str) -> None:  # noqa: D105
+    def __set_name__(self, owner: type[RootT], name: str) -> None:  # noqa: D105
         if self.alias is None:
             self.alias = name
 
@@ -1250,7 +1171,7 @@ class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
             )
 
     @cached_prop
-    def owner(self: Prop[*tuple[Any, ...], CtxT2]) -> type[CtxT2]:
+    def owner(self: Prop[*tuple[Any, ...], RootT2]) -> type[RootT2]:
         """Module of the owner model type."""
         assert self._owner is not None
         return self._owner
@@ -1310,13 +1231,13 @@ class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
 
 
 @dataclass
-class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
+class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT, *CtxTt]):
     """Alignment of multiple props."""
 
     props: (
-        tuple[Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT],]
+        tuple[Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT],]
         | tuple[
-            Data[Any, Any, CrudT, sqla.FromClause | None, BaseT, CtxT],
+            Data[Any, Any, CrudT, sqla.FromClause | None, BaseT, RootT],
             *tuple[Prop[Any, Any, CrudT, sqla.FromClause | None, BaseT, Any], ...],
             Prop[ValT, Any, CrudT, SqlT, BaseT, Any],
         ]
@@ -1367,17 +1288,17 @@ TupT = TypeVar("TupT", bound=tuple, covariant=True)
 
 
 @dataclass
-class Alignment(Data[TupT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
+class Alignment(Data[TupT, IdxT, CrudT, SqlT, BaseT, RootT, *CtxTt]):
     """Alignment of multiple props."""
 
-    props: tuple[Prop[Any, Any, CrudT, SqlT, BaseT, CtxT], ...]
+    props: tuple[Prop[Any, Any, CrudT, Any, BaseT, RootT], ...]
 
 
 RecSqlT = TypeVar("RecSqlT", bound=sqla.CTE | None, covariant=True, default=None)
 
 
 @dataclass
-class Recursion(Data[ValT, Idx[*tuple[Any, ...]], R, RecSqlT, BaseT, CtxT, *CtxTt]):
+class Recursion(Data[ValT, Idx[*tuple[Any, ...]], R, RecSqlT, BaseT, RootT, *CtxTt]):
     """Combination of multiple props."""
 
-    paths: tuple[Path[ValT, Any, Any, Any, BaseT, CtxT], ...]
+    paths: tuple[Path[ValT, Any, Any, Any, BaseT, RootT], ...]
