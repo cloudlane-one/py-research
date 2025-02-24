@@ -16,7 +16,7 @@ from typing import (
 )
 
 from py_research.data import copy_and_override
-from py_research.reflect.types import GenericProtocol, get_typevar_map
+from py_research.reflect.types import GenericAlias, get_typevar_map
 from py_research.types import DataclassInstance
 
 from .props import Prop
@@ -49,7 +49,7 @@ class ModelMeta(type):
         cls._get_class_props()
 
     @property
-    def _super_types(cls) -> Iterable[type | GenericProtocol]:
+    def _super_types(cls) -> Iterable[type | GenericAlias]:
         return (
             cls.__dict__["__orig_bases__"]
             if "__orig_bases__" in cls.__dict__
@@ -124,7 +124,7 @@ class ModelMeta(type):
     @property
     def __dataclass_fields__(cls) -> dict[str, Field]:  # noqa: D105
         return {
-            p._name: Field(
+            p.name: Field(
                 p._default if p._default is not Not.defined else MISSING,
                 (
                     p._default_factory if p._default_factory is not None else MISSING
@@ -230,10 +230,10 @@ class Model(DataclassInstance, Generic[IdxT], metaclass=ModelMeta):
 
         vals = {
             (
-                p if keys == "instances" else p._name if keys == "names" else p.fqn
-            ): getattr(self, p._name)
+                p if keys == "instances" else p.name if keys == "names" else p.fqn
+            ): getattr(self, p.name)
             for p in type(self)._props.values()
-            if isinstance(p, include_types) and p._name is not None
+            if isinstance(p, include_types) and p.name is not None
         }
 
         return cast(dict, vals)
@@ -244,15 +244,15 @@ class Model(DataclassInstance, Generic[IdxT], metaclass=ModelMeta):
         data: Mapping[Prop, Any] | Mapping[str, Any],
     ) -> bool:
         """Check if dict data contains all required info for record type."""
-        in_data = {(p if isinstance(p, str) else p._name): v for p, v in data.items()}
+        in_data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
         return all(
             (
-                a._name in in_data
+                a.name in in_data
                 or a._default is not Undef
                 or a._default_factory is not None
             )
             for a in cls._props.values()
-            if a.init is not False and a._name is not None
+            if a.init is not False and a.name is not None
         )
 
     def __repr__(self) -> str:
@@ -291,14 +291,14 @@ class Attr(Prop[AttrT, CtxT, CrudT], Generic[AttrT, CrudT, CtxT]):
 
         assert instance is not None
 
-        if self._name not in instance.__dict__:
+        if self.name not in instance.__dict__:
             if self.default is not Undef:
-                instance.__dict__[self._name] = self.default
+                instance.__dict__[self.name] = self.default
             else:
                 assert self.default_factory is not None
-                instance.__dict__[self._name] = self.default_factory()
+                instance.__dict__[self.name] = self.default_factory()
 
-        return instance.__dict__[self._name]
+        return instance.__dict__[self.name]
 
     def __set__(self: Attr[Any, U, Any], instance: Model, value: AttrT) -> None:
         """Set the value of this attribute."""

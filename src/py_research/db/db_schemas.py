@@ -56,7 +56,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
-    GenericProtocol,
+    GenericAlias,
     SingleTypeDef,
     get_lowest_common_base,
     get_typevar_map,

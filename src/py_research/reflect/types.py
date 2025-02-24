@@ -1,11 +1,12 @@
 """Reflection utilities for types."""
 
 import operator
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from functools import reduce
 from inspect import getmodule, getmro
 from itertools import chain, groupby
-from types import GenericAlias, ModuleType, NoneType, UnionType, new_class
+from types import ModuleType, NoneType, UnionType, new_class
 from typing import (
     Any,
     ForwardRef,
@@ -32,13 +33,13 @@ T = TypeVar("T", covariant=True)
 T_cov = TypeVar("T_cov", covariant=True)
 U_cov = TypeVar("U_cov", covariant=True)
 
-_AnnotationScanType = Union[
-    type[Any], str, ForwardRef, NewType, TypeAliasType, "GenericProtocol[Any]"
-]
+type _AnnotationScanType = type[Any] | TypeAliasType | GenericAlias[
+    Any
+] | NewType | ForwardRef | str
 
 
 @runtime_checkable
-class GenericProtocol(Protocol[T]):  # type: ignore
+class GenericAlias(Protocol[T]):  # type: ignore
     """protocol for generic types.
 
     this since Python.typing _GenericAlias is private
@@ -49,9 +50,7 @@ class GenericProtocol(Protocol[T]):  # type: ignore
     __origin__: type[T]
 
 
-type SingleTypeDef[T] = GenericProtocol[T] | TypeAliasType | NewType | type[
-    T
-] | GenericAlias
+type SingleTypeDef[T] = GenericAlias[T] | TypeAliasType | type[T] | NewType
 
 
 @runtime_checkable
@@ -59,6 +58,15 @@ class SupportsItems(Protocol[T_cov, U_cov]):
     """Protocol for objects that support item access."""
 
     def items(self) -> Iterable[tuple[T_cov, U_cov]]: ...  # noqa: D102
+
+
+@dataclass
+class TypeRef[T]:
+    """Reference to a type."""
+
+    hint: SingleTypeDef[T]
+    var_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
+    ctx_module: ModuleType | None = None
 
 
 def is_subtype(type_: SingleTypeDef | UnionType, supertype: T) -> TypeGuard[T]:
@@ -418,3 +426,38 @@ def get_typevar_map(
         }
 
     return typevar_map
+
+
+def set_typeargs[
+    T
+](
+    typedef: SingleTypeDef[T],
+    args: (
+        Sequence[SingleTypeDef | UnionType | TypeVar]
+        | dict[TypeVar, SingleTypeDef | UnionType | TypeVar]
+    ),
+) -> GenericAlias[T]:
+    """Set a typevar in a generic type hint."""
+    orig = get_origin(typedef)
+    assert orig is not None
+
+    args = get_args(typedef)
+    assert len(args) > 0
+
+    if not isinstance(args, dict):
+        return orig[*args]
+
+    assert hasattr(orig, "__parameters__")
+    typearg_map = dict(zip(getattr(orig, "__parameters__"), args))
+    typevar_map = get_typevar_map(typedef, subs_defaults=False)
+
+    for typevar, arg in args.items():
+        # Go through substitutions if typevar is not directly in arg_map.
+        while typevar not in typearg_map:
+            subs_typevar = typevar_map[typevar]
+            assert isinstance(subs_typevar, TypeVar)
+            typevar = subs_typevar
+
+        typearg_map[typevar] = arg
+
+    return orig[*typearg_map.values()]

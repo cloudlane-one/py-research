@@ -55,7 +55,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.ref import PyObjectRef
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
-    GenericProtocol,
+    GenericAlias,
     SingleTypeDef,
     get_lowest_common_base,
     get_typevar_map,
@@ -351,9 +351,9 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     target_type._fqn for target_type in self.record_type_set
                 )
             else:
-                return self._name
+                return self.name
 
-        fqn = f"{self.__context.fqn}.{self._name}"
+        fqn = f"{self.__context.fqn}.{self.name}"
 
         if len(self.__filters) > 0:
             fqn += f"[{gen_str_hash(self.__filters, length=6)}]"
@@ -501,7 +501,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 self.fqn
                 if self.__context is not None
                 and len(self.__context.record_type_set) > 1
-                else self._name
+                else self.name
             ),
             _selectable=(
                 self.__context._sql_join() if self.__context is not None else None
@@ -680,7 +680,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         return [
             *sql_filt,
             *key_filt,
-        ], mergea
+        ], merge
 
     @cached_prop
     def _abs_joins(self) -> list[Table[Record | None, Any, Any, Any, Any, DbT]]:
@@ -984,7 +984,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 elif isinstance(sel, Array):
                     val_list.append(row["value"])
                 else:
-                    val_list.append(row[sel._name])
+                    val_list.append(row[sel.name])
 
             vals.append(tuple(val_list) if len(val_list) > 1 else val_list[0])
 
@@ -1384,7 +1384,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             type[TabT2],
             dynamic_record_type(
                 Record,
-                f"{self._name}.x",
+                f"{self.name}.x",
                 props=reduce(
                     set.intersection,
                     (set(t._props.values()) for t in self.record_type_set),
@@ -1782,7 +1782,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     value = (
                         self.getter(instance)
                         if self.getter is not None
-                        else instance.__dict__.get(self._name, Not.defined)
+                        else instance.__dict__.get(self.name, Not.defined)
                     )
 
                     if value is Not.defined:
@@ -1793,14 +1793,14 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
 
                         assert (
                             value is not Not.defined
-                        ), f"Property value for `{self._name}` could not be fetched."
-                        setattr(instance, self._name, value)
+                        ), f"Property value for `{self.name}` could not be fetched."
+                        setattr(instance, self.name, value)
 
                     return value
                 else:
                     self_ref = cast(
                         Rel[ValT, Idx[()], CrudT, RelT, Ctx, Symbolic],
-                        getattr(owner, self._name),
+                        getattr(owner, self.name),
                     )
                     table = Table(_base=instance._base, _type=owner)
                     return table[self_ref][instance._index]
@@ -2952,20 +2952,20 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                 if self.setter is not None:
                     self.setter(instance, value)
                 else:
-                    instance.__dict__[self._name] = value
+                    instance.__dict__[self.name] = value
 
             if not isinstance(self, Var) or (
                 self.pub_status is Public and instance._published
             ):
                 owner = type(instance)
                 sym_rel: Rel[Any, Any, Any, Any, Any, Symbolic] = getattr(
-                    owner, self._name
+                    owner, self.name
                 )
                 instance._table[[instance._index]][sym_rel]._mutate(value)
 
             if not isinstance(self, Var):
                 instance._update_dict()
         else:
-            instance.__dict__[self._name] = value
+            instance.__dict__[self.name] = value
 
         return

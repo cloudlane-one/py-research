@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from abc import abstractmethod
+from collections.abc import (
+    Callable,
+    Hashable,
+    Iterable,
+    Mapping,
+    MutableMapping,
+    Sequence,
+)
 from copy import copy
 from dataclasses import dataclass, field
 from functools import cache, reduce
@@ -15,6 +22,7 @@ from typing import (
     Generic,
     Literal,
     ParamSpec,
+    Protocol,
     Self,
     TypeGuard,
     Unpack,
@@ -28,7 +36,6 @@ import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.sql.visitors as sqla_visitors
-from cachetools import cached
 from typing_extensions import TypeVar, TypeVarTuple
 
 from py_research.caching import cached_prop
@@ -36,8 +43,8 @@ from py_research.data import copy_and_override
 from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
-    GenericProtocol,
     SingleTypeDef,
+    TypeRef,
     get_lowest_common_base,
     get_typevar_map,
     has_type,
@@ -50,8 +57,7 @@ from py_research.types import Not, Ordinal
 ValT = TypeVar("ValT", covariant=True, default=Any)
 ValT2 = TypeVar("ValT2")
 ValT3 = TypeVar("ValT3")
-
-TupT = TypeVar("TupT", bound=tuple, covariant=True)
+ValTi = TypeVar("ValTi", default=Any)
 
 KeyT = TypeVar("KeyT", bound=Hashable)
 KeyTt = TypeVarTuple("KeyTt")
@@ -60,6 +66,43 @@ KeyTt3 = TypeVarTuple("KeyTt3")
 
 OrdT = TypeVar("OrdT", bound=Ordinal)
 
+SchemaT = TypeVar("SchemaT", contravariant=True, default=Any)
+
+ArgT = TypeVar("ArgT", contravariant=True, default=Any)
+
+type SqlExpr = (sqla.SelectBase | sqla.FromClause | sqla.ColumnElement)
+
+SqlT = TypeVar(
+    "SqlT",
+    bound=SqlExpr | None,
+    covariant=True,
+    default=Any,
+)
+SqlT2 = TypeVar(
+    "SqlT2",
+    bound=SqlExpr | None,
+)
+SqlT3 = TypeVar(
+    "SqlT3",
+    bound=SqlExpr | None,
+)
+SqlTi = TypeVar(
+    "SqlTi",
+    bound=SqlExpr | None,
+    default=Any,
+)
+
+
+ArgSqlT = TypeVar(
+    "ArgSqlT",
+    bound=SqlExpr | None,
+    contravariant=True,
+    default=Any,
+)
+
+
+DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
+
 
 @final
 class Idx(Generic[*KeyTt]):
@@ -67,23 +110,33 @@ class Idx(Generic[*KeyTt]):
 
 
 @final
+class SelfIdx(Generic[*KeyTt]):
+    """Index by self."""
+
+
+@final
 class HashIdx(Generic[*KeyTt]):
     """Index by hash of self."""
 
 
-class AutoID(Generic[*KeyTt]):
+class AutoIndexable(Protocol[*KeyTt]):
     """Base class for indexable objects."""
 
+    @classmethod
+    def sql_cols(cls) -> list[sqla.ColumnElement]:
+        """Get SQL columns for this auto-indexed type."""
+        ...
 
-AutoIdxT = TypeVar("AutoIdxT", bound=AutoID)
+
+AutoIdxT = TypeVar("AutoIdxT", bound=AutoIndexable, covariant=True)
 
 
 @final
 class AutoIdx(Generic[AutoIdxT]):
-    """Index by custom value derive from self."""
+    """Index by custom value derived from self."""
 
 
-type AnyIdx[*K] = Idx[*K] | HashIdx[*K] | AutoIdx[AutoID[*K]]
+type AnyIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
 
 
 IdxT = TypeVar(
@@ -96,6 +149,17 @@ IdxT2 = TypeVar(
     "IdxT2",
     bound=AnyIdx,
 )
+IdxT3 = TypeVar(
+    "IdxT3",
+    bound=AnyIdx,
+)
+IdxTi = TypeVar(
+    "IdxTi",
+    bound=AnyIdx,
+    default=Idx[*tuple[Any, ...]],
+)
+
+ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=AnyIdx, default=Any)
 
 
 @final
@@ -133,86 +197,56 @@ type CRUD = C | R | U | D
 CrudT = TypeVar("CrudT", bound=CRUD, default=Any, covariant=True)
 CrudT2 = TypeVar("CrudT2", bound=CRUD)
 
-SchemaT = TypeVar("SchemaT", contravariant=True, default=Any)
 
-
-class Base(Generic[SchemaT, CrudT]):
-    """Base for retrieving/storing data."""
-
-
-BaseT = TypeVar("BaseT", bound=Base | None, default=None, covariant=True)
-
-CtxT = TypeVar("CtxT", default=Any, contravariant=True)
-CtxT2 = TypeVar("CtxT2")
-
-
-@final
-class Ctx(Generic[CtxT, IdxT, CrudT]):
+@dataclass
+class Ctx(Generic[ArgT, ArgIdxT, CrudT, ArgSqlT]):
     """Node in context path."""
 
 
-CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[()]])
+CtxT = TypeVar("CtxT", bound=Ctx | None, default=Any, covariant=True)
+CtxT2 = TypeVar("CtxT2", bound=Ctx | None)
+CtxT3 = TypeVar("CtxT3", bound=Ctx | None)
+
+PfxT = TypeVar("PfxT", bound=Ctx, covariant=True)
+PfxT2 = TypeVar("PfxT2", bound=Ctx)
+PfxT3 = TypeVar("PfxT3", bound=Ctx)
+
+CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[Any, ...]])
 CtxTt2 = TypeVarTuple("CtxTt2")
 CtxTt3 = TypeVarTuple("CtxTt3")
 
 
-type AnyCtx[CtxT] = Ctx[CtxT, Any, Any]
+class Base(Protocol[SchemaT, CrudT]):  # pyright: ignore[reportInvalidTypeVarUse]
+    """Base for retrieving/storing data."""
+
+    @property
+    def instance_registry(self) -> MutableMapping[Any, Any]:
+        """Mapping of FQNs to base-aware instances like FromClauses or Records."""
+        ...
+
+    @property
+    def connection(self) -> sqla.engine.Connection:
+        """SQLAlchemy connection to the database."""
+        ...
+
+    def get_base_data[
+        T: AutoIndexable
+    ](self, value_type: type[T]) -> Data[
+        T, AutoIdx[T], CrudT, sqla.FromClause, Self, None
+    ]:
+        """Get the base data instance for a type in this base."""
+        ...
 
 
-@final
-class Ungot:
-    """Singleton to denote that superclass couldn't solve a descriptor get."""
+BaseT = TypeVar("BaseT", bound=Base | None, default=Any, covariant=True)
+BaseT2 = TypeVar("BaseT2", bound=Base | None)
 
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
-
-
-@final
-class Unset:
-    """Singleton to denote that superclass couldn't process a descriptor set."""
-
-    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
-
-
-type SqlExpr = (
-    sqla.FromClause | sqla.ColumnElement | sqla.schema.ColumnCollectionMixin
-)
-
-SqlT = TypeVar(
-    "SqlT",
-    bound=SqlExpr | None,
-    covariant=True,
-    default=None,
-)
-SqlT2 = TypeVar(
-    "SqlT2",
-    bound=SqlExpr | None,
-)
-SqlT3 = TypeVar(
-    "SqlT3",
-    bound=SqlExpr | None,
-)
-
-
-RecSqlT = TypeVar("RecSqlT", bound=sqla.CTE | None, covariant=True, default=None)
-
-
-ArgSqlT = TypeVar(
-    "ArgSqlT",
-    bound=SqlExpr | None,
-    covariant=True,
-    default=None,
-)
-
-
-DfT = TypeVar("DfT", bound=pd.DataFrame | pl.DataFrame)
 
 type Input[Val, Sql: SqlExpr | None] = Val | Iterable[Val] | Mapping[
     Hashable, Val
 ] | pd.DataFrame | pl.DataFrame | Sql | Prop[Val]
 
 Params = ParamSpec("Params")
-
-type MutationMode = Literal["update", "upsert", "replace", "insert", "delete"]
 
 
 def _get_prop_type(hint: SingleTypeDef | str) -> type[Prop] | type[None]:
@@ -245,38 +279,60 @@ def _map_data_type_name(name: str) -> type[Prop | None]:
 class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     """Property definition for a model."""
 
-    # Attributes:
+    # Core attributes:
 
-    _type: SingleTypeDef[Prop[ValT]] | None = None
-    _base: BaseT | None = None
-    _context: type[CtxT] | Path[Any, Any, CrudT, Any, BaseT, CtxT] | None = None
-    _filters: list[sqla.ColumnElement[bool] | pl.Expr] = field(default_factory=list)
+    _base: BaseT
+    _type: TypeRef[Prop[ValT]] | None = None
+
+    _context: (
+        type[AutoIndexable]
+        | Data[Any, Any, CrudT, Any, BaseT, CtxT, *tuple[Any, ...]]
+        | None
+    ) = field(init=False)
 
     # Extension methods:
 
-    @property
     def _name(self) -> str:
         """Name of the property."""
-        return gen_str_hash((self._type, self._filters))
+        return gen_str_hash(self)
+
+    @overload
+    def _index(
+        self: Data[Any, Idx[*KeyTt2], Any, None]
+    ) -> Data[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, None, BaseT, CtxT, *CtxTt]: ...
+
+    @overload
+    def _index(
+        self: Data[Any, Idx[*KeyTt2], Any, SqlExpr]
+    ) -> Data[
+        tuple[*KeyTt2], SelfIdx[*KeyTt2], R, sqla.FromClause, BaseT, CtxT, *CtxTt
+    ]: ...
+
+    def _index(
+        self: Data[Any, Idx[*KeyTt2]]
+    ) -> Data[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, Any, BaseT, CtxT, *CtxTt]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _sql(self) -> SqlT:
+        """Get SQL-side reference to this property."""
+        assert get_typevar_map(self.resolved_type)[SqlT] is NoneType
+        return cast(SqlT, None)
 
     def _df(
-        self, contents: set[Literal["keys", "values"]] = {"keys", "values"}
+        self,
     ) -> pl.DataFrame | None:
         """Get a dataframe representation of this property's content."""
         return None
 
-    def _value_from_row(self, row: Mapping[str, Any]) -> ValT | Literal[Not.handled]:
+    def _value(self, row: Mapping[str, Any]) -> ValT | Literal[Not.handled]:
         """Transform dataframe row to scalar property value."""
         return Not.handled
 
-    @cached_prop
-    def _sql_expr(self) -> SqlT:
-        """Get SQL-side reference to this property."""
-        assert get_typevar_map(self._type or type(self))[SqlT] is NoneType
-        return cast(SqlT, None)
-
     def _sql_mutation(
-        self: Data[Any, Any, C | U | D, *tuple[Any, ...]], input_data: Input[ValT, SqlT]
+        self: Data[Any, Any, CrudT2, *tuple[Any, ...]],
+        input_data: Input[ValT, SqlT],
+        mode: set[type[CrudT2]] = {C, U},
     ) -> Sequence[sqla.Executable] | Literal[Not.handled]:
         """Get mutation statements to set this property SQL-side."""
         return Not.handled
@@ -284,9 +340,21 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     # Type:
 
     @cached_prop
+    def resolved_type(self) -> SingleTypeDef[Prop[ValT]]:
+        """Resolved type of this prop."""
+        if self._type is None:
+            return cast(SingleTypeDef[Prop[ValT]], type(self))
+
+        return hint_to_typedef(
+            self._type.hint,
+            typevar_map=self._type.var_map,
+            ctx_module=self._type.ctx_module,
+        )
+
+    @cached_prop
     def value_typeform(self) -> SingleTypeDef[ValT] | UnionType:
         """Target typeform of this prop."""
-        return get_typevar_map(self._type or type(self))[ValT]
+        return get_typevar_map(self.resolved_type)[ValT]
 
     @cached_prop
     def value_type_set(self) -> set[type[ValT]]:
@@ -306,18 +374,16 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     @cached_prop
     def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
         """Type arguments of this prop."""
-        return get_typevar_map(self._type or type(self))
+        return get_typevar_map(self.resolved_type)
 
     @staticmethod
     def has_type[T: Data](instance: Data, typedef: type[T]) -> TypeGuard[T]:
         """Check if the dataset has the specified type."""
         orig = get_origin(typedef)
-        if orig is None or not issubclass(
-            _get_prop_type(instance._type or type(instance)), orig
-        ):
+        if orig is None or not issubclass(_get_prop_type(instance.resolved_type), orig):
             return False
 
-        own_typevars = get_typevar_map(instance._type or type(instance))
+        own_typevars = get_typevar_map(instance.resolved_type)
         target_typevars = get_typevar_map(typedef)
 
         for tv, tv_type in target_typevars.items():
@@ -330,53 +396,105 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
 
     # Context:
 
-    @cached_prop
-    def fqn(self: Data[*tuple[Any, ...]]) -> str:
-        """Fully qualified name of this dataset based on relational path."""
+    @overload
+    def _add_ctx(  # noqa: D107
+        self: Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *CtxTt2],
+        ctx: None,
+    ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *CtxTt2]: ...
+
+    @overload
+    def _add_ctx(  # noqa: D107
+        self: Data[
+            ValT2,
+            IdxT2,
+            CrudT2,
+            SqlT2,
+            BaseT2,
+            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+            *CtxTt2,
+        ],
+        ctx: Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, CtxT3, *CtxTt3],
+    ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, CtxT3, *CtxTt3, *CtxTt3]: ...
+
+    def _add_ctx(  # noqa: D107
+        self: Data[*tuple[Any, ...]],
+        ctx: Data[*tuple[Any, ...]] | None,
+    ) -> Data[*tuple[Any, ...]]:
+        """Add a context to this property."""
         if self._context is None:
-            return self._name
+            return self
+
+        data = copy(self)
+        ctx = self.context()
+        data._context = ctx._add_ctx(ctx) if ctx is not None else None
+        return data
+
+    @overload
+    def context(
+        self: Data[
+            ValT2,
+            IdxT2,
+            CrudT2,
+            SqlT2,
+            BaseT2,
+            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+            *tuple[()],
+        ]
+    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, None]: ...
+
+    @overload
+    def context(
+        self: Data[
+            ValT2,
+            IdxT2,
+            CrudT2,
+            SqlT2,
+            BaseT2,
+            PfxT3,
+            *CtxTt3,
+            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+        ]
+    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, BaseT2, PfxT3, *CtxTt3]: ...
+
+    @overload
+    def context(
+        self: Data[ValT2, IdxT2, CrudT2, SqlT2, BaseT2, None, *tuple[Any, ...]]
+    ) -> None: ...
+
+    @overload
+    def context(self: Data[*tuple[Any, ...]]) -> Data[*tuple[Any, ...]] | None: ...
+
+    def context(self) -> Data[*tuple[Any, ...]] | None:
+        """Get the context of this property."""
+        if self.typeargs[CtxT] is NoneType:
+            return None
 
         if isinstance(self._context, type):
-            ctx_module = getmodule(self._context)
             return (
-                (
-                    ctx_module.__name__ + "." + self._context.__name__
-                    if ctx_module is not None
-                    else self._context.__name__
-                )
-                + "."
-                + self._name
+                self._base.get_base_data(self._context)
+                if self._base is not None
+                else Data[self._context, AutoIdx[self._context]](_base=None)
             )
-        else:
-            return self._context.fqn + "." + self._name
 
-    @overload
-    def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, None, Any, CtxT2],
-        other: Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, ValT2],
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, CtxT2]: ...
+        assert isinstance(self._context, Data)
+        return self._context
 
-    @overload
-    def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, CtxT2],
-        other: Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, SqlT3, BaseT, ValT2],
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, CtxT2]: ...
+    @cached_prop
+    def fqn(self) -> str:
+        """Fully qualified name of this dataset based on relational path."""
+        ctx = self.context()
 
-    def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, CtxT2],
-        other: Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, ValT2],
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2]:
-        """Chain two matching properties together."""
-        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2](
-            props=(*self.props, other) if isinstance(self, Path) else (self, other)  # type: ignore
-        )
+        if ctx is None:
+            return self._name()
+
+        return ctx.fqn + "." + self._name()
 
     # SQL:
 
     def _tag_sql_expr(self, expr: SqlExpr) -> SqlExpr:
         """Tag SQL expression with this property."""
         expr = copy(expr)
-        setattr(expr, "_dbase_prop", self)
+        setattr(expr, "_dbase_data", self)
         return expr
 
     def _parse_sql_expr(
@@ -395,144 +513,6 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
             return prefixed._sql_col()
 
         return None
-
-    @cached_prop
-    def _sql_filters(
-        self,
-    ) -> tuple[
-        list[sqla.ColumnElement[bool]], list[Table[Any, Any, Any, Any, Any, DbT]]
-    ]:
-        sql_filt = [f for f in self.__filters if isinstance(f, sqla.ColumnElement)]
-
-        join_set: set[Table[Any, Any, Any, Any, Any, DbT]] = set()
-        replace_func = partial(self._parse_sql_filter, join_set=join_set)
-        sql_filt = [
-            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
-            for f in sql_filt
-        ]
-        merge = list(join_set)
-
-        key_filt = [
-            (
-                reduce(
-                    sqla.and_,
-                    (
-                        (idx.isin(filt) if isinstance(filt, slice) else idx == filt)
-                        for idx, filt in zip(self._abs_idx_cols.values(), key_filt)
-                    ),
-                )
-                if isinstance(key_filt, tuple)
-                else reduce(
-                    sqla.or_,
-                    (
-                        reduce(
-                            sqla.and_,
-                            (
-                                (idx == filt)
-                                for idx, filt in zip(
-                                    self._abs_idx_cols.values(), single_filt
-                                )
-                            ),
-                        )
-                        for single_filt in key_filt
-                    ),
-                )
-            )
-            for key_filt in self._filters
-            if not isinstance(key_filt, sqla.ColumnElement)
-        ]
-
-        return [
-            *sql_filt,
-            *key_filt,
-        ], merge
-
-    @cached_prop
-    def _sql_joins(
-        self,
-        _subtree: JoinDict | None = None,
-        _parent: Rel[Record | None, Any, Any, Any, Any] | None = None,
-    ) -> list[SqlJoin]:
-        """Extract join operations from the relational tree."""
-        joins: list[SqlJoin] = []
-        _subtree = _subtree if _subtree is not None else self._total_join_dict
-        _parent = _parent if _parent is not None else self._root
-
-        if _parent is not None:
-            for target, next_subtree in _subtree.items():
-                joins.append(
-                    (
-                        target._sql_alias,
-                        reduce(
-                            sqla.and_,
-                            (
-                                (
-                                    fk._sql_col == pk._sql_col
-                                    for link in target.links
-                                    for fk_map in link._abs_fk_maps.values()
-                                    for fk, pk in fk_map.items()
-                                )
-                                if isinstance(target, BackLink)
-                                else (
-                                    _parent[fk] == target[pk]
-                                    for fk_map in target._abs_fk_maps.values()
-                                    for fk, pk in fk_map.items()
-                                )
-                            ),
-                        ),
-                    )
-                )
-
-                joins.extend(type(self)._sql_joins(self, next_subtree, target))
-
-        return joins
-
-    @cached_prop
-    def _sql_filters(self) -> list[sqla.ColumnElement[bool]]:
-        """Get the SQL filters for this table."""
-        if not isinstance(self, Table):
-            return []
-
-        return self._abs_filters[0] + (
-            self._ctx_table._sql_filters if self._ctx_table is not None else []
-        )
-
-    @cached_prop
-    def select(
-        self,
-        cols: Mapping[str, Var[Any, Any, Any, Any]] | None = None,
-    ) -> sqla.Select:
-        """Return select statement for this dataset."""
-        if cols is not None:
-            abs_cols = {
-                name: (
-                    col.__prepend_ctx(self._abs_table)
-                    if isinstance(col.base.backend, Symbolic)
-                    else col
-                )
-                for name, col in cols.items()
-            }
-        else:
-            abs_cols = self._abs_idx_cols | self._abs_cols
-
-        sql_cols: list[sqla.ColumnElement] = []
-        for col_name, col in abs_cols.items():
-            sql_col = col._sql_col.label(col_name)
-            if sql_col not in sql_cols:
-                sql_cols.append(sql_col)
-
-        select = sqla.select(*sql_cols)
-
-        if len(self._total_root_tables) > 0:
-            select = select.select_from(*(t._sql_join for t in self._total_root_tables))
-
-        for join in self._sql_joins:
-            select = select.join(*join)
-
-        for filt in self._sql_filters:
-            select = select.where(filt)
-
-        return select.distinct()
 
     @property
     def select_str(self) -> str:
@@ -989,6 +969,65 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
         """Align two properties."""
         ...
 
+    # Paths:
+
+    @overload
+    def __truediv__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, None, Any, CtxT2],
+        other: (
+            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
+            | Prop[
+                ValT3,
+                AnyIdx[*KeyTt3],
+                CrudT2,
+                Any,
+                BaseT,
+                Any,
+                *tuple[Any, ...],
+                Ctx[ValT2],
+            ]
+        ),
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, CtxT2]: ...
+
+    @overload
+    def __truediv__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, CtxT2],
+        other: (
+            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, SqlT3, BaseT, Ctx[ValT2]]
+            | Prop[
+                ValT3,
+                AnyIdx[*KeyTt3],
+                CrudT2,
+                SqlT3,
+                BaseT,
+                Any,
+                *tuple[Any, ...],
+                Ctx[ValT2],
+            ]
+        ),
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, CtxT2]: ...
+
+    def __truediv__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, CtxT2],
+        other: (
+            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
+            | Prop[
+                ValT3,
+                AnyIdx[*KeyTt3],
+                CrudT2,
+                Any,
+                BaseT,
+                Any,
+                *tuple[Any, ...],
+                Ctx[ValT2],
+            ]
+        ),
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2]:
+        """Chain two matching properties together."""
+        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2](
+            props=(*self.props, other) if isinstance(self, Path) else (self, other)  # type: ignore
+        )
+
     # Index set operations:
 
     def __or__(
@@ -1080,6 +1119,96 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     # Summary:
 
 
+BValT = TypeVar("BValT", covariant=True, bound=AutoIndexable)
+
+
+@dataclass(kw_only=True)
+class BaseData(Data[BValT, AutoIdx[BValT], CrudT, SqlT, BaseT, None]):
+    """Represent a base data type collection."""
+
+    def _name(self) -> str:
+        ctx_module = getmodule(self.common_value_type)
+        return (
+            (
+                ctx_module.__name__ + "." + self.common_value_type.__name__
+                if ctx_module is not None
+                else self.common_value_type.__name__
+            )
+            + "."
+            + self._name()
+        )
+
+
+RuT = TypeVar("RuT", bound=R | U, default=R, covariant=True)
+
+
+@dataclass(kw_only=True)
+class Filter(
+    Data[ValTi, IdxTi, RuT, SqlTi, BaseT, Ctx[ValTi, IdxTi, RuT, SqlTi], *CtxTt]
+):
+    """Property definition for a model."""
+
+    # Attributes:
+
+    _filters: list[
+        sqla.ColumnElement[bool]
+        | pl.Expr
+        | list[tuple[Hashable, ...]]
+        | tuple[slice | Hashable, ...]
+    ] = field(default_factory=list)
+
+    @cached_prop
+    def _sql_filters(
+        self,
+    ) -> tuple[
+        list[sqla.ColumnElement[bool]], list[Table[Any, Any, Any, Any, Any, DbT]]
+    ]:
+        sql_filt = [f for f in self.__filters if isinstance(f, sqla.ColumnElement)]
+
+        join_set: set[Table[Any, Any, Any, Any, Any, DbT]] = set()
+        replace_func = partial(self._parse_sql_filter, join_set=join_set)
+        sql_filt = [
+            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
+            for f in sql_filt
+        ]
+        merge = list(join_set)
+
+        key_filt = [
+            (
+                reduce(
+                    sqla.and_,
+                    (
+                        (idx.isin(filt) if isinstance(filt, slice) else idx == filt)
+                        for idx, filt in zip(self._abs_idx_cols.values(), key_filt)
+                    ),
+                )
+                if isinstance(key_filt, tuple)
+                else reduce(
+                    sqla.or_,
+                    (
+                        reduce(
+                            sqla.and_,
+                            (
+                                (idx == filt)
+                                for idx, filt in zip(
+                                    self._abs_idx_cols.values(), single_filt
+                                )
+                            ),
+                        )
+                        for single_filt in key_filt
+                    ),
+                )
+            )
+            for key_filt in self._filters
+            if not isinstance(key_filt, sqla.ColumnElement)
+        ]
+
+        return [
+            *sql_filt,
+            *key_filt,
+        ], merge
+
+
 @dataclass(kw_only=True)
 class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     """Property definition for a model."""
@@ -1166,7 +1295,7 @@ class Prop(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     def __set__(  # noqa: D105
         self: Prop[Any, Any, U], instance: Any, value: Any
     ) -> Any:
-        return Unset()
+        return Not.handled
 
     # Descriptor read/write:
 
@@ -1204,12 +1333,58 @@ class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
         ]
     )
 
+    @cached_prop
+    def _sql_joins(
+        self,
+        _subtree: JoinDict | None = None,
+        _parent: Rel[Record | None, Any, Any, Any, Any] | None = None,
+    ) -> list[SqlJoin]:
+        """Extract join operations from the relational tree."""
+        joins: list[SqlJoin] = []
+        _subtree = _subtree if _subtree is not None else self._total_join_dict
+        _parent = _parent if _parent is not None else self._root
+
+        if _parent is not None:
+            for target, next_subtree in _subtree.items():
+                joins.append(
+                    (
+                        target._sql_alias,
+                        reduce(
+                            sqla.and_,
+                            (
+                                (
+                                    fk._sql_col == pk._sql_col
+                                    for link in target.links
+                                    for fk_map in link._abs_fk_maps.values()
+                                    for fk, pk in fk_map.items()
+                                )
+                                if isinstance(target, BackLink)
+                                else (
+                                    _parent[fk] == target[pk]
+                                    for fk_map in target._abs_fk_maps.values()
+                                    for fk, pk in fk_map.items()
+                                )
+                            ),
+                        ),
+                    )
+                )
+
+                joins.extend(type(self)._sql_joins(self, next_subtree, target))
+
+        return joins
+
+
+TupT = TypeVar("TupT", bound=tuple, covariant=True)
+
 
 @dataclass
 class Alignment(Data[TupT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     """Alignment of multiple props."""
 
     props: tuple[Prop[Any, Any, CrudT, SqlT, BaseT, CtxT], ...]
+
+
+RecSqlT = TypeVar("RecSqlT", bound=sqla.CTE | None, covariant=True, default=None)
 
 
 @dataclass

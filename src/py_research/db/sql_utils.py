@@ -11,7 +11,9 @@ import sqlalchemy.dialects.mysql as mysql
 import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.dialects.sqlite as sqlite
 
-JoinCondition = Callable[[sqla.FromClause, sqla.FromClause], sqla.ColumnElement[bool]]
+type JoinCondition = Callable[
+    [sqla.FromClause, sqla.FromClause], sqla.ColumnElement[bool]
+]
 
 type RelJoin = tuple[sqla.FromClause, JoinCondition]
 

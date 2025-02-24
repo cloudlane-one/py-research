@@ -417,8 +417,7 @@ def _parse_pushmap(push_map: PushMap) -> _PushMapping:
             return {All: push_map}
         case Iterable() if has_type(push_map, Iterable[Rel | SubTableMap]):
             return {
-                k._name if isinstance(k, Rel) else k.target._name: True
-                for k in push_map
+                k.name if isinstance(k, Rel) else k.target.name: True for k in push_map
             }
         case _:
             raise TypeError(f"Unsupported mapping type {type(push_map)}")
@@ -554,7 +553,7 @@ def _gen_match_expr(
             if isinstance(match_by, str) and match_by == "all"
             else [match_by] if isinstance(match_by, Rel) else match_by
         )
-        return reduce(operator.and_, (col == rec_dict[col._name] for col in match_cols))
+        return reduce(operator.and_, (col == rec_dict[col.name] for col in match_cols))
 
 
 type InData = dict[tuple[Hashable, DirectPath], TreeNode]
@@ -627,13 +626,13 @@ async def _load_record(
         )
 
     attrs = {
-        a._name: (a, *list(sel.select(data, path_idx).items())[0])
+        a.name: (a, *list(sel.select(data, path_idx).items())[0])
         for a, sel in table_map.full_map.items()
         if isinstance(a, Var)
     }
 
     rec_dict = {
-        **{a[0]._name: a[2] for a in attrs.values()},
+        **{a[0].name: a[2] for a in attrs.values()},
         **(injections or {}),
     }
 
