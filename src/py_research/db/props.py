@@ -68,8 +68,6 @@ OrdT = TypeVar("OrdT", bound=Ordinal)
 
 SchemaT = TypeVar("SchemaT", contravariant=True, default=Any)
 
-ArgT = TypeVar("ArgT", contravariant=True, default=Any)
-
 type SqlExpr = (sqla.SelectBase | sqla.FromClause | sqla.ColumnElement)
 
 SqlT = TypeVar(
@@ -89,14 +87,6 @@ SqlT3 = TypeVar(
 SqlTi = TypeVar(
     "SqlTi",
     bound=SqlExpr | None,
-    default=Any,
-)
-
-
-ArgSqlT = TypeVar(
-    "ArgSqlT",
-    bound=SqlExpr | None,
-    contravariant=True,
     default=Any,
 )
 
@@ -143,7 +133,7 @@ IdxT = TypeVar(
     "IdxT",
     covariant=True,
     bound=AnyIdx,
-    default=Idx[*tuple[Any, ...]],
+    default=AnyIdx[*tuple[Any, ...]],
 )
 IdxT2 = TypeVar(
     "IdxT2",
@@ -156,10 +146,8 @@ IdxT3 = TypeVar(
 IdxTi = TypeVar(
     "IdxTi",
     bound=AnyIdx,
-    default=Idx[*tuple[Any, ...]],
+    default=AnyIdx[*tuple[Any, ...]],
 )
-
-ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=AnyIdx, default=Any)
 
 
 @final
@@ -194,20 +182,21 @@ type RU = R | U
 
 type CRUD = C | R | U | D
 
-CrudT = TypeVar("CrudT", bound=CRUD, default=Any, covariant=True)
+CrudT = TypeVar("CrudT", bound=CRUD, default=Any, contravariant=True)
 CrudT2 = TypeVar("CrudT2", bound=CRUD)
+CrudCtxT = TypeVar("CrudCtxT", bound=CRUD, covariant=True)
 
 
 @dataclass
-class Ctx(Generic[ArgT, ArgIdxT, CrudT, ArgSqlT]):
+class Ctx(Generic[ValT, IdxT, CrudT, SqlT]):
     """Node in context path."""
 
 
-CtxT = TypeVar("CtxT", bound=Ctx | None, default=Any, covariant=True)
+CtxT = TypeVar("CtxT", bound=Ctx | None, default=Any, contravariant=True)
 CtxT2 = TypeVar("CtxT2", bound=Ctx | None)
 CtxT3 = TypeVar("CtxT3", bound=Ctx | None)
 
-PfxT = TypeVar("PfxT", bound=Ctx, covariant=True)
+PfxT = TypeVar("PfxT", bound=Ctx, contravariant=True)
 PfxT2 = TypeVar("PfxT2", bound=Ctx)
 PfxT3 = TypeVar("PfxT3", bound=Ctx)
 
