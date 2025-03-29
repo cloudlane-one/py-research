@@ -762,7 +762,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=self_sql == other_sql,
         )
 
@@ -786,7 +786,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         if isinstance(eq, Filter):
             filt = eq._filter
             assert isinstance(filt, sqla.ColumnElement)
-            return copy_and_override(Filter, self, _context=self, _filter=filt)
+            return copy_and_override(Filter, self, _context=self.root, _filter=filt)
 
         return not eq
 
@@ -802,7 +802,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=filt,
         )
 
@@ -818,7 +818,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=filt,
         )
 
@@ -834,7 +834,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=filt,
         )
 
@@ -850,7 +850,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=filt,
         )
 
@@ -867,7 +867,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         return copy_and_override(
             Filter,
             self,
-            _context=self,
+            _context=self.root,
             _filter=filt,
         )
 
