@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-import copy
-import re
+import inspect
+import operator
 from abc import ABC, abstractmethod
-from collections.abc import (
-    Callable,
-    Hashable,
-    Iterable,
-    Iterator,
-    Mapping,
-    MutableMapping,
-    Sequence,
-)
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache, reduce
 from inspect import get_annotations, getmodule
@@ -25,7 +17,6 @@ from typing import (
     Literal,
     ParamSpec,
     Protocol,
-    Self,
     TypeGuard,
     Unpack,
     cast,
@@ -37,7 +28,6 @@ from typing import (
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
-import sqlalchemy.sql.visitors as sqla_visitors
 import sqlparse
 from typing_extensions import TypeVar, TypeVarTuple
 
@@ -57,6 +47,14 @@ from py_research.reflect.types import (
 )
 from py_research.types import Not, Ordinal
 
+
+@final
+class KeepVal:
+    """Singleton to allow keeping of context value type."""
+
+    __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
+
+
 ValT = TypeVar("ValT", covariant=True, default=Any)
 ValT2 = TypeVar("ValT2")
 ValT3 = TypeVar("ValT3")
@@ -73,6 +71,7 @@ KeyTt = TypeVarTuple("KeyTt")
 KeyTt2 = TypeVarTuple("KeyTt2")
 KeyTt3 = TypeVarTuple("KeyTt3")
 KeyTt4 = TypeVarTuple("KeyTt4")
+KeyTt5 = TypeVarTuple("KeyTt5")
 
 OrdT = TypeVar("OrdT", bound=Ordinal)
 
@@ -129,14 +128,36 @@ class AutoIdx(Generic[AutoIdxT]):
     """Index by custom value derived from self."""
 
 
-type AnyIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
+type FullIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
 
+KeepIdxT = TypeVar(
+    "KeepIdxT",
+    bound=Idx,
+    default=Idx[*tuple[Any, ...]],
+)
+SubIdxT = TypeVar(
+    "SubIdxT",
+    bound=Idx,
+    default=Idx[()],
+)
+AddIdxT = TypeVar(
+    "AddIdxT",
+    bound=Idx,
+    default=Idx[()],
+)
+
+
+class PassIdx(Generic[KeepIdxT, SubIdxT, AddIdxT]):
+    """Pass-through index."""
+
+
+type AnyIdx[*K] = FullIdx[*K] | PassIdx[Any, Any, Any]
 
 IdxT = TypeVar(
     "IdxT",
     covariant=True,
     bound=AnyIdx,
-    default=AnyIdx[*tuple[Any, ...]],
+    default=AnyIdx,
 )
 IdxT2 = TypeVar(
     "IdxT2",
@@ -188,25 +209,21 @@ ArgT = TypeVar("ArgT", contravariant=True, default=Any)
 ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=Idx, default=Any)
 ArgSqlT = TypeVar("ArgSqlT", contravariant=True, bound=SqlExpr | None, default=Any)
 
-PassIdxT = TypeVar("PassIdxT", bound=Idx, default=Idx[()], contravariant=True)
-PassIdxT2 = TypeVar("PassIdxT2", bound=Idx, default=Idx[()])
 
-
-class Interface(Generic[ArgT, PassIdxT, ArgIdxT, ArgSqlT, CrudT]):
+class Ctx(Generic[ArgT, ArgIdxT, ArgSqlT, CrudT]):
     """Interface."""
 
 
-RootT = TypeVar("RootT", bound=Interface, default=Any, covariant=True)
-RootT2 = TypeVar("RootT2", bound=Interface)
-RootT3 = TypeVar("RootT3", bound=Interface)
+CtxT = TypeVar("CtxT", bound=Ctx, default=Any, covariant=True)
+CtxT2 = TypeVar("CtxT2", bound=Ctx)
+CtxT3 = TypeVar("CtxT3", bound=Ctx)
+
+CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[Any, ...]])
+CtxTt2 = TypeVarTuple("CtxTt2")
+CtxTt3 = TypeVarTuple("CtxTt3")
 
 
-@dataclass
-class Owner(Interface[ArgT, Idx[*tuple[Any, ...], Any, Any, Any]]):
-    """Owner type of a dataset (prop)."""
-
-
-class Base(Interface[ArgT, Idx[()], Any, Any, CrudT], ABC):
+class Base(Ctx[ArgT, Any, Any, CrudT], ABC):
     """Base for retrieving/storing data."""
 
     @property
@@ -226,18 +243,9 @@ class Base(Interface[ArgT, Idx[()], Any, Any, CrudT], ABC):
 BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
 
 
-class Ctx(Generic[ValT, IdxT, CrudT, SqlT]):
-    """Node in context path."""
-
-
-CtxTt = TypeVarTuple("CtxTt", default=Unpack[tuple[Any, ...]])
-CtxTt2 = TypeVarTuple("CtxTt2")
-CtxTt3 = TypeVarTuple("CtxTt3")
-
-
-type InputData[V, S: SqlExpr | None] = V | Iterable[V] | Mapping[
-    Hashable, V
-] | pd.DataFrame | pl.DataFrame | S | Prop[V]
+type InputData[
+    V, S: sqla.SelectBase | sqla.FromClause | sqla.ColumnElement | None
+] = V | Iterable[V] | Mapping[Hashable, V] | pd.DataFrame | pl.DataFrame | S | Prop[V]
 
 Params = ParamSpec("Params")
 
@@ -269,13 +277,13 @@ def _map_data_type_name(name: str) -> type[Prop | None]:
 
 
 @dataclass(kw_only=True)
-class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
+class Data(Generic[ValT, IdxT, CrudT, SqlT, CtxT, *CtxTt]):
     """Property definition for a model."""
 
     # Core attributes:
 
     _type: TypeRef[Prop[ValT]] | None = None
-    _context: RootT | Data[Any, Any, Any, Any, RootT]
+    _context: CtxT | Data[Any, Any, Any, Any, CtxT]
 
     # Extension methods:
 
@@ -299,8 +307,8 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         raise NotImplementedError()
 
     def _index(
-        self: Data[Any, AnyIdx[*KeyTt2]],
-    ) -> Alignment[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, SqlT, Base]:
+        self: Data[Any, FullIdx[*KeyTt2]],
+    ) -> Alignment[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, Any, Base]:
         """Get the index of this data."""
         raise NotImplementedError()
 
@@ -371,30 +379,8 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     # Context:
 
-    # def _to_ctx(  # noqa: D107
-    #     self: Data[
-    #         ValT2,
-    #         IdxT2,
-    #         CrudT2,
-    #         SqlT2,
-    #         Interface[ValT3, IdxT3, SqlT3, CrudT2],
-    #         *CtxTt2,
-    #     ],
-    #     ctx: Data[ValT3, IdxT3, CrudT2, SqlT3, RootT3, *CtxTt3],
-    # ) -> Data[ValT2, IdxT2, CrudT2, SqlT2, RootT3, *CtxTt3, *CtxTt2]:
-    #     """Add a context to this property."""
-    #     return copy_and_override(
-    #         Data[ValT2, IdxT2, CrudT2, SqlT2, RootT3, *CtxTt3, *CtxTt2],
-    #         self,
-    #         _context=(
-    #             ctx
-    #             if isinstance(self._context, Interface | Base | Owner)
-    #             else self._context._to_ctx(ctx)
-    #         ),
-    #     )
-
     @cached_prop
-    def root(self) -> RootT:
+    def root(self) -> CtxT:
         """Get the root of this property."""
         if isinstance(self._context, Data):
             return self._context.root
@@ -404,15 +390,15 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
     @cached_prop
     def context(
         self: Data[
-            ValT2,
-            IdxT2,
-            CrudT2,
-            SqlT2,
-            RootT2,
+            Any,
+            Any,
+            Any,
+            Any,
+            Any,
             *CtxTt2,
-            Ctx[ValT3, IdxT3, CrudT2, SqlT3],
+            Ctx[ValT3, Idx[*KeyTt3], SqlT3, CrudT3],
         ],
-    ) -> Data[ValT3, IdxT3, CrudT2, SqlT3, RootT2, *CtxTt2]:
+    ) -> Data[ValT3, Idx[*KeyTt3], CrudT3, SqlT3, CtxT, *CtxTt2]:
         """Get the context of this property."""
         assert isinstance(self._context, Data)
         return self._context  # type: ignore
@@ -424,6 +410,17 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
             return self._name()
 
         return self._context.fqn + "." + self._name()
+
+    # Index:
+
+    def _map_index_selectors(
+        self, sel: list | slice | tuple[list | slice, ...]
+    ) -> (
+        Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable]
+        | Mapping[Data[Any, Any, Any, None, CtxT], slice | Iterable]
+    ):
+        # TODO: implement
+        raise NotImplementedError()
 
     # SQL:
 
@@ -510,12 +507,12 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, AnyIdx[KeyT2], Any, Any, Base],
+        self: Data[Any, FullIdx[KeyT2], Any, Any, Base],
     ) -> Sequence[KeyT2]: ...
 
     @overload
     def keys(
-        self: Data[Any, AnyIdx[*KeyTt2], Any, Any, Base],
+        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Base],
     ) -> Sequence[tuple[*KeyTt2]]: ...
 
     def keys(
@@ -526,12 +523,12 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, AnyIdx[KeyT2], Any, Any, Base],
+        self: Data[Any, FullIdx[KeyT2], Any, Any, Base],
     ) -> Iterable[tuple[KeyT2, ValT]]: ...
 
     @overload
     def items(
-        self: Data[Any, AnyIdx[*KeyTt2], Any, Any, Base],
+        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Base],
     ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
 
     def items(
@@ -549,14 +546,14 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     @overload
     def get(
-        self: Data[ValT2, AnyIdx[KeyT2], Any, Any, Base],
+        self: Data[ValT2, FullIdx[KeyT2], Any, Any, Base],
         key: KeyT2 | tuple[KeyT2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     @overload
     def get(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, Any, Base],
+        self: Data[ValT2, FullIdx[*KeyTt2], Any, Any, Base],
         key: tuple[*KeyTt2],
         default: ValTo,
     ) -> ValT | ValTo: ...
@@ -593,16 +590,16 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     # Selection and filtering:
 
-    # 1. Interface application, keep value type
+    # 1. Context application, altered index, kept value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], CrudT2, SqlT2],
         key: Data[
-            Literal[Not.changed],
-            AnyIdx[*KeyTt3],
+            KeepVal,
+            PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             CrudT2,
             SqlT3,
-            Interface[ValT2, Idx[*KeyTt2], Idx[*KeyTt4], SqlT2, CrudT2],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SqlT2, CrudT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -610,22 +607,22 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         Idx[*KeyTt2, *KeyTt3],
         CrudT2,
         SqlT3,
-        RootT,
+        CtxT,
         *CtxTt,
-        Ctx[ValT2, IdxT, CrudT, SqlT],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SqlT, CrudT],
         *CtxTt3,
     ]: ...
 
-    # 2. Interface application
+    # 2. Context application, altered index, new value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], CrudT2, SqlT2],
         key: Data[
             ValT3,
-            AnyIdx[*KeyTt3],
+            PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             CrudT2,
             SqlT3,
-            Interface[ValT2, Idx[*KeyTt2], Idx[*KeyTt4], SqlT2, CrudT2],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SqlT2, CrudT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -633,41 +630,87 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         Idx[*KeyTt2, *KeyTt3],
         CrudT2,
         SqlT3,
-        RootT,
+        CtxT,
         *CtxTt,
-        Ctx[ValT2, IdxT, CrudT, SqlT],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SqlT, CrudT],
         *CtxTt3,
     ]: ...
 
-    # 3. Key list / slice filtering, scalar index type
+    # 3. Context application, new index, kept value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, SqlT2],
+        key: Data[
+            KeepVal,
+            FullIdx[*KeyTt3],
+            CrudT2,
+            SqlT3,
+            Ctx[ValT2, Idx[*KeyTt2], SqlT2, CrudT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt3],
+        CrudT2,
+        SqlT3,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[*KeyTt2], SqlT, CrudT],
+        *CtxTt3,
+    ]: ...
+
+    # 4. Context application, new index, new value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, SqlT2],
+        key: Data[
+            ValT3,
+            FullIdx[*KeyTt3],
+            CrudT2,
+            SqlT3,
+            Ctx[ValT2, Idx[*KeyTt2], SqlT2, CrudT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt3],
+        CrudT2,
+        SqlT3,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[*KeyTt2], SqlT, CrudT],
+        *CtxTt3,
+    ]: ...
+
+    # 5. Key list / slice filtering, scalar index type
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], RU],
         key: list[KeyT2] | slice,
-    ) -> Data[ValT, IdxT, RU, SqlT, RootT, *CtxTt]: ...
+    ) -> Data[ValT, IdxT, RU, SqlT, CtxT, *CtxTt]: ...
 
-    # 4. Key list / slice filtering
+    # 6. Key list / slice filtering
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], RU],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
-    ) -> Data[ValT, IdxT, RU, SqlT, RootT, *CtxTt]: ...
+    ) -> Data[ValT, IdxT, RU, SqlT, CtxT, *CtxTt]: ...
 
-    # 5. Key list / slice filtering, scalar index type, ro
+    # 7. Key list / slice filtering, scalar index type, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], R],
         key: list[KeyT2] | slice,
-    ) -> Data[ValT, IdxT, R, SqlT, RootT, *CtxTt]: ...
+    ) -> Data[ValT, IdxT, R, SqlT, CtxT, *CtxTt]: ...
 
-    # 6. Key list / slice filtering, ro
+    # 8. Key list / slice filtering, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], R],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
-    ) -> Data[ValT, IdxT, R, SqlT, RootT, *CtxTt]: ...
+    ) -> Data[ValT, IdxT, R, SqlT, CtxT, *CtxTt]: ...
 
-    # 7. Key selection
+    # 9. Key selection
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2]],
@@ -677,12 +720,12 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         Idx[*KeyTt2],
         CrudT,
         SqlT,
-        RootT,
+        CtxT,
         *CtxTt,
-        Ctx[ValT, IdxT, CrudT, SqlT],
+        Ctx[ValT, Idx[*KeyTt3, *KeyTt2], SqlT, CrudT],
     ]: ...
 
-    # 8. Key selection, scalar
+    # 10. Key selection, scalar
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT3, *KeyTt2]],
@@ -692,17 +735,17 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         Idx[*KeyTt2],
         CrudT,
         SqlT,
-        RootT,
+        CtxT,
         *CtxTt,
-        Ctx[ValT, IdxT, CrudT, SqlT],
+        Ctx[ValT, Idx[KeyT3, *KeyTt2], SqlT, CrudT],
     ]: ...
 
-    # 9. Type selection / filtering
+    # 11. Base type selection
     @overload
     def __getitem__(
-        self,
-        key: type[ValT3],
-    ) -> Data[ValT3, IdxT, CrudT, SqlT, RootT, *CtxTt]: ...
+        self: Base[ValT2, CrudT2],
+        key: type[ValT2],
+    ) -> Data[ValT2, IdxT, CrudT, SqlT, CtxT, *CtxTt]: ...
 
     def __getitem__(
         self,
@@ -713,30 +756,46 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
             case Data():
                 return copy_and_override(type(key), key, _context=self)
             case type() | UnionType():
-                raise NotImplementedError()
+                assert isinstance(self, Base)
+                if isinstance(key, UnionType):
+                    union_types = typedef_to_typeset(key)
+                    alignment = reduce(
+                        Data.__matmul__, (self.registry(t) for t in union_types)
+                    )
+                    return alignment[_map_reduce_operator(operator.or_)]
+
+                return self.registry(key)
             case list() | slice() | Hashable():
                 if not isinstance(key, list | slice) and not has_type(
                     key, tuple[slice, ...]
                 ):
                     key = [key]
 
-                return copy_and_override(
-                    Filter,
-                    self,
-                    _context=self,
-                    _filter=cast(
-                        list[Hashable] | slice | tuple[slice, ...],
-                        key,
-                    ),
-                )
+                keymap = self._map_index_selectors(key)
+
+                return Filter.from_keymap(keymap)
 
     # Comparison:
 
     @overload
     def __eq__(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: Data[Any, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-    ) -> Filter[ValT2]: ...
+        self: Data[Any, Any, Any, sqla.ColumnElement, CtxT2],
+        other: Data[Any, Any, Any, sqla.ColumnElement, CtxT2],
+    ) -> Data[bool, Any, R, sqla.ColumnElement | None, CtxT2, *tuple[Any, ...]]: ...
+
+    @overload
+    def __eq__(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, FullIdx[*KeyTt2], Any, sqla.ColumnElement],
+        other: Any,
+    ) -> Data[
+        bool,
+        PassIdx,
+        R,
+        sqla.ColumnElement | None,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT, Idx[*KeyTt2], SqlT, CrudT],
+    ]: ...
 
     @overload
     def __eq__(
@@ -747,29 +806,28 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
     def __eq__(  # noqa: D105
         self,
         other: Any,
-    ) -> Filter | bool:
-        self_sql = self._sql()
-        if not isinstance(self_sql, sqla.ColumnElement):
+    ) -> (
+        Data[bool, PassIdx, R, sqla.ColumnElement | None, Any, *tuple[Any, ...]] | bool
+    ):
+        if not isinstance(self._sql(), sqla.ColumnElement):
             return id(self) == id(other)
 
         if not isinstance(other, Data):
+            mapping = _map_reduce_operator(operator.eq, other)
+            return self[mapping]
+
+        if not isinstance(other._sql(), sqla.ColumnElement):
             return id(self) == id(other)
 
-        other_sql = other._sql()
-        if not isinstance(other_sql, sqla.ColumnElement):
-            return id(self) == id(other)
+        reduction = _map_reduce_operator(operator.eq)
+        alignment = self @ other
 
-        return copy_and_override(
-            Filter,
-            self,
-            _context=self.root,
-            _filter=self_sql == other_sql,
-        )
+        return alignment[reduction]
 
     @overload
     def __neq__(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: Data[Any, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[Any, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
+        other: Data[Any, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
     ) -> Filter[ValT2]: ...
 
     @overload
@@ -784,15 +842,15 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
     ) -> Filter | bool:
         eq = self == other
         if isinstance(eq, Filter):
-            filt = eq._filter
+            filt = eq.bool_data
             assert isinstance(filt, sqla.ColumnElement)
             return copy_and_override(Filter, self, _context=self.root, _filter=filt)
 
         return not eq
 
     def __lt__(  # noqa: D105
-        self: Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
+        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
     ) -> Filter[ValT2]:
         filt = (
             self._sql() < other._sql()
@@ -807,8 +865,8 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         )
 
     def __le__(  # noqa: D105
-        self: Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
+        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
     ) -> Filter[ValT2]:
         filt = (
             self._sql() <= other._sql()
@@ -823,8 +881,8 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         )
 
     def __gt__(  # noqa: D105
-        self: Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
+        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
     ) -> Filter[ValT2]:
         filt = (
             self._sql() > other._sql()
@@ -839,8 +897,8 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         )
 
     def __ge__(  # noqa: D105
-        self: Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
-        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
+        other: OrdT | Data[OrdT, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
     ) -> Filter[ValT2]:
         filt = (
             self._sql() >= other._sql()
@@ -855,7 +913,7 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
         )
 
     def isin(
-        self: Data[Any, Any, Any, sqla.ColumnElement, Interface[ValT2]],
+        self: Data[Any, Any, Any, sqla.ColumnElement, Ctx[ValT2]],
         other: Iterable[ValT2] | slice,
     ) -> Filter[ValT2]:
         """Test values of this dataset for membership in the given iterable."""
@@ -875,131 +933,131 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, None, RootT2],
-        other: Data[tuple[*ValTt3], IdxT3, CrudT2, Any, RootT2],
+        self: Data[Any, Any, CrudT2, None, CtxT2],
+        other: Data[tuple[*ValTt3], IdxT3, CrudT2, Any, CtxT2],
     ) -> Alignment[
         tuple[ValT, *ValTt3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, Any, RootT2],
-        other: Data[tuple[*ValTt3], IdxT3, CrudT2, None, RootT2],
+        self: Data[Any, Any, CrudT2, Any, CtxT2],
+        other: Data[tuple[*ValTt3], IdxT3, CrudT2, None, CtxT2],
     ) -> Alignment[
         tuple[ValT, *ValTt3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, SqlExpr, RootT2],
-        other: Data[tuple[*ValTt3], IdxT3, CrudT2, SqlExpr, RootT2],
+        self: Data[Any, Any, CrudT2, SqlExpr, CtxT2],
+        other: Data[tuple[*ValTt3], IdxT3, CrudT2, SqlExpr, CtxT2],
     ) -> Alignment[
         tuple[ValT, *ValTt3],
         IdxT | IdxT3,
         CrudT2,
         sqla.Select,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[tuple[*ValTt2], Any, CrudT2, None, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, Any, RootT2],
+        self: Data[tuple[*ValTt2], Any, CrudT2, None, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, Any, CtxT2],
     ) -> Alignment[
         tuple[*ValTt2, ValT3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[tuple[*ValTt2], Any, CrudT2, Any, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, None, RootT2],
+        self: Data[tuple[*ValTt2], Any, CrudT2, Any, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, None, CtxT2],
     ) -> Alignment[
         tuple[*ValTt2, ValT3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[tuple[*ValTt2], Any, CrudT2, SqlExpr, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, SqlExpr, RootT2],
+        self: Data[tuple[*ValTt2], Any, CrudT2, SqlExpr, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, SqlExpr, CtxT2],
     ) -> Alignment[
         tuple[*ValTt2, ValT3],
         IdxT | IdxT3,
         CrudT2,
         sqla.Select,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, None, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, Any, RootT2],
+        self: Data[Any, Any, CrudT2, None, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, Any, CtxT2],
     ) -> Alignment[
         tuple[ValT, ValT3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, Any, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, None, RootT2],
+        self: Data[Any, Any, CrudT2, Any, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, None, CtxT2],
     ) -> Alignment[
         tuple[ValT, ValT3],
         IdxT | IdxT3,
         CrudT2,
         None,
-        RootT2,
+        CtxT2,
     ]: ...
 
     @overload
     def __matmul__(
-        self: Data[Any, Any, CrudT2, SqlExpr, RootT2],
-        other: Data[ValT3, IdxT3, CrudT2, SqlExpr, RootT2],
+        self: Data[Any, Any, CrudT2, SqlExpr, CtxT2],
+        other: Data[ValT3, IdxT3, CrudT2, SqlExpr, CtxT2],
     ) -> Alignment[
         tuple[ValT, ValT3],
         IdxT | IdxT3,
         CrudT2,
         sqla.Select,
-        RootT2,
+        CtxT2,
     ]: ...
 
     def __matmul__(
-        self: Data[Any, Any, CrudT2, Any, RootT2],
-        other: Data[Any, IdxT3, CrudT2, Any, RootT2],
+        self: Data[Any, Any, CrudT2, Any, CtxT2],
+        other: Data[Any, IdxT3, CrudT2, Any, CtxT2],
     ) -> Alignment[
         tuple,
         IdxT | IdxT3,
         CrudT2,
         sqla.Select | None,
-        RootT2,
+        CtxT2,
     ]:
         """Align two datasets."""
-        self_elem = self.elements if isinstance(self, Alignment) else (self,)
-        other_elem = other.elements if isinstance(other, Alignment) else (other,)
+        self_elem = self.data if isinstance(self, Alignment) else (self,)
+        other_elem = other.data if isinstance(other, Alignment) else (other,)
         return Alignment[
             tuple[*self_elem, *other_elem],
             IdxT | IdxT3,
             CrudT2,
             sqla.Select | None,
-            RootT2,
+            CtxT2,
         ](
             self_elem + other_elem,
             _context=self.root,
@@ -1009,12 +1067,12 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
 
     @overload
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, None, Any, RootT2],
+        self: Data[ValT2, FullIdx[*KeyTt2], CrudT2, None, Any, CtxT2],
         other: (
-            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
+            Prop[ValT3, FullIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
             | Prop[
                 ValT3,
-                AnyIdx[*KeyTt3],
+                FullIdx[*KeyTt3],
                 CrudT2,
                 Any,
                 BaseT,
@@ -1023,16 +1081,16 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, RootT2]: ...
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, None, BaseT, CtxT2]: ...
 
     @overload
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, RootT2],
+        self: Data[ValT2, FullIdx[*KeyTt2], CrudT2, sqla.FromClause, Any, CtxT2],
         other: (
-            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, SqlT3, BaseT, Ctx[ValT2]]
+            Prop[ValT3, FullIdx[*KeyTt3], CrudT2, SqlT3, BaseT, Ctx[ValT2]]
             | Prop[
                 ValT3,
-                AnyIdx[*KeyTt3],
+                FullIdx[*KeyTt3],
                 CrudT2,
                 SqlT3,
                 BaseT,
@@ -1041,15 +1099,15 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, RootT2]: ...
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, SqlT3, BaseT, CtxT2]: ...
 
     def __truediv__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, RootT2],
+        self: Data[ValT2, FullIdx[*KeyTt2], CrudT2, sqla.FromClause | None, Any, CtxT2],
         other: (
-            Prop[ValT3, AnyIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
+            Prop[ValT3, FullIdx[*KeyTt3], CrudT2, Any, BaseT, Ctx[ValT2]]
             | Prop[
                 ValT3,
-                AnyIdx[*KeyTt3],
+                FullIdx[*KeyTt3],
                 CrudT2,
                 Any,
                 BaseT,
@@ -1058,9 +1116,9 @@ class Data(Generic[ValT, IdxT, CrudT, SqlT, RootT, *CtxTt]):
                 Ctx[ValT2],
             ]
         ),
-    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, RootT2]:
+    ) -> Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2]:
         """Chain two matching properties together."""
-        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, RootT2](
+        return Path[ValT3, Idx[*KeyTt2, *KeyTt3], CrudT2, Any, BaseT, CtxT2](
             props=(*self.props, other) if isinstance(self, Path) else (self, other)  # type: ignore
         )
 
@@ -1177,90 +1235,195 @@ class Registry(Data[RegT, AutoIdx[RegT], CrudT, sqla.FromClause, BaseT, None]):
         )
 
 
+SelSqlT = TypeVar("SelSqlT", bound=sqla.Select | None, covariant=True, default=None)
+TupT = TypeVar("TupT", bound=tuple, covariant=True)
+
+
+@dataclass
+class Alignment(Data[TupT, IdxT, CrudT, SelSqlT, CtxT]):
+    """Alignment of multiple props."""
+
+    data: tuple[Data[Any, IdxT, CrudT, Any, CtxT], ...]
+
+
+@dataclass(kw_only=True)
+class Map(
+    Data[
+        ValT,
+        PassIdx,
+        R,
+        SqlT,
+        Ctx[ArgT, Idx[*tuple[Any, ...]], ArgSqlT, Any],
+    ]
+):
+    """Apply a mapping function to a dataset."""
+
+    func: Callable[[ArgT], ValT]
+    df_func: Callable[[pl.DataFrame], pl.DataFrame] | None = None
+    sql_func: Callable[[ArgSqlT], SqlT] | None = None
+
+
+@dataclass(kw_only=True)
+class Reduce(
+    Data[
+        ValT,
+        PassIdx,
+        R,
+        SqlT,
+        Ctx[tuple[ArgT, ...], Idx[*tuple[Any, ...]], ArgSqlT, Any],
+    ]
+):
+    """Apply a mapping function to a dataset."""
+
+    func: Callable[[ArgT, ArgT], ValT]
+    df_func: Callable[[pl.DataFrame, pl.DataFrame], pl.DataFrame] | None = None
+    sql_func: Callable[[ArgSqlT, ArgSqlT], SqlT] | None = None
+
+
+@dataclass(kw_only=True)
+class Aggregate(
+    Data[
+        ValT,
+        PassIdx[KeepIdxT, SubIdxT],
+        R,
+        SelSqlT,
+        Ctx[ArgT, Idx[*tuple[Any, ...]], ArgSqlT, Any],
+    ]
+):
+    """Apply a mapping function to a dataset."""
+
+    func: Callable[[Iterable[ArgT]], ValT]
+    df_func: Callable[[pl.DataFrame], pl.DataFrame] | None = None
+    sql_func: Callable[[ArgSqlT], SelSqlT] | None = None
+
+    keep_levels: type[KeepIdxT] | None = None
+    agg_levels: type[SubIdxT] | None = None
+
+
+@overload
+def _map_reduce_operator(
+    op: Callable[[Any, Any], Any], right: Literal[Not.defined] = ...
+) -> Data[
+    Any,
+    PassIdx,
+    R,
+    sqla.ColumnElement | None,
+    Ctx[tuple, Any, sqla.Select | None, Any],
+]: ...
+
+
+@overload
+def _map_reduce_operator[T](op: Callable[[Any, T], Any], right: T) -> Data[
+    Any,
+    PassIdx,
+    R,
+    sqla.ColumnElement | None,
+]: ...
+
+
+@overload
+def _map_reduce_operator(
+    op: Callable[[Any], Any], right: Literal[Not.defined] = ...
+) -> Data[
+    Any,
+    PassIdx,
+    R,
+    sqla.ColumnElement | None,
+]: ...
+
+
+def _map_reduce_operator(
+    op: Callable[[Any, Any], Any] | Callable[[Any], Any],
+    right: Any | Literal[Not.defined] = Not.defined,
+) -> Data[
+    Any,
+    PassIdx,
+    R,
+    sqla.ColumnElement | None,
+]:
+    """Create a scalar comparator for the given operation."""
+    if right is not Not.defined:
+        op = cast(Callable[[Any, Any], Any], op)
+        return Map(
+            _context=Ctx(),
+            func=lambda x: op(x, right),
+            df_func=lambda df: op(df, right),
+            sql_func=lambda sql: op(sql, right),
+        )
+
+    if len(inspect.getfullargspec(op).args) == 1:
+        op = cast(Callable[[Any], Any], op)
+        return Map(
+            _context=Ctx(),
+            func=op,
+            df_func=op,
+            sql_func=op,
+        )
+
+    op = cast(Callable[[Any, Any], Any], op)
+    return Reduce(
+        _context=Ctx(),
+        func=op,
+        df_func=op,
+        sql_func=op,
+    )
+
+
 RuTi = TypeVar("RuTi", bound=R | U, default=R)
 
 
 @dataclass(kw_only=True)
 class Filter(
     Data[
-        Literal[Not.changed],
-        Idx[()],
-        R | U,
-        sqla.Select,
-        Interface[
-            ArgT, Idx[*tuple[Any, ...]], Idx[()], sqla.FromClause | sqla.SelectBase, Any
-        ],
+        KeepVal,
+        PassIdx,
+        RuTi,
+        SqlT,
+        CtxT,
     ]
 ):
-    """Property definition for a model."""
+    """Filter a dataset."""
 
-    # Attributes:
+    bool_data: Data[bool, Any, Any, SqlT, CtxT]
 
-    _filter: (
-        sqla.ColumnElement[bool] | pl.Expr | slice | list[Hashable] | tuple[slice, ...]
-    )
+    @staticmethod
+    @overload
+    def from_keymap(
+        keymap: Mapping[
+            Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable
+        ],
+    ) -> Filter[Any, sqla.ColumnElement, CtxT]: ...
 
-    @cached_prop
-    def _sql_filters(
-        self,
-    ) -> tuple[
-        list[sqla.ColumnElement[bool]], list[Table[Any, Any, Any, Any, Any, DbT]]
-    ]:
-        sql_filt = [f for f in self.__filters if isinstance(f, sqla.ColumnElement)]
+    @staticmethod
+    @overload
+    def from_keymap(
+        keymap: Mapping[Data[Any, Any, Any, None, CtxT], slice | Iterable],
+    ) -> Filter[Any, None, CtxT]: ...
 
-        join_set: set[Table[Any, Any, Any, Any, Any, DbT]] = set()
-        replace_func = partial(self._parse_sql_filter, join_set=join_set)
-        sql_filt = [
-            sqla_visitors.replacement_traverse(f, {}, replace=replace_func)
-            for f in sql_filt
-        ]
-        merge = list(join_set)
+    @staticmethod
+    def from_keymap(
+        keymap: (
+            Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable]
+            | Mapping[Data[Any, Any, Any, None, CtxT], slice | Iterable]
+        ),
+    ) -> Filter[Any, sqla.ColumnElement | None, CtxT]:
+        """Construct filter from index key map."""
+        bool_data = reduce(
+            operator.and_, (idx.isin(filt) for idx, filt in keymap.items())
+        )
 
-        key_filt = [
-            (
-                reduce(
-                    sqla.and_,
-                    (
-                        (idx.isin(filt) if isinstance(filt, slice) else idx == filt)
-                        for idx, filt in zip(self._abs_idx_cols.values(), key_filt)
-                    ),
-                )
-                if isinstance(key_filt, tuple)
-                else reduce(
-                    sqla.or_,
-                    (
-                        reduce(
-                            sqla.and_,
-                            (
-                                (idx == filt)
-                                for idx, filt in zip(
-                                    self._abs_idx_cols.values(), single_filt
-                                )
-                            ),
-                        )
-                        for single_filt in key_filt
-                    ),
-                )
-            )
-            for key_filt in self._filters
-            if not isinstance(key_filt, sqla.ColumnElement)
-        ]
-
-        return [
-            *sql_filt,
-            *key_filt,
-        ], merge
+        return Filter(_context=bool_data.root, bool_data=bool_data)
 
 
 @dataclass(kw_only=True)
-class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], CrudT, SqlT, BaseT, RootT, *CtxTt]):
+class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     """Property definition for a model."""
 
     # Attributes:
 
     init_after: ClassVar[set[type[Prop]]] = set()
 
-    _owner: type[RootT] | None = None
+    _owner: type[CtxT] | None = None
 
     alias: str | None = None
     default: ValT | InputData[ValT, SqlT] | Literal[Not.defined] = Not.defined
@@ -1273,20 +1436,20 @@ class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], CrudT, SqlT, BaseT, RootT, *CtxTt])
     # Extension methods:
 
     def _value_get(
-        self, instance: RootT
+        self, instance: CtxT
     ) -> ValT | Literal[Not.handled, Not.resolved, Not.defined]:
         """Get the scalar value of this property given an object instance."""
         return Not.handled
 
     def _value_set(
-        self: Prop[Any, Any, C | U], instance: RootT, value: Any
+        self: Prop[Any, Any, C | U], instance: CtxT, value: Any
     ) -> None | Literal[Not.handled]:
         """Set the scalar value of this property given an object instance."""
         return Not.handled
 
     # Ownership:
 
-    def __set_name__(self, owner: type[RootT], name: str) -> None:  # noqa: D105
+    def __set_name__(self, owner: type[CtxT], name: str) -> None:  # noqa: D105
         if self.alias is None:
             self.alias = name
 
@@ -1304,7 +1467,7 @@ class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], CrudT, SqlT, BaseT, RootT, *CtxTt])
             )
 
     @cached_prop
-    def owner(self: Prop[*tuple[Any, ...], RootT2]) -> type[RootT2]:
+    def owner(self: Prop[*tuple[Any, ...], CtxT2]) -> type[CtxT2]:
         """Module of the owner model type."""
         assert self._owner is not None
         return self._owner
@@ -1363,28 +1526,14 @@ class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], CrudT, SqlT, BaseT, RootT, *CtxTt])
     #     return Ungot()
 
 
-TupT = TypeVar("TupT", bound=tuple, covariant=True)
-SelSqlT = TypeVar("SelSqlT", bound=sqla.Select | None, covariant=True, default=None)
-
-
 @dataclass
-class Alignment(Data[TupT, IdxT, CrudT, SelSqlT, RootT]):
-    """Alignment of multiple props."""
-
-    elements: tuple[Data[Any, IdxT, CrudT, Any, RootT], ...]
-
-
-RecSqlT = TypeVar("RecSqlT", bound=sqla.CTE | None, covariant=True, default=None)
-
-
-@dataclass
-class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT, *CtxTt]):
+class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT, *CtxTt]):
     """Alignment of multiple props."""
 
     props: (
-        tuple[Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT],]
+        tuple[Data[ValT, IdxT, CrudT, SqlT, BaseT, CtxT],]
         | tuple[
-            Data[Any, Any, CrudT, sqla.FromClause | None, BaseT, RootT],
+            Data[Any, Any, CrudT, sqla.FromClause | None, BaseT, CtxT],
             *tuple[Prop[Any, Any, CrudT, sqla.FromClause | None, BaseT, Any], ...],
             Prop[ValT, Any, CrudT, SqlT, BaseT, Any],
         ]
@@ -1431,8 +1580,11 @@ class Path(Data[ValT, IdxT, CrudT, SqlT, BaseT, RootT, *CtxTt]):
         return joins
 
 
+RecSqlT = TypeVar("RecSqlT", bound=sqla.CTE | None, covariant=True, default=None)
+
+
 @dataclass
-class Recursion(Data[ValT, Idx[*tuple[Any, ...]], R, RecSqlT, BaseT, RootT, *CtxTt]):
+class Recursion(Data[ValT, Idx[*tuple[Any, ...]], R, RecSqlT, BaseT, CtxT, *CtxTt]):
     """Combination of multiple props."""
 
-    paths: tuple[Path[ValT, Any, Any, Any, BaseT, RootT], ...]
+    paths: tuple[Path[ValT, Any, Any, Any, BaseT, CtxT], ...]
