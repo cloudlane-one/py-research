@@ -1048,7 +1048,7 @@ class ColTuple(Prop[TupT, OwnT, R]):
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val)}
 
     def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.name, self._context, self.columns))
+        return gen_int_hash((self.name, self.context, self.columns))
 
 
 @dataclass(eq=False)
@@ -1065,7 +1065,7 @@ class Key(ColTuple[KeyT, OwnT]):
                 Column(
                     _name=self.name,
                     _type=Column[self.common_value_type],
-                    _owner=self._context,
+                    _owner=self.context,
                 ),
             )
             setattr(owner, f"{name}_col", self.columns[0])
@@ -1099,7 +1099,7 @@ class ForeignKey(ColTuple[KeyT, OwnT], Generic[TgtT, KeyT, OwnT]):
                 Column(
                     _name=f"{self.name}_{pk_col.name}_fk",
                     _type=Column[pk_col.common_value_type],
-                    _owner=self._context,
+                    _owner=self.context,
                 ): pk_col
                 for pk_col in pk_cols
             }

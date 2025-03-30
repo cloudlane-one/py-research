@@ -1829,7 +1829,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     ) -> sqla.ColumnElement[bool] | bool:
         identical = hash(self) == hash(other)
 
-        if identical or self._context is None:
+        if identical or self.context is None:
             return identical
 
         if isinstance(other, Rel):
@@ -2009,7 +2009,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
 
         return Table(
             _base=self.base,
-            _ctx=self._context,
+            _ctx=self.context,
             _name=table.name,
             _type=cast(set[type[TabT2]], self.record_type_set),
             _sql_join=table,

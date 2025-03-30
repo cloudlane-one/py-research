@@ -18,6 +18,7 @@ from typing import (
     TypeGuard,
     Union,
     cast,
+    final,
     get_args,
     get_origin,
     overload,
@@ -67,6 +68,17 @@ class TypeRef[T]:
     hint: SingleTypeDef[T]
     var_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
     ctx_module: ModuleType | None = None
+
+
+T_contra = TypeVar("T_contra", contravariant=True)
+
+
+@final
+@dataclass
+class ContraType(Generic[T_contra]):
+    """Represent a contravariant type."""
+
+    type_: type[T_contra] | None = None
 
 
 def is_subtype(type_: SingleTypeDef | UnionType, supertype: T) -> TypeGuard[T]:
@@ -170,7 +182,7 @@ def hint_to_typedef(
     *,
     typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
     ctx_module: ModuleType | None = ...,
-    unresolved_typevars: Literal["keep"] = ...,
+    unresolved_typevars: Literal["keep"],
 ) -> SingleTypeDef | UnionType | TypeVar: ...
 
 
@@ -428,9 +440,7 @@ def get_typevar_map(
     return typevar_map
 
 
-def set_typeargs[
-    T
-](
+def set_typeargs[T](
     typedef: SingleTypeDef[T],
     args: (
         Sequence[SingleTypeDef | UnionType | TypeVar]

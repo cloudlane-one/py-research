@@ -179,7 +179,7 @@ class Model(DataclassInstance, Generic[IdxT], metaclass=ModelMeta):
 
         cls = type(self)
         props = cls._props
-        prop_types = {_get_prop_type(p._type or Prop) for p in props.values()}
+        prop_types = {_get_prop_type(p.typeref or Prop) for p in props.values()}
 
         init_sequence = list(p for p in prop_types if p is not NoneType)
         init_sequence = sorted(
