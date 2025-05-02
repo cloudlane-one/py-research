@@ -5,7 +5,15 @@ from __future__ import annotations
 import inspect
 import operator
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable,
+    Collection,
+    Hashable,
+    Iterable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from dataclasses import dataclass, field
 from functools import cache, partial, reduce
 from inspect import get_annotations, getmodule
@@ -58,6 +66,7 @@ class KeepVal:
 ValT = TypeVar("ValT", covariant=True, default=Any)
 ValT2 = TypeVar("ValT2")
 ValT3 = TypeVar("ValT3")
+ValT4 = TypeVar("ValT4")
 ValTi = TypeVar("ValTi", default=Any)
 ValTo = TypeVar("ValTo", default=None)
 ValTt2 = TypeVarTuple("ValTt2")
@@ -75,8 +84,11 @@ KeyTt5 = TypeVarTuple("KeyTt5")
 
 OrdT = TypeVar("OrdT", bound=Ordinal)
 
-type SqlExpr = (sqla.SelectBase | sqla.FromClause | sqla.ColumnElement)
-type PlObj = (pl.DataFrame | pl.Series)
+type ColTuple = tuple[sqla.ColumnElement, ...]
+type SeriesTuple = tuple[pl.Series, ...]
+
+type SqlExpr = (sqla.SelectBase | sqla.FromClause | sqla.ColumnElement | ColTuple)
+type PlObj = (pl.DataFrame | pl.Series | SeriesTuple)
 
 DataT = TypeVar(
     "DataT",
@@ -305,7 +317,7 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
 
     def _index(
         self: Data[Any, FullIdx[*KeyTt2]],
-    ) -> Alignment[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, Any, Base]:
+    ) -> Align[tuple[*KeyTt2], SelfIdx[*KeyTt2], R, Any, Base]:
         """Get the index of this data."""
         raise NotImplementedError()
 
@@ -397,8 +409,8 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
     def _map_index_selectors(
         self, sel: list | slice | tuple[list | slice, ...]
     ) -> (
-        Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable]
-        | Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Iterable]
+        Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Collection]
+        | Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Collection]
     ):
         # TODO: implement
         raise NotImplementedError()
@@ -419,6 +431,11 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
                 return None
             case sqla.SelectBase():
                 return sql
+            case tuple():
+                if has_type(sql, tuple[sqla.ColumnElement, ...]):
+                    return sqla.select(*sql)
+                else:
+                    return None
             case _:
                 return sqla.select(sql)
 
@@ -746,8 +763,7 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
                     alignment = reduce(
                         Data.__matmul__, (self.registry(t) for t in union_types)
                     )
-                    reduction: Data[bool, PassIdx] = _map_reduce_operator(operator.or_)
-                    return alignment[reduction]
+                    return alignment._map_reduce_operator(operator.or_)
 
                 return self.registry(key)
             case list() | slice() | Hashable():
@@ -846,7 +862,7 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
     ]:
         """Align two datasets."""
         if is_subtype(self.value_typeform, tuple):
-            assert isinstance(self, Alignment)
+            assert isinstance(self, Align)
             self_data = self.data
             self_types = self.value_types
         else:
@@ -854,14 +870,14 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
             self_types = (self.value_typeform,)
 
         if is_subtype(other.value_typeform, tuple):
-            assert isinstance(other, Alignment)
+            assert isinstance(other, Align)
             other_data = other.data
             other_types = other.value_types
         else:
             other_data = (other,)
             other_types = (other.value_typeform,)
 
-        return Alignment[
+        return Align[
             tuple[*self_types, *other_types],
             IdxT | IdxT3,
             CrudT2,
@@ -872,32 +888,157 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
             context=self.root,
         )
 
+    # Reduction:
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, SqlExpr],
+        op: Callable[[ValT2, ValT2], ValT3],
+        right: Literal[Not.defined] = ...,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        sqla.ColumnElement,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Any],
+        op: Callable[[ValT2, ValT2], ValT3],
+        right: Literal[Not.defined] = ...,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        pl.Series,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, SqlExpr],
+        op: Callable[[ValT2, ValT4], ValT3],
+        right: ValT4,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        sqla.ColumnElement,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Any],
+        op: Callable[[ValT2, ValT4], ValT3],
+        right: ValT4,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        pl.Series,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, sqla.ColumnElement],
+        op: Callable[[ValT2], ValT3],
+        right: Literal[Not.defined] = ...,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        sqla.ColumnElement,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    @overload
+    def _map_reduce_operator(
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, pl.Series],
+        op: Callable[[ValT2], ValT3],
+        right: Literal[Not.defined] = ...,
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt2],
+        R,
+        pl.Series,
+        CtxT,
+        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
+    ]: ...
+
+    def _map_reduce_operator(
+        self: Data,
+        op: Callable[[Any, Any], Any] | Callable[[Any], Any],
+        right: Any | Literal[Not.defined] = Not.defined,
+    ) -> Data[
+        Any,
+        Any,
+        R,
+        sqla.ColumnElement | pl.Series,
+        CtxT,
+        Ctx[ValT, Any, DataT, CrudT],
+    ]:
+        """Create a scalar comparator for the given operation."""
+        if right is not Not.defined:
+            mapping = Map(
+                context=Ctx(),
+                func=lambda x: cast(Callable[[Any, Any], Any], op)(x, right),
+                data_func=lambda data: cast(Callable[[Any, Any], Any], op)(data, right),
+            )
+            return self[mapping]
+
+        if len(inspect.getfullargspec(op).args) == 1:
+            op = cast(Callable[[Any], Any], op)
+            mapping = Map(
+                context=Ctx(),
+                func=op,
+                data_func=op,
+            )
+            return self[mapping]
+
+        op = cast(Callable[[Any, Any], Any], op)
+        reduction = Reduce(
+            context=Ctx(),
+            func=op,
+            data_func=op,
+        )
+        assert issubclass(self.common_value_type, tuple)
+        return self[reduction]
+
     # Comparison:
 
     @overload
     def __eq__(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, sqla.ColumnElement, CtxT2],
-        other: Data[ValT3, IdxT3, Any, sqla.ColumnElement, CtxT2],
+        self: Data[Any, Any, Any, sqla.ColumnElement, CtxT2, *CtxTt2],
+        other: Data[ValT3, IdxT3, Any, sqla.ColumnElement, CtxT2, *CtxTt2],
     ) -> Data[
-        bool,
-        IdxT | IdxT3,
+        KeepVal,
+        PassIdx,
         R,
         sqla.ColumnElement,
         CtxT2,
-        Ctx[tuple[ValT, ValT3], Any, sqla.Select, R],
+        *CtxTt2,
     ]: ...
 
     @overload
     def __eq__(
-        self: Data[Any, Any, Any, Any, CtxT2],
-        other: Data[ValT3, IdxT3, Any, Any, CtxT2],
+        self: Data[Any, Any, Any, Any, CtxT2, *CtxTt2],
+        other: Data[ValT3, IdxT3, Any, Any, CtxT2, *CtxTt2],
     ) -> Data[
-        bool,
-        IdxT | IdxT3,
+        KeepVal,
+        PassIdx,
         R,
         pl.Series,
         CtxT2,
-        Ctx[tuple[ValT, ValT3], Any, pl.Series, R],
+        *CtxTt2,
     ]: ...
 
     @overload
@@ -905,13 +1046,12 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
         self: Data[Any, AnyIdx[*KeyTt2], Any, sqla.ColumnElement],
         other: Any,
     ) -> Data[
-        bool,
-        IdxT,
+        KeepVal,
+        PassIdx,
         R,
-        sqla.ColumnElement,
+        pl.Series,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
     ]: ...
 
     @overload
@@ -919,98 +1059,95 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any],
         other: Any,
     ) -> Data[
-        bool,
-        IdxT,
+        KeepVal,
+        PassIdx,
         R,
         pl.Series,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
     ]: ...
 
     def __eq__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
         self: Data,
         other: Any,
     ) -> (
-        Data[bool, Any, R, sqla.ColumnElement | pl.Series, Any, *tuple[Any, ...]] | bool
+        Data[
+            KeepVal,
+            PassIdx,
+            R,
+            sqla.ColumnElement | pl.Series,
+        ]
+        | bool
     ):
         if not isinstance(other, Data):
-            mapping = _map_reduce_operator(operator.eq, other)
-            return self[mapping]
+            return self._map_reduce_operator(operator.eq, other)
 
-        reduction: Data[bool, PassIdx] = _map_reduce_operator(operator.eq)
         alignment = self @ other
 
-        return alignment[reduction]
+        return Filter(
+            context=self.context, bool_data=alignment._map_reduce_operator(operator.eq)
+        )
 
     @overload
     def isin(  # pyright: ignore[reportOverlappingOverload]
         self: Data[Any, AnyIdx[*KeyTt2], Any, sqla.ColumnElement],
-        other: Iterable[ValT2] | slice,
+        other: Collection[ValT2] | slice,
     ) -> Data[
-        bool,
-        IdxT,
+        KeepVal,
+        PassIdx,
         R,
         sqla.ColumnElement,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
     ]: ...
 
     @overload
     def isin(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any],
-        other: Iterable[ValT2] | slice,
+        other: Collection[ValT2] | slice,
     ) -> Data[
-        bool,
-        IdxT,
+        KeepVal,
+        PassIdx,
         R,
         pl.Series,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
     ]: ...
 
     def isin(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any],
-        other: Iterable[ValT2] | slice,
+        other: Collection[ValT2] | slice,
     ) -> Data[
-        bool,
-        IdxT,
+        KeepVal,
+        PassIdx,
         R,
         sqla.ColumnElement | pl.Series,
-        CtxT,
-        *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DataT, CrudT],
     ]:
         """Test values of this dataset for membership in the given iterable."""
         if isinstance(other, slice):
-            mapping = Map[bool,](
+            mapping = Map[bool](
                 context=Ctx(),
                 func=lambda x: other.start <= x <= other.stop,
-                df_func=lambda x: other.start <= x <= other.stop,
-                sql_func=partial(
-                    sqla.ColumnElement.between, cleft=other.start, cright=other.stop
-                ),
+                data_func={
+                    pl.Series: lambda x: other.start <= x <= other.stop,
+                    sqla.ColumnElement: partial(
+                        sqla.ColumnElement.between, cleft=other.start, cright=other.stop
+                    ),
+                },
             )
         else:
-            mapping = Map[bool,](
+            mapping = Map[bool](
                 context=Ctx(),
                 func=lambda x: x in other,
-                df_func=lambda x: x.is_in(other),
-                sql_func=sqla.ColumnElement.in_,
+                data_func={
+                    pl.Series: lambda x: pl.Series.is_in(x, other),
+                    sqla.ColumnElement: partial(sqla.ColumnElement.in_, other=other),
+                },
             )
 
-        reduction = (
-            self._data().between(other.start, other.stop)
-            if isinstance(other, slice)
-            else self._data().in_(other)
-        )
-        return copy_and_override(
-            Filter,
-            self,
-            _context=self.root,
-            _filter=filt,
+        return Filter(
+            context=self.context,
+            bool_data=mapping,
         )
 
     # Index set operations:
@@ -1130,7 +1267,7 @@ TupT = TypeVar("TupT", bound=tuple, covariant=True)
 
 
 @dataclass
-class Alignment(Data[TupT, IdxT, CrudT, DataT, CtxT]):
+class Align(Data[TupT, IdxT, CrudT, DataT, CtxT]):
     """Alignment of multiple props."""
 
     data: tuple[Data[Any, IdxT, CrudT, Any, CtxT], ...]
@@ -1201,72 +1338,6 @@ class Aggregate(
     agg_levels: type[SubIdxT] | None = None
 
 
-@overload
-def _map_reduce_operator(
-    op: Callable[[Any, Any], Any], right: Literal[Not.defined] = ...
-) -> Data[
-    Any,
-    PassIdx,
-    R,
-    sqla.ColumnElement | pl.Series,
-    Ctx[tuple, Any, Any, Any],
-]: ...
-
-
-@overload
-def _map_reduce_operator[T](op: Callable[[Any, T], Any], right: T) -> Data[
-    Any,
-    PassIdx,
-    R,
-    sqla.ColumnElement | pl.Series,
-]: ...
-
-
-@overload
-def _map_reduce_operator(
-    op: Callable[[Any], Any], right: Literal[Not.defined] = ...
-) -> Data[
-    Any,
-    PassIdx,
-    R,
-    sqla.ColumnElement | pl.Series,
-]: ...
-
-
-def _map_reduce_operator(
-    op: Callable[[Any, Any], Any] | Callable[[Any], Any],
-    right: Any | Literal[Not.defined] = Not.defined,
-) -> Data[
-    Any,
-    PassIdx,
-    R,
-    sqla.ColumnElement | pl.Series,
-]:
-    """Create a scalar comparator for the given operation."""
-    if right is not Not.defined:
-        op = cast(Callable[[Any, Any], Any], op)
-        return Map(
-            context=Ctx(),
-            func=lambda x: op(x, right),
-            data_func=lambda data: op(data, right),
-        )
-
-    if len(inspect.getfullargspec(op).args) == 1:
-        op = cast(Callable[[Any], Any], op)
-        return Map(
-            context=Ctx(),
-            func=op,
-            data_func=op,
-        )
-
-    op = cast(Callable[[Any, Any], Any], op)
-    return Reduce(
-        context=Ctx(),
-        func=op,
-        data_func=op,
-    )
-
-
 RuTi = TypeVar("RuTi", bound=R | U, default=R)
 
 
@@ -1288,21 +1359,21 @@ class Filter(
     @overload
     def from_keymap(
         keymap: Mapping[
-            Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable
+            Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Collection
         ],
     ) -> Filter[Any, sqla.ColumnElement, CtxT]: ...
 
     @staticmethod
     @overload
     def from_keymap(
-        keymap: Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Iterable],
+        keymap: Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Collection],
     ) -> Filter[Any, pl.Series, CtxT]: ...
 
     @staticmethod
     def from_keymap(
         keymap: (
-            Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Iterable]
-            | Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Iterable]
+            Mapping[Data[Any, Any, Any, sqla.ColumnElement, CtxT], slice | Collection]
+            | Mapping[Data[Any, Any, Any, pl.Series, CtxT], slice | Collection]
         ),
     ) -> Filter[Any, sqla.ColumnElement | pl.Series, CtxT]:
         """Construct filter from index key map."""
