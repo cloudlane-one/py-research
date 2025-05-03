@@ -41,6 +41,7 @@ from typing_extensions import TypeVar, TypeVarTuple
 
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
+from py_research.db.sql_utils import coalescent_join_sql
 from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
@@ -763,7 +764,16 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
                     alignment = reduce(
                         Data.__matmul__, (self.registry(t) for t in union_types)
                     )
-                    return alignment._map_reduce_operator(operator.or_)
+                    return Reduce(
+                        context=alignment,
+                        func=operator.or_,
+                        data_func={
+                            ColTuple: operator.or_,
+                            SeriesTuple: operator.or_,
+                            sqla.Select
+                            | sqla.FromClause: partial(coalescent_join_sql, on=None),
+                        },
+                    )
 
                 return self.registry(key)
             case list() | slice() | Hashable():
@@ -962,7 +972,7 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
 
     @overload
     def _map_reduce_operator(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, pl.Series],
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, Any],
         op: Callable[[ValT2], ValT3],
         right: Literal[Not.defined] = ...,
     ) -> Data[
@@ -1153,64 +1163,82 @@ class Data(Generic[ValT, IdxT, CrudT, DataT, CtxT, *CtxTt]):
     # Index set operations:
 
     def __or__(
-        self: DataBase[Any, Any, Any, BackT2],
-        other: DataBase[SchemaT2, Any, Any, DynBackendID],
-    ) -> DataBase[ArgT | SchemaT2, Any, CRUD, BackT2]:
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+    ) -> Data[
+        ValT2 | ValT3,
+        PassIdx,
+        R,
+        DataT2,
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        CtxT2,
+    ]:
         """Union two databases, right overriding left."""
-        db = copy_and_override(
-            DataBase[ArgT | SchemaT2, Any, CRUD, BackT2],
-            self,
-            backend=self.backend,
-            schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"upsert/({self.db_id}|{other.db_id})/{token_hex(4)}",
-            _def_types={},
-            _metadata=sqla.MetaData(),
-            _instance_map={},
+        alignment = self @ other
+        return Reduce(
+            context=alignment,
+            func=operator.or_,
+            data_func={
+                ColTuple: operator.or_,
+                SeriesTuple: operator.or_,
+                sqla.Select
+                | sqla.FromClause: partial(
+                    coalescent_join_sql, on=None, coalesce="right"
+                ),
+            },
         )
-
-        db._mutate(other, "upsert")
-
-        return db
 
     def __xor__(
-        self: DataBase[Any, Any, Any, BackT2],
-        other: DataBase[SchemaT2, Any, Any, DynBackendID],
-    ) -> DataBase[ArgT | SchemaT2, Any, CRUD, BackT2]:
-        """Union two databases, left overriding right."""
-        db = copy_and_override(
-            DataBase[ArgT | SchemaT2, Any, CRUD, BackT2],
-            self,
-            backend=self.backend,
-            schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"insert/({self.db_id}<<{other.db_id})/{token_hex(4)}",
-            _def_types={},
-            _metadata=sqla.MetaData(),
-            _instance_map={},
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+    ) -> Data[
+        ValT2 | ValT3,
+        PassIdx,
+        R,
+        DataT2,
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        CtxT2,
+    ]:
+        """Union two databases, right overriding left."""
+        alignment = self @ other
+        return Reduce(
+            context=alignment,
+            func=operator.or_,
+            data_func={
+                ColTuple: operator.or_,
+                SeriesTuple: operator.or_,
+                sqla.Select
+                | sqla.FromClause: partial(
+                    coalescent_join_sql, on=None, coalesce="left"
+                ),
+            },
         )
-
-        db._mutate(other, "insert")
-
-        return db
 
     def __lshift__(
-        self: DataBase[Any, Any, Any, BackT2],
-        other: DataBase[SchemaT2, Any, Any, DynBackendID],
-    ) -> DataBase[ArgT | SchemaT2, Any, CRUD, BackT2]:
-        """Intersect two databases, right overriding left."""
-        db = copy_and_override(
-            DataBase[ArgT | SchemaT2, Any, CRUD, BackT2],
-            self,
-            backend=self.backend,
-            schema={**self._schema_map, **self._schema_map},  # type: ignore
-            write_to_overlay=f"update/({self.db_id}>>{other.db_id})/{token_hex(4)}",
-            _def_types={},
-            _metadata=sqla.MetaData(),
-            _instance_map={},
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DataT2, CtxT2],
+    ) -> Data[
+        ValT2 | ValT3,
+        PassIdx,
+        R,
+        DataT2,
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        CtxT2,
+    ]:
+        """Union two databases, right overriding left."""
+        alignment = self @ other
+        return Reduce(
+            context=alignment,
+            func=operator.or_,
+            data_func={
+                ColTuple: operator.or_,
+                SeriesTuple: operator.or_,
+                sqla.Select
+                | sqla.FromClause: partial(
+                    coalescent_join_sql, on=None, join="left", coalesce="right"
+                ),
+            },
         )
-
-        db._mutate(other, "update")
-
-        return db
 
     # Mutation:
 

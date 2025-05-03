@@ -42,7 +42,7 @@ from py_research.reflect.types import has_type
 from py_research.types import UUID4, Not.defined
 
 from .props import CRU, CRUD, Attr, C, CrudT, D, Model, Prop, R, U, Ungot, Unset
-from .sql_utils import coalescent_join, safe_delete, safe_insert, safe_update
+from .sql_utils import coalescent_join_sql, safe_delete, safe_insert, safe_update
 from .utils import pl_type_map, register_sqlite_adapters, remove_cross_fk
 
 register_sqlite_adapters()
@@ -824,7 +824,7 @@ class Table(Generic[RecT, BackT, CrudT]):
             if left_rec is not None and len(
                 set(left_rec._pk.columns) & set(right_rec._pk.columns)  # type: ignore
             ):
-                return left_rec, coalescent_join(
+                return left_rec, coalescent_join_sql(
                     left_table.alias(),
                     right_table.alias(),
                     reduce(

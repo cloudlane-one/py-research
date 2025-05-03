@@ -6,19 +6,23 @@ from collections.abc import Callable, Iterable
 from functools import reduce
 from typing import Literal
 
+import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.dialects.mysql as mysql
 import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.dialects.sqlite as sqlite
 
-type JoinCondition = Callable[
-    [sqla.FromClause, sqla.FromClause], sqla.ColumnElement[bool]
+type JoinConditionSql = Callable[
+    [sqla.FromClause | sqla.Select, sqla.FromClause | sqla.Select],
+    sqla.ColumnElement[bool],
 ]
+type JoinConditionPl = Callable[[pl.DataFrame, pl.DataFrame], pl.Expr]
 
-type RelJoin = tuple[sqla.FromClause, JoinCondition]
+type RelJoinSql = tuple[sqla.FromClause, JoinConditionSql]
+type RelJoinPl = tuple[pl.DataFrame, JoinConditionPl]
 
 
-def coalescent_join(
+def coalescent_join_sql(
     left: sqla.Select | sqla.FromClause,
     right: sqla.Select | sqla.FromClause,
     on: sqla.ColumnElement[bool],
@@ -63,10 +67,37 @@ def coalescent_join(
     )
 
 
-def recursive_join(
-    cols: Iterable[sqla.ColumnElement],
+def coalescent_join_pl(
+    left: pl.DataFrame,
+    right: pl.DataFrame,
+    on: pl.Expr,
+    join: Literal["left", "right", "full"] = "full",
+    coalesce: Literal["left", "right"] = "left",
+) -> pl.DataFrame:
+    """Join two selects and coalesce their columns."""
+    cols = [
+        pl.coalesce(
+            *(
+                (
+                    name if name in left.columns else None,
+                    name if name in right.columns else None,
+                )
+                if coalesce == "left"
+                else (
+                    name if name in right.columns else None,
+                    name if name in left.columns else None,
+                )
+            )
+        )
+        for name in set(left.columns) | set(right.columns)
+    ]
+
+    return left.join(right, on, how=join).with_columns(*cols)
+
+
+def recursive_join_sql(
     fromclause: sqla.FromClause,
-    join_loops: Iterable[Iterable[RelJoin]],
+    join_loops: Iterable[list[RelJoinSql]],
 ) -> sqla.CTE:
     """Recursively join and union a fromclause via loops.
 
@@ -75,15 +106,45 @@ def recursive_join(
         fromclause: Initial fromclause.
         join_loops: Loops of joins. Must start and end in the given fromclause.
     """
-    base_cte = sqla.select(*cols).select_from(fromclause).cte(recursive=True)
+    base_cte = sqla.select(fromclause).cte(recursive=True)
 
     unions: list[sqla.Select] = []
     for join_loop in join_loops:
-        sel = sqla.select(*cols).select_from(base_cte)
+        sel = sqla.select(*join_loop[-1][0].columns).select_from(base_cte)
         for join in join_loop:
-            sel = sel.join(join[0], join[1](base_cte, join[0]))
+            sel = sel.join(join[0], join[1](sel, join[0]))
+        unions.append(sel)
 
     return base_cte.union(*unions)
+
+
+def recursive_join_pl(
+    fromclause: pl.DataFrame,
+    join_loops: Iterable[list[RelJoinPl]],
+) -> pl.DataFrame:
+    """Recursively join and union a fromclause via loops.
+
+    Args:
+        cols: Columns to select.
+        fromclause: Initial fromclause.
+        join_loops: Loops of joins. Must start and end in the given fromclause.
+    """
+    union = fromclause
+    last_len = 0
+
+    while last_len < len(union):
+        last_len = len(union)
+
+        for join_loop in join_loops:
+            sel = union
+
+            for join in join_loop:
+                sel = sel.join(join[0], join[1](sel, join[0]))
+            sel = sel.with_columns(join_loop[-1][0].columns)
+
+            union = union.vstack(sel).unique()
+
+    return union
 
 
 def safe_delete(
