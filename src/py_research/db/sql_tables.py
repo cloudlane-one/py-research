@@ -41,7 +41,7 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import has_type
 from py_research.types import UUID4, Not.defined
 
-from .props import CRU, CRUD, Attr, C, CrudT, D, Model, Prop, R, U, Ungot, Unset
+from .props import CRU, CRUD, Attr, C, RwxT, D, Model, Prop, R, U, Ungot, Unset
 from .sql_utils import coalescent_join_sql, safe_delete, safe_insert, safe_update
 from .utils import pl_type_map, register_sqlite_adapters, remove_cross_fk
 
@@ -197,7 +197,7 @@ BaseT2 = TypeVar("BaseT2", bound="Record")
 
 
 @dataclass(eq=False)
-class Base(Generic[BaseT, BackT, CrudT]):
+class Base(Generic[BaseT, BackT, RwxT]):
     """Database connection."""
 
     backend: BackT = None  # pyright: ignore[reportAssignmentType]
@@ -365,7 +365,7 @@ class Base(Generic[BaseT, BackT, CrudT]):
         self: Base[BaseT2, Any, Any],
         rec_types: type[BaseT2] | set[type[BaseT2]],
         input_data: None = ...,
-    ) -> Table[BaseT2, BackT, CrudT]: ...
+    ) -> Table[BaseT2, BackT, RwxT]: ...
 
     def table(
         self,
@@ -397,11 +397,11 @@ class Base(Generic[BaseT, BackT, CrudT]):
     @contextmanager
     def edit(
         self: Base[BaseT, BackT, C | U | D], overlay_type: OverlayType = "transaction"
-    ) -> Generator[Base[BaseT, BackT, CrudT]]:
+    ) -> Generator[Base[BaseT, BackT, RwxT]]:
         """Context manager to create temp overlay of base and auto-commit on exit."""
         assert self.overlay is None, "Cannot edit base with already active overlay."
         edit_base = copy_and_override(
-            Base[BaseT, BackT, CrudT], self, overlay=True, backend=self.backend
+            Base[BaseT, BackT, RwxT], self, overlay=True, backend=self.backend
         )
 
         try:
@@ -649,7 +649,7 @@ symbol_base = Base[Any, Symbolic](backend=Symbolic())
 
 
 @dataclass
-class Table(Generic[RecT, BackT, CrudT]):
+class Table(Generic[RecT, BackT, RwxT]):
     """Table matching a table model, may be filtered."""
 
     base: Base[Any, BackT]
@@ -909,9 +909,9 @@ KeyT = TypeVar("KeyT", bound=Hashable, default=Any)
 
 @dataclass(kw_only=True)
 class Column(
-    Attr[ColT, CrudT, OwnT],
+    Attr[ColT, RwxT, OwnT],
     sqla.SQLColumnExpression[ColT],
-    Generic[ColT, CrudT, OwnT, BackT],
+    Generic[ColT, RwxT, OwnT, BackT],
 ):
     """Column property for a table model."""
 
@@ -969,7 +969,7 @@ class Column(
     @overload
     def __get__(
         self, instance: None, owner: type[RecT]
-    ) -> Column[ColT, CrudT, RecT, Symbolic]: ...
+    ) -> Column[ColT, RwxT, RecT, Symbolic]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Any: ...

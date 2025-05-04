@@ -66,7 +66,7 @@ from py_research.reflect.types import (
 )
 from py_research.types import UUID4, Not.changed, Ordinal, Not.defined
 
-from .props import CRUD, RUD, CrudT, Prop, R, ValT
+from .props import CRUD, RUD, RwxT, Prop, R, ValT
 from .sql_tables import Base, Column, DbT, KeyT, Record, RecT, Symbolic
 from .utils import pd_to_py_dtype, pl_type_map, sql_to_py_dtype
 
@@ -107,7 +107,7 @@ JdxT = TypeVar("JdxT", contravariant=True, bound=Idx, default=Idx)
 
 
 @dataclass
-class Join(Generic[SrcT, TgtT, JdxT, CrudT]):
+class Join(Generic[SrcT, TgtT, JdxT, RwxT]):
     source: type[SrcT]
     target: type[TgtT]
 
@@ -140,7 +140,7 @@ CtxT3 = TypeVar("CtxT3", bound="Ctx[Any, Any, Any, Any, Any] | None")
 
 
 @final
-class Ctx(Generic[ParT, IdxT, CrudT, DbT, CtxT]):
+class Ctx(Generic[ParT, IdxT, RwxT, DbT, CtxT]):
     """Context record of a dataset."""
 
 
@@ -176,7 +176,7 @@ class Agg(Generic[RecT]):
     map: AggMap[RecT]
 
 
-class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
+class Rel(Prop[ValT, Any, RwxT], Generic[ValT, IdxT, RwxT, DbT, CtxT]):
     """Relational dataset."""
 
     # Internal attributes:
@@ -184,8 +184,8 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     __target: (set[type[ValT]] | sqla.ColumnElement[ValT] | sqla.Selectable) | None
     __default: ValT | Rel[ValT, Any, Any, DbT, Any] | type[Not.defined] = Not.defined
     __index: Rel[Any, SelfIdx, Any, DbT, Ctx] | None
-    __joins: set[Join[Any, ValT, Any, CrudT]] | None
-    __crud: CrudT
+    __joins: set[Join[Any, ValT, Any, RwxT]] | None
+    __crud: RwxT
     __base: Base[Any, DbT]
 
     __name: str | None
@@ -1363,10 +1363,10 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     # Relational selection and filtering:
 
     @cached_prop
-    def symbol(self) -> Rel[ValT, IdxT, CrudT, Symbolic, CtxT]:
+    def symbol(self) -> Rel[ValT, IdxT, RwxT, Symbolic, CtxT]:
         """Symbolic representation of this dataset."""
         return cast(
-            Rel[ValT, IdxT, CrudT, Symbolic, CtxT],
+            Rel[ValT, IdxT, RwxT, Symbolic, CtxT],
             (
                 reduce(
                     lambda ctx, data: data.copy(__context=ctx, base=symbol_base),
@@ -1401,7 +1401,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     def __getitem__(
         self: Rel[Schema | Record | None, RootIdx, Any, None, None, Any],
         key: type[TabT3],
-    ) -> Rel[TabT3, BaseIdx[TabT3], CrudT, None, None, DbT]: ...
+    ) -> Rel[TabT3, BaseIdx[TabT3], RwxT, None, None, DbT]: ...
 
     # 2. DB-level nested prop selection
     @overload
@@ -1683,35 +1683,35 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         self: Rel[Any, Any, Any, RelIndex[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: None,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[TabT4], Symbolic]: ...
+    ) -> Rel[ValT, Idx[*KeyTt2], RwxT, RelT, Ctx[TabT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Rel[Any, Any, Any, RelIndex[Any, Any, KeyT2], Any, Any],
         instance: None,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[KeyT2], CrudT, RelT, Ctx[TabT4], Symbolic]: ...
+    ) -> Rel[ValT, Idx[KeyT2], RwxT, RelT, Ctx[TabT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Rel[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
         instance: None,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[TabT4], Symbolic]: ...
+    ) -> Rel[ValT, Idx[*KeyTt2], RwxT, RelT, Ctx[TabT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Rel[Any, ExtIdx[Any, KeyT2], Any, Any, Any, Any],
         instance: None,
         owner: type[TabT4],
-    ) -> Rel[ValT, ExtIdx[TabT4, KeyT2], CrudT, RelT, Ctx[TabT4], Symbolic]: ...
+    ) -> Rel[ValT, ExtIdx[TabT4, KeyT2], RwxT, RelT, Ctx[TabT4], Symbolic]: ...
 
     @overload
     def __get__(
         self: Rel[Any, Any, Any, Any, Any, Any],
         instance: None,
         owner: type[TabT4],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, Ctx[TabT4], Symbolic]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, Ctx[TabT4], Symbolic]: ...
 
     @overload
     def __get__(
@@ -1725,35 +1725,35 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
         self: Rel[Any, Any, Any, RelIndex[Any, Any, tuple[*KeyTt2]], Any, Any],
         instance: TabT4,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[TabT4], DynBackendID]: ...
+    ) -> Rel[ValT, Idx[*KeyTt2], RwxT, RelT, Ctx[TabT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Rel[Any, Any, Any, RelIndex[Any, Any, KeyT2], Any, Any],
         instance: TabT4,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[KeyT2], CrudT, RelT, Ctx[TabT4], DynBackendID]: ...
+    ) -> Rel[ValT, Idx[KeyT2], RwxT, RelT, Ctx[TabT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Rel[Record[*KeyTt2], BaseIdx, Any, Any, Any, Any],
         instance: TabT4,
         owner: type[TabT4],
-    ) -> Rel[ValT, Idx[*KeyTt2], CrudT, RelT, Ctx[TabT4], DynBackendID]: ...
+    ) -> Rel[ValT, Idx[*KeyTt2], RwxT, RelT, Ctx[TabT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Rel[Any, ExtIdx[Any, KeyT2], Any, Any, Any, Any],
         instance: TabT4,
         owner: type[TabT4],
-    ) -> Rel[ValT, ExtIdx[TabT4, KeyT2], CrudT, RelT, Ctx[TabT4], DynBackendID]: ...
+    ) -> Rel[ValT, ExtIdx[TabT4, KeyT2], RwxT, RelT, Ctx[TabT4], DynBackendID]: ...
 
     @overload
     def __get__(
         self: Rel[Any, Any, Any, Any, Any, Any],
         instance: TabT4,
         owner: type[TabT4],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, Ctx[TabT4], DynBackendID]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, Ctx[TabT4], DynBackendID]: ...
 
     @overload
     def __get__(self, instance: object | None, owner: type | None) -> Self: ...
@@ -1799,7 +1799,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
                     return value
                 else:
                     self_ref = cast(
-                        Rel[ValT, Idx[()], CrudT, RelT, Ctx, Symbolic],
+                        Rel[ValT, Idx[()], RwxT, RelT, Ctx, Symbolic],
                         getattr(owner, self.name),
                     )
                     table = Table(_base=instance._base, _type=owner)
@@ -1893,33 +1893,33 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
     def __matmul__(
         self: Rel[tuple, Any, Any, Any, Any, Any],
         other: Rel[tuple, Any, Any, Any, Any, Any],
-    ) -> Rel[tuple, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[tuple, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __matmul__(
         self: Rel[ValT2, Any, Any, Any, Any, Any],
         other: Rel[tuple[*ValTt3], Any, Any, Any, Any, Any],
-    ) -> Rel[tuple[ValT2, *ValTt3], IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[tuple[ValT2, *ValTt3], IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __matmul__(
         self: Rel[tuple[*ValTt2], Any, Any, Any, Any, Any],
         other: Rel[ValT3, Any, Any, Any, Any, Any],
-    ) -> Rel[tuple[*ValTt2, ValT3], IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[tuple[*ValTt2, ValT3], IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __matmul__(
         self: Rel[ValT2, Any, Any, Any, Any, Any],
         other: Rel[ValT3, Any, Any, Any, Any, Any],
-    ) -> Rel[tuple[ValT2, ValT3], IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[tuple[ValT2, ValT3], IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     def __matmul__(
         self,
         other: Rel[ValT2, Any, Any, Any, Any, DbT],
-    ) -> Rel[tuple, IdxT, CrudT, RelT, CtxT, DbT]:
+    ) -> Rel[tuple, IdxT, RwxT, RelT, CtxT, DbT]:
         """Align and merge this dataset with another into a tuple-valued dataset."""
         return copy_and_override(
-            Rel[tuple, IdxT, CrudT, RelT, CtxT, DbT],
+            Rel[tuple, IdxT, RwxT, RelT, CtxT, DbT],
             self,
             _alignments=(
                 *(self._alignments if self._alignments is not None else [self.symbol]),
@@ -2776,7 +2776,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ilshift__(
@@ -2792,7 +2792,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             Rel[ValT, Any, Any, Any, Any, DynBackendID]
             | Input[ValT | tuple[*KeyTt2], Any]
         ),
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ilshift__(
@@ -2805,16 +2805,16 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     def __ilshift__(
         self: Rel[Any, Any, RU, Any, Any, DynBackendID],
         other: Rel[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]:
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]:
         """Updating assignment."""
         cast(Rel, self)._mutate(other, mode="update")
         return cast(
-            Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT],
+            Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT],
             self,
         )
 
@@ -2829,7 +2829,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ixor__(
@@ -2845,7 +2845,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             Rel[ValT, Any, Any, Any, Any, DynBackendID]
             | Input[ValT | tuple[*KeyTt2], Any]
         ),
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ixor__(
@@ -2858,16 +2858,16 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     def __ixor__(
         self: Rel[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Rel[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]:
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]:
         """Inserting assignment."""
         self._mutate(other, mode="insert")
         return cast(
-            Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT],
+            Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT],
             self,
         )
 
@@ -2882,7 +2882,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT, Any, Any, Any, Any, DynBackendID] | Input[ValT | KeyT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ior__(
@@ -2898,7 +2898,7 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             Rel[ValT, Any, Any, Any, Any, DynBackendID]
             | Input[ValT | tuple[*KeyTt2], Any]
         ),
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     @overload
     def __ior__(
@@ -2911,16 +2911,16 @@ class Rel(Prop[ValT, Any, CrudT], Generic[ValT, IdxT, CrudT, DbT, CtxT]):
             DynBackendID,
         ],
         other: Rel[ValT2, Any, Any, Any, Any, DynBackendID] | Input[ValT2, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]: ...
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]: ...
 
     def __ior__(
         self: Rel[Any, Any, CRUD, Any, Any, DynBackendID],
         other: Rel[Any, Any, Any, Any, Any, DynBackendID] | Input[Any, Any],
-    ) -> Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT]:
+    ) -> Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT]:
         """Upserting assignment."""
         self._mutate(other, mode="upsert")
         return cast(
-            Rel[ValT, IdxT, CrudT, RelT, CtxT, DbT],
+            Rel[ValT, IdxT, RwxT, RelT, CtxT, DbT],
             self,
         )
 
