@@ -3,7 +3,7 @@
 import operator
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import reduce
+from functools import cache, reduce
 from inspect import getmodule, getmro
 from itertools import chain, groupby
 from types import ModuleType, NoneType, UnionType, new_class
@@ -28,6 +28,7 @@ from beartype.door import is_bearable, is_subhint
 from typing_extensions import TypeVar, runtime_checkable
 
 from py_research.hashing import gen_str_hash
+from py_research.reflect.runtime import get_subclasses
 from py_research.types import Not
 
 T = TypeVar("T", covariant=True)
@@ -59,15 +60,6 @@ class SupportsItems(Protocol[T_cov, U_cov]):
     """Protocol for objects that support item access."""
 
     def items(self) -> Iterable[tuple[T_cov, U_cov]]: ...  # noqa: D102
-
-
-@dataclass
-class TypeRef[T]:
-    """Reference to a type."""
-
-    hint: SingleTypeDef[T]
-    var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
-    ctx_module: ModuleType | None = None
 
 
 T_contra = TypeVar("T_contra", contravariant=True)
@@ -471,3 +463,62 @@ def set_typeargs[T](
         typearg_map[typevar] = arg
 
     return orig[*typearg_map.values()]
+
+
+def get_typeargs(instance: Any) -> tuple[type, ...] | None:
+    """Get the type arguments of a generic instance."""
+    if hasattr(instance, "__orig_class__"):
+        orig_class = getattr(instance, "__orig_class__")
+        return get_args(orig_class)
+
+    return None
+
+
+@cache
+def _map_str_annotation_base[U](anno: str, base: type[U]) -> type[U]:
+    """Map property type name to class."""
+    name_map = {cls.__name__: cls for cls in get_subclasses(base) if cls is not base}
+    matches = [name_map[n] for n in name_map if anno.startswith(n + "[")]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def get_base_type(hint: SingleTypeDef[T] | str, bound: type[T]) -> type[T]:
+    """Resolve the prop typehint."""
+    if has_type(hint, SingleTypeDef):
+        base = get_origin(hint)
+        if base is None or not issubclass(base, bound):
+            raise TypeError(f"Type hint `{hint}` is not a subclass of `{bound}`.")
+
+        return base
+    else:
+        assert isinstance(hint, str)
+        return _map_str_annotation_base(hint, bound)
+
+
+@dataclass
+class TypeRef[T]:
+    """Reference to a type."""
+
+    hint: SingleTypeDef[T] | str
+    var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
+    ctx_module: ModuleType | None = None
+
+    @property
+    def base_type(self) -> type[T]:
+        """Resolve the prop typehint."""
+        typeargs = get_typeargs(self)
+        bound: type[Any] = typeargs[0] if typeargs is not None else object
+
+        return get_base_type(self.hint, bound)
+
+    @property
+    def typeform(self) -> SingleTypeDef[T]:
+        """Return the type format."""
+        form = hint_to_typedef(
+            self.hint,
+            typevar_map=self.var_map,
+            ctx_module=self.ctx_module,
+        )
+        assert not isinstance(form, UnionType)
+        return form

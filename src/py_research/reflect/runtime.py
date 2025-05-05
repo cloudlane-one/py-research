@@ -63,11 +63,17 @@ def get_return_type(func: Callable) -> SingleTypeDef | UnionType | None:
 
 def get_subclasses(
     cls: type[T], max_level: int | None = None, _level: int = 1
-) -> set[type[T]]:
+) -> list[type[T]]:
     """Return all subclasses of given class."""
     if max_level is not None and _level > max_level:
-        return set()
+        return []
 
-    return set(cls.__subclasses__()).union(
-        [s for c in cls.__subclasses__() for s in get_subclasses(c, _level=_level + 1)]
+    own_subclasses = cls.__subclasses__()
+    return own_subclasses + (
+        [
+            s
+            for c in own_subclasses
+            for s in get_subclasses(c, _level=_level + 1)
+            if c not in own_subclasses
+        ]
     )

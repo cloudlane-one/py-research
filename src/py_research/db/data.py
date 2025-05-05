@@ -17,7 +17,7 @@ from collections.abc import (
 from dataclasses import dataclass, field
 from functools import partial, reduce
 from inspect import getmodule
-from types import NoneType, UnionType
+from types import UnionType
 from typing import (
     Any,
     ClassVar,
@@ -42,14 +42,13 @@ from typing_extensions import TypeVar, TypeVarTuple
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.hashing import gen_str_hash
-from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
     SingleTypeDef,
     TypeRef,
+    get_base_type,
     get_lowest_common_base,
     get_typevar_map,
     has_type,
-    hint_to_typedef,
     is_subtype,
     typedef_to_typeset,
 )
@@ -307,33 +306,6 @@ type InputData[V, S] = V | Iterable[V] | Mapping[
 ] | pd.DataFrame | pl.DataFrame | S | Data[V]
 
 Params = ParamSpec("Params")
-
-DataT = TypeVar("DataT", bound="Data", default="Data")
-
-
-def _map_data_type_name(name: str, base: type[DataT]) -> type[DataT | None]:
-    """Map property type name to class."""
-    name_map = {cls.__name__: cls for cls in get_subclasses(base) if cls is not base}
-    matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
-    return matches[0] if len(matches) == 1 else NoneType
-
-
-def _get_data_type(
-    hint: SingleTypeDef | str, bound: type[DataT] | None = None
-) -> type[DataT] | type[None]:
-    """Resolve the prop typehint."""
-    bound = cast(type[DataT], bound or Data)
-
-    if has_type(hint, SingleTypeDef):
-        base = get_origin(hint)
-        if base is None or not issubclass(base, bound):
-            return NoneType
-
-        return base
-    elif isinstance(hint, str):
-        return _map_data_type_name(hint, bound)
-    else:
-        return NoneType
 
 
 class Frame(Generic[EngineT, ShapeT]):
@@ -608,11 +580,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         if self.typeref is None:
             return cast(SingleTypeDef[Data[ValT]], type(self))
 
-        return hint_to_typedef(
-            self.typeref.hint,
-            typevar_map=self.typeref.var_map,
-            ctx_module=self.typeref.ctx_module,
-        )
+        return self.typeref.typeform
 
     @cached_prop
     def value_typeform(self) -> SingleTypeDef[ValT] | UnionType:
@@ -643,7 +611,9 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     def has_type[T: Data](instance: Data, typedef: type[T]) -> TypeGuard[T]:
         """Check if the dataset has the specified type."""
         orig = get_origin(typedef)
-        if orig is None or not issubclass(_get_data_type(instance.resolved_type), orig):
+        if orig is None or not issubclass(
+            get_base_type(instance.resolved_type, bound=Data), orig
+        ):
             return False
 
         own_typevars = get_typevar_map(instance.resolved_type)
