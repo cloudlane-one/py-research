@@ -41,7 +41,6 @@ from typing_extensions import TypeVar, TypeVarTuple
 
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
-from py_research.db.sql_utils import coalescent_join_pl, coalescent_join_sql
 from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
@@ -85,41 +84,41 @@ KeyTt5 = TypeVarTuple("KeyTt5")
 
 OrdT = TypeVar("OrdT", bound=Ordinal)
 
-SubFrameT = TypeVar("SubFrameT", bound="Frame | None", default=Any)
+SubShapeT = TypeVar("SubShapeT", bound="Shape | None", default=Any)
 
 
-class Frame(Generic[SubFrameT]):
+class Shape(Generic[SubShapeT]):
     """Base for frame data types."""
 
 
 @final
-class Col(Frame[None]):
+class Col(Shape[None]):
     """Singleton to mark standard columnar data."""
 
 
 @final
-class Tab(Frame[Col]):
+class Tab(Shape[Col]):
     """Singleton to mark standard tabular data (consisting only of columns)."""
 
 
 @final
-class Tabs(Frame[Tab]):
+class Tabs(Shape[Tab]):
     """Singleton to mark stacked tabular data (multiple tables or cols)."""
 
 
-FrameT = TypeVar(
-    "FrameT",
-    bound=Frame,
+ShapeT = TypeVar(
+    "ShapeT",
+    bound=Shape,
     covariant=True,
-    default=Any,
+    default=Shape,
 )
-FrameT2 = TypeVar(
-    "FrameT2",
-    bound=Frame,
+ShapeT2 = TypeVar(
+    "ShapeT2",
+    bound=Shape,
 )
-FrameT3 = TypeVar(
-    "FrameT3",
-    bound=Frame,
+ShapeT3 = TypeVar(
+    "ShapeT3",
+    bound=Shape,
 )
 
 
@@ -130,21 +129,20 @@ DxT2 = TypeVar(
 )
 
 
-@final
 class PL:
     """Polars engine."""
 
 
 @final
-class SQL:
+class SQL(PL):
     """SQLA engine, supporting polars fallback."""
 
 
-EngineT = TypeVar("EngineT", bound=PL | SQL, default=Any, contravariant=True)
-EngineT2 = TypeVar("EngineT2", bound=PL | SQL)
+EngineT = TypeVar("EngineT", bound=PL, default=Any, covariant=True)
+EngineT2 = TypeVar("EngineT2", bound=PL)
 
 
-class Dx(Generic[EngineT, FrameT]):
+class Dx(Generic[EngineT, ShapeT]):
     """Data exchange type."""
 
 
@@ -209,7 +207,7 @@ IdxT = TypeVar(
     "IdxT",
     covariant=True,
     bound=AnyIdx,
-    default=AnyIdx,
+    default=Any,
 )
 IdxT2 = TypeVar(
     "IdxT2",
@@ -331,6 +329,197 @@ def _map_data_type_name(name: str) -> type[Data | None]:
     return matches[0] if len(matches) == 1 else NoneType
 
 
+class Frame(Generic[EngineT, ShapeT]):
+    """Raw data."""
+
+    @overload
+    def __init__(self: Frame[SQL, Col], data: sqla.ColumnElement) -> None: ...
+
+    @overload
+    def __init__(self: Frame[SQL, Tab | Tabs], data: sqla.Select) -> None: ...
+
+    @overload
+    def __init__(
+        self: Frame[PL, Col], data: pl.Series | sqla.ColumnElement
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: Frame[PL, Tab | Tabs], data: pl.DataFrame | sqla.Select
+    ) -> None: ...
+
+    def __init__(self: Frame, data: Any = None) -> None:  # noqa: D107
+        self._data = data
+
+    @overload
+    def get(
+        self: Frame[SQL, Col],
+    ) -> sqla.ColumnElement: ...
+
+    @overload
+    def get(
+        self: Frame[SQL, Tab | Tabs],
+    ) -> sqla.Select: ...
+
+    @overload
+    def get(self: Frame[Any, Col]) -> pl.Series | sqla.ColumnElement: ...
+
+    @overload
+    def get(
+        self: Frame[Any, Tab | Tabs],
+    ) -> pl.DataFrame | sqla.Select: ...
+
+    @overload
+    def get(
+        self: Frame[Any, Any],
+    ) -> pl.Series | pl.DataFrame | sqla.ColumnElement | sqla.Select: ...
+
+    def get(self: Frame) -> Any:
+        """Get the raw data."""
+        return self._data
+
+
+def coalescent_union(
+    left_frame: Frame[EngineT2, ShapeT2],
+    right_frame: Frame[EngineT2, ShapeT2],
+    coalesce: Literal["left", "right"] = "left",
+) -> Frame[EngineT2, ShapeT2]:
+    """Union two data instances and coalesce their columns."""
+    left, right = left_frame.get(), right_frame.get()
+
+    if isinstance(left, pl.Series) and isinstance(right, pl.Series):
+        if isinstance(left.dtype, pl.Boolean) and isinstance(right.dtype, pl.Boolean):
+            return cast(Frame[EngineT2, ShapeT2], Frame(left | right))
+
+        return cast(
+            Frame[EngineT2, ShapeT2],
+            Frame(
+                pl.DataFrame([left.rename("left"), right.rename("right")]).select(
+                    {
+                        left.name: (
+                            pl.coalesce("left", "right")
+                            if coalesce == "left"
+                            else pl.coalesce("right", "left")
+                        )
+                    }
+                )[left.name]
+            ),
+        )
+
+    if isinstance(left, sqla.ColumnElement) and isinstance(right, sqla.ColumnElement):
+        if isinstance(left.type, sqla.Boolean) and isinstance(right.type, sqla.Boolean):
+            return cast(Frame[EngineT2, ShapeT2], Frame(left | right))
+
+        return cast(
+            Frame[EngineT2, ShapeT2],
+            Frame(
+                sqla.func.coalesce(left, right)
+                if coalesce == "left"
+                else sqla.func.coalesce(right, left)
+            ),
+        )
+
+    if isinstance(left, pl.DataFrame) and isinstance(right, pl.DataFrame):
+        all_cols = set(left.columns) | set(right.columns)
+
+        return cast(
+            Frame[EngineT2, ShapeT2],
+            Frame(
+                pl.concat(
+                    [
+                        left.select(pl.all().name.prefix("left")),
+                        right.select(pl.all().name.prefix("right")),
+                    ],
+                    how="horizontal",
+                ).select(
+                    {
+                        col: (
+                            f"left.{col}"
+                            if col not in right.columns
+                            else (
+                                f"right.{col}"
+                                if col not in left.columns
+                                else (
+                                    pl.coalesce(f"left.{col}", f"right.{col}")
+                                    if coalesce == "left"
+                                    else pl.coalesce(f"right.{col}", f"left.{col}")
+                                )
+                            )
+                        )
+                        for col in all_cols
+                    }
+                )
+            ),
+        )
+
+    if isinstance(left, sqla.Select) and isinstance(right, sqla.Select):
+        all_cols = set(left.selected_columns.keys()) | set(
+            right.selected_columns.keys()
+        )
+
+        left_froms = left.get_final_froms()
+        right_froms = right.get_final_froms()
+        assert len(left_froms) == 1 and len(right_froms) == 1
+        assert left_froms[0] is right_froms[0]
+
+        common_from = left_froms[0]
+
+        return cast(
+            Frame[EngineT2, ShapeT2],
+            Frame(
+                sqla.select(
+                    *(
+                        (
+                            left.c[col]
+                            if col not in right.selected_columns.keys()
+                            else (
+                                right.c[col]
+                                if col not in left.selected_columns.keys()
+                                else (
+                                    sqla.func.coalesce(left.c[col], right.c[col])
+                                    if coalesce == "left"
+                                    else sqla.func.coalesce(right.c[col], left.c[col])
+                                )
+                            )
+                        )
+                        for col in all_cols
+                    )
+                ).select_from(common_from),
+            ),
+        )
+
+    raise ValueError(
+        "Incompatible data types for coalescent union: "
+        f"{type(left_frame)}, {type(right_frame)}"
+    )
+
+
+def frame_isin(
+    frame: Frame[EngineT2, Col],
+    values: Collection | slice,
+) -> Frame[EngineT2, Col]:
+    """Check if the values are in the frame."""
+    data = frame.get()
+    series = None
+    column = None
+
+    if isinstance(values, slice):
+        if isinstance(data, pl.Series):
+            series = values.start <= data <= values.stop
+        else:
+            column = data.between(values.start, values.stop)
+    else:
+        if isinstance(data, pl.Series):
+            series = data.is_in(values)
+        else:
+            column = data.in_(values)
+
+    data = series if series is not None else column
+    assert data is not None
+
+    return cast(Frame[EngineT2, Col], Frame(data))
+
+
 @dataclass(kw_only=True)
 class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     """Property definition for a model."""
@@ -346,19 +535,9 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         """Name of the property."""
         return gen_str_hash(self)
 
-    def _sql_col(self: Data[Any, Any, Any, Dx[SQL, Col]]) -> sqla.ColumnElement:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _sql_tab(self: Data[Any, Any, Any, Dx[SQL]]) -> sqla.Select | sqla.FromClause:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _pl_df(self: Data[Any, Any, Any, Dx[PL]]) -> pl.DataFrame:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _pl_series(self: Data[Any, Any, Any, Dx[PL, Col]]) -> pl.Series:
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -385,14 +564,14 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
 
     def _subframes(
         self: Data[
-            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Frame[FrameT3]]
+            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Shape[ShapeT3]]
         ],
     ) -> tuple[
         Data[
             ValT2,
             Idx[*KeyTt2],
             RwxT,
-            Dx[EngineT2, FrameT3],
+            Dx[EngineT2, ShapeT3],
             CtxT,
             *CtxTt,
             Ctx[tuple[ValT2, ...], Idx[*KeyTt2], DxT, RwxT],
@@ -403,7 +582,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
 
     def _mutation(
         self: Data[Any, Any, RwxT2, *tuple[Any, ...]],
-        input_data: InputData[ValT, FrameT],
+        input_data: InputData[ValT, ShapeT],
         mode: set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -486,6 +665,19 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
 
     # Index:
 
+    @cached_prop
+    def index(self: Data[Any, AnyIdx[*KeyTt2], Any, Dx[EngineT2]]) -> Data[
+        tuple[*KeyTt2],
+        SelfIdx[*KeyTt2],
+        R,
+        Dx[EngineT2, Tab],
+        CtxT,
+        *CtxTt,
+    ]:
+        """Get the index of this data."""
+        # TODO: implement, resolve keep-idx, sub-idx and add-idx config
+        raise NotImplementedError()
+
     def _map_index_selectors(
         self, sel: list | slice | tuple[list | slice, ...]
     ) -> Mapping[Data[Any, Any, Any, Dx[SQL | PL, Col], CtxT], slice | Collection]:
@@ -495,28 +687,36 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     # SQL:
 
     @overload
-    def select(
-        self: Data[Any, Any, Any, Dx[SQL], Any, *tuple[Any, ...]],
+    def select(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Any, Dx[SQL]],
     ) -> sqla.Select: ...
 
     @overload
-    def select(self: Data) -> None: ...
+    def select(self: Data[Any, Any, Any, Dx[PL]]) -> None: ...
 
-    def select(self) -> sqla.SelectBase | None:
+    def select(self: Data) -> sqla.SelectBase | None:
         """Return select statement for this dataset."""
-        if is_subtype(self.typeargs[DxT], Dx[SQL]):
-            return None
+        frame = self._frame().get()
 
-        sql = self._sql_tab()
-        return sql if isinstance(sql, sqla.Select) else sql.select()
+        match frame:
+            case sqla.Select():
+                return frame
+            case sqla.FromClause():
+                return frame.select()
+            case sqla.ColumnElement():
+                return sqla.select(frame)
+            case _:
+                return None
 
     @overload
-    def select_str(
-        self: Data[Any, Any, Any, Dx[SQL], Any, *tuple[Any, ...]],
+    def select_str(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Any, Dx[SQL]],
     ) -> str: ...
 
     @overload
-    def select_str(self: Data) -> None: ...
+    def select_str(
+        self: Data[Any, Any, Any, Dx[PL]],
+    ) -> None: ...
 
     def select_str(self) -> str | None:
         """Return select statement for this dataset."""
@@ -533,12 +733,14 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         )
 
     @overload
-    def query(
-        self: Data[Any, Any, Any, Dx[SQL], Any, *tuple[Any, ...]],
+    def query(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Any, Dx[SQL]],
     ) -> sqla.Subquery: ...
 
     @overload
-    def query(self: Data) -> None: ...
+    def query(
+        self: Data[Any, Any, Any, Dx[PL]],
+    ) -> None: ...
 
     @cached_method
     def query(
@@ -554,15 +756,15 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     # Dataframes:
 
     def df(
-        self: Data[Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Any, Dx, Base],
     ) -> pl.DataFrame:
         """Load dataset as dataframe."""
-        dx_type = self.typeargs[DxT]
+        frame = self._frame().get()
 
-        if is_subtype(dx_type, Dx[PL]):
-            return self._pl_df()
-
-        assert is_subtype(dx_type, Dx[SQL])
+        if isinstance(frame, pl.DataFrame):
+            return frame
+        elif isinstance(frame, pl.Series):
+            return frame.to_frame()
 
         select = self.select()
         assert select is not None
@@ -594,7 +796,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         self: Data[Any, Any, Any, Any, Base],
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
-        return self._index().values()
+        return self.index.values()
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
@@ -651,17 +853,18 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
 
     def __len__(self: Data[Any, Any, Any, Any, Base]) -> int:
         """Get the number of items in the dataset."""
-        dx_type = self.typeargs[DxT]
-        if is_subtype(dx_type, Dx[PL]):
-            return len(self._pl_df())
+        frame = self._frame().get()
+        if isinstance(frame, pl.Series | pl.DataFrame):
+            return len(frame)
 
-        assert is_subtype(dx_type, Dx[SQL])
         query = self.query()
         assert query is not None
+
         count = self.root.connection.execute(
             sqla.select(sqla.func.count()).select_from(query)
         ).scalar()
         assert count is not None
+
         return count
 
     # Application:
@@ -674,7 +877,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             KeepVal,
             PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             RwxT2,
-            Dx[EngineT2, FrameT3],
+            Dx[EngineT2, ShapeT3],
             Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], Any, Any],
             *CtxTt3,
         ],
@@ -682,7 +885,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         ValT2,
         Idx[*KeyTt2, *KeyTt3],
         RwxT2,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
         Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT, RwxT],
@@ -697,7 +900,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             ValT3,
             PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             RwxT2,
-            Dx[EngineT2, FrameT3],
+            Dx[EngineT2, ShapeT3],
             Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], Any, Any],
             *CtxTt3,
         ],
@@ -705,7 +908,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         ValT3,
         Idx[*KeyTt2, *KeyTt3],
         RwxT2,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
         Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT, RwxT],
@@ -720,7 +923,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             KeepVal,
             FullIdx[*KeyTt3],
             RwxT2,
-            Dx[EngineT2, FrameT3],
+            Dx[EngineT2, ShapeT3],
             Ctx[ValT2, Idx[*KeyTt2], Any, Any],
             *CtxTt3,
         ],
@@ -728,7 +931,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         ValT2,
         Idx[*KeyTt3],
         RwxT2,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
         Ctx[ValT2, Idx[*KeyTt2], DxT, RwxT],
@@ -743,7 +946,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             ValT3,
             FullIdx[*KeyTt3],
             RwxT2,
-            Dx[EngineT2, FrameT3],
+            Dx[EngineT2, ShapeT3],
             Ctx[ValT2, Idx[*KeyTt2], Any, Any],
             *CtxTt3,
         ],
@@ -751,7 +954,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         ValT3,
         Idx[*KeyTt3],
         RwxT2,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
         Ctx[ValT2, Idx[*KeyTt2], DxT, RwxT],
@@ -841,12 +1044,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
                     return Reduce(
                         context=alignment,
                         func=operator.or_,
-                        data_func={
-                            ColTuple: operator.or_,
-                            SeriesTuple: operator.or_,
-                            sqla.Select
-                            | sqla.FromClause: partial(coalescent_join_sql, on=None),
-                        },
+                        frame_func=partial(coalescent_union, coalesce="left"),
                     )
 
                 return self.registry(key)
@@ -968,7 +1166,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             Dx[EngineT2, Tab | Tabs],
             CtxT2,
         ](
-            self_data + other_data,
+            data=self_data + other_data,
             context=self.root,
         )
 
@@ -977,7 +1175,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     @overload
     def _map_reduce_operator(
         self: Data[
-            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Frame[FrameT3]]
+            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Shape[ShapeT3]]
         ],
         op: Callable[[ValT2, ValT2], ValT3],
         right: Literal[Not.defined] = ...,
@@ -985,35 +1183,35 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         ValT3,
         Idx[*KeyTt2],
         R,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
     ]: ...
 
     @overload
     def _map_reduce_operator(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, FrameT3]],
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, ShapeT3]],
         op: Callable[[ValT2, ValT4], ValT3],
         right: ValT4,
     ) -> Data[
         ValT3,
         Idx[*KeyTt2],
         R,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
     ]: ...
 
     @overload
     def _map_reduce_operator(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, Dx[EngineT2, FrameT3]],
+        self: Data[ValT2, AnyIdx[*KeyTt2], Any, Dx[EngineT2, ShapeT3]],
         op: Callable[[ValT2], ValT3],
         right: Literal[Not.defined] = ...,
     ) -> Data[
         ValT3,
         Idx[*KeyTt2],
         R,
-        Dx[EngineT2, FrameT3],
+        Dx[EngineT2, ShapeT3],
         CtxT,
         Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
     ]: ...
@@ -1035,27 +1233,59 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             mapping = Map(
                 context=Ctx(),
                 func=lambda x: cast(Callable[[Any, Any], Any], op)(x, right),
-                data_func=lambda data: cast(Callable[[Any, Any], Any], op)(data, right),
+                frame_func=lambda frame: cast(Callable[[Any, Any], Any], op)(
+                    frame.get(), right
+                ),
             )
-            return self[mapping]
+            return cast(
+                Data[
+                    Any,
+                    Any,
+                    R,
+                    Any,
+                    CtxT,
+                    Ctx[ValT, Any, DxT, RwxT],
+                ],
+                self[mapping],
+            )
 
         if len(inspect.getfullargspec(op).args) == 1:
             op = cast(Callable[[Any], Any], op)
             mapping = Map(
                 context=Ctx(),
                 func=op,
-                data_func=op,
+                frame_func=lambda frame: op(frame.get()),
             )
-            return self[mapping]
+            return cast(
+                Data[
+                    Any,
+                    Any,
+                    R,
+                    Any,
+                    CtxT,
+                    Ctx[ValT, Any, DxT, RwxT],
+                ],
+                self[mapping],
+            )
 
         op = cast(Callable[[Any, Any], Any], op)
         reduction = Reduce(
             context=Ctx(),
             func=op,
-            data_func=op,
+            frame_func=lambda left, right: op(left.get(), right.get()),
         )
         assert issubclass(self.common_value_type, tuple)
-        return self[reduction]
+        return cast(
+            Data[
+                Any,
+                Any,
+                R,
+                Any,
+                CtxT,
+                Ctx[ValT, Any, DxT, RwxT],
+            ],
+            self[reduction],
+        )
 
     # Comparison:
 
@@ -1148,26 +1378,28 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             mapping = Map[bool](
                 context=Ctx(),
                 func=lambda x: other.start <= x <= other.stop,
-                data_func={
-                    pl.Series: lambda x: other.start <= x <= other.stop,
-                    sqla.ColumnElement: partial(
-                        sqla.ColumnElement.between, cleft=other.start, cright=other.stop
-                    ),
-                },
+                frame_func=partial(frame_isin, values=other),
             )
         else:
             mapping = Map[bool](
                 context=Ctx(),
                 func=lambda x: x in other,
-                data_func={
-                    pl.Series: lambda x: pl.Series.is_in(x, other),
-                    sqla.ColumnElement: partial(sqla.ColumnElement.in_, other=other),
-                },
+                frame_func=partial(frame_isin, values=other),
             )
 
-        return Filter(
-            context=self.context,
-            bool_data=mapping,
+        return cast(
+            Data[
+                KeepVal,
+                PassIdx,
+                R,
+                DxT,
+                CtxT,
+                *CtxTt,
+            ],
+            Filter(
+                context=self.context,
+                bool_data=mapping,
+            ),
         )
 
     # Index set operations:
@@ -1185,18 +1417,13 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     ]:
         """Union two databases, right overriding left."""
         alignment = self @ other
-        return Reduce(
-            context=alignment,
-            func=operator.or_,
-            data_func={
-                ColTuple: operator.or_,
-                SeriesTuple: operator.or_,
-                sqla.Select
-                | sqla.FromClause: partial(
-                    coalescent_join_sql, on=alignment._index()._data(), coalesce="right"
-                ),
-                pl.DataFrame: partial(coalescent_join_pl, on=None, coalesce="right"),
-            },
+        return cast(
+            Data,
+            Reduce(
+                context=alignment,
+                func=operator.or_,
+                frame_func=partial(coalescent_union, coalesce="left"),
+            ),
         )
 
     def __xor__(
@@ -1212,18 +1439,13 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     ]:
         """Union two databases, right overriding left."""
         alignment = self @ other
-        return Reduce(
-            context=alignment,
-            func=operator.or_,
-            data_func={
-                ColTuple: operator.or_,
-                SeriesTuple: operator.or_,
-                sqla.Select
-                | sqla.FromClause: partial(
-                    coalescent_join_sql, on=None, coalesce="left"
-                ),
-                pl.DataFrame: partial(coalescent_join_pl, on=None, coalesce="left"),
-            },
+        return cast(
+            Data,
+            Reduce(
+                context=alignment,
+                func=operator.xor,
+                frame_func=partial(coalescent_union, coalesce="right"),
+            ),
         )
 
     def __lshift__(
@@ -1238,22 +1460,71 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         CtxT2,
     ]:
         """Union two databases, right overriding left."""
-        alignment = self @ other
-        return Reduce(
-            context=alignment,
-            func=operator.or_,
-            data_func={
-                ColTuple: operator.or_,
-                SeriesTuple: operator.or_,
-                sqla.Select
-                | sqla.FromClause: partial(
-                    coalescent_join_sql, on=None, join="left", coalesce="right"
-                ),
-                pl.DataFrame: partial(
-                    coalescent_join_pl, on=None, join="left", coalesce="right"
-                ),
-            },
+        alignment = Align(
+            context=self.root,
+            data=(self, other),
+            join="left",
         )
+        return cast(
+            Data,
+            Reduce(
+                context=alignment,
+                func=operator.and_,
+                frame_func=partial(coalescent_union, coalesce="right"),
+            ),
+        )
+
+    def __ior__(
+        self: Data[Any, Any, C | U, Dx[Any, ShapeT2], Base],
+        input_data: InputData[ValT, ShapeT2],
+    ) -> Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]:
+        """Union two databases, right overriding left."""
+        mutations = self._mutation(input_data, mode={C, U})
+
+        for mutation in mutations:
+            self.root.connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt], self)
+
+    def __ixor__(
+        self: Data[Any, Any, C, Dx[Any, ShapeT2], Base],
+        input_data: InputData[ValT, ShapeT2],
+    ) -> Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]:
+        """Union two databases, right overriding left."""
+        mutations = self._mutation(input_data, mode={C})
+
+        for mutation in mutations:
+            self.root.connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt], self)
+
+    def __ilshift__(
+        self: Data[Any, Any, U, Dx[Any, ShapeT2], Base],
+        input_data: InputData[ValT, ShapeT2],
+    ) -> Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]:
+        """Union two databases, right overriding left."""
+        mutations = self._mutation(input_data, mode={U})
+
+        for mutation in mutations:
+            self.root.connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt], self)
+
+    def __setitem__(
+        self: Data[Any, Any, C | U | D, Dx[Any, ShapeT2], Base],
+        key: slice,
+        input_data: InputData[ValT, ShapeT2],
+    ) -> Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]:
+        """Union two databases, right overriding left."""
+        assert key == slice(None, None, None)
+
+        if input_data is not self:
+            mutations = self._mutation(input_data, mode={C, U, D})
+
+            for mutation in mutations:
+                self.root.connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt], self)
 
 
 RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)
@@ -1281,11 +1552,12 @@ class Registry(Data[RegT, AutoIdx[RegT], RwxT, Dx[SQL, Tab], BaseT, None]):
 TupT = TypeVar("TupT", bound=tuple, covariant=True)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Align(Data[TupT, IdxT, RwxT, DxT, CtxT]):
     """Alignment of multiple props."""
 
     data: tuple[Data[Any, IdxT, RwxT, Any, CtxT], ...]
+    join: Literal["left", "right", "full"] = "full"
 
     @cached_prop
     def value_types(self) -> tuple[SingleTypeDef[ValT] | UnionType, ...]:
@@ -1293,7 +1565,7 @@ class Align(Data[TupT, IdxT, RwxT, DxT, CtxT]):
         return tuple(d.value_typeform for d in self.data)
 
 
-ArgFrameT = TypeVar("ArgFrameT", bound=Frame, covariant=True, default=Any)
+ArgShapeT = TypeVar("ArgShapeT", bound=Shape, covariant=True, default=Any)
 
 
 @dataclass(kw_only=True)
@@ -1302,17 +1574,17 @@ class Map(
         ValT,
         PassIdx,
         R,
-        Dx[EngineT, FrameT],
-        Ctx[ArgT, Any, Dx[EngineT, ArgFrameT]],
+        Dx[EngineT, ShapeT],
+        Ctx[ArgT, Any, Dx[EngineT, ArgShapeT]],
     ],
-    Generic[ArgT, ArgFrameT, ValT, FrameT, EngineT],
+    Generic[ArgT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
 
     func: Callable[[ArgT], ValT]
-    data_func: (
-        Callable[[Data[ArgT, Any, Any, Dx[EngineT, ArgFrameT]]], FrameT] | None
-    ) = None
+    frame_func: Callable[[Frame[EngineT, ArgShapeT]], Frame[EngineT, ShapeT]] | None = (
+        None
+    )
 
 
 @dataclass(kw_only=True)
@@ -1321,16 +1593,19 @@ class Reduce(
         ValT,
         PassIdx,
         R,
-        Dx[EngineT, FrameT],
-        Ctx[tuple[ArgT, ...], Any, Dx[EngineT, ArgFrameT]],
+        Dx[EngineT, ShapeT],
+        Ctx[tuple[ArgT, ...], Any, Dx[EngineT, ArgShapeT]],
     ],
-    Generic[ArgT, ArgFrameT, ValT, FrameT, EngineT],
+    Generic[ArgT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
 
     func: Callable[[ArgT, ArgT], ValT]
-    data_func: (
-        Callable[[Data[tuple[ArgT, ...], Any, Any, Dx[EngineT, ArgFrameT]]], FrameT]
+    frame_func: (
+        Callable[
+            [Frame[EngineT, ArgShapeT], Frame[EngineT, ArgShapeT]],
+            Frame[EngineT, ShapeT],
+        ]
         | None
     ) = None
 
@@ -1341,17 +1616,17 @@ class Agg(
         ValT,
         PassIdx[KeepIdxT, SubIdxT],
         R,
-        Dx[EngineT, FrameT],
-        Ctx[ArgT, Any, Dx[EngineT, ArgFrameT]],
+        Dx[EngineT, ShapeT],
+        Ctx[ArgT, Any, Dx[EngineT, ArgShapeT]],
     ],
-    Generic[ArgT, KeepIdxT, SubIdxT, ArgFrameT, ValT, FrameT, EngineT],
+    Generic[ArgT, KeepIdxT, SubIdxT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
 
     func: Callable[[Iterable[ArgT]], ValT]
-    data_func: (
-        Callable[[Data[ArgT, Any, Any, Dx[EngineT, ArgFrameT]]], FrameT] | None
-    ) = None
+    frame_func: Callable[[Frame[EngineT, ArgShapeT]], Frame[EngineT, ShapeT]] | None = (
+        None
+    )
 
     keep_levels: type[KeepIdxT] | None = None
     agg_levels: type[SubIdxT] | None = None
@@ -1366,13 +1641,13 @@ class Filter(
         KeepVal,
         PassIdx,
         RuTi,
-        Dx[EngineT, FrameT],
+        Dx[EngineT, ShapeT],
         CtxT,
     ]
 ):
     """Filter a dataset."""
 
-    bool_data: Data[bool, Any, Any, Dx[EngineT, FrameT], CtxT]
+    bool_data: Data[bool, Any, Any, Dx[EngineT, ShapeT], CtxT]
 
     @staticmethod
     def from_keymap(
@@ -1389,7 +1664,7 @@ class Filter(
 
 
 @dataclass(kw_only=True)
-class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], RwxT, FrameT, BaseT, CtxT, *CtxTt]):
+class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], RwxT, ShapeT, BaseT, CtxT, *CtxTt]):
     """Property definition for a model."""
 
     # Attributes:
@@ -1399,8 +1674,8 @@ class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], RwxT, FrameT, BaseT, CtxT, *CtxTt])
     _owner: type[CtxT] | None = None
 
     alias: str | None = None
-    default: ValT | InputData[ValT, FrameT] | Literal[Not.defined] = Not.defined
-    default_factory: Callable[[], ValT | InputData[ValT, FrameT]] | None = None
+    default: ValT | InputData[ValT, ShapeT] | Literal[Not.defined] = Not.defined
+    default_factory: Callable[[], ValT | InputData[ValT, ShapeT]] | None = None
     init: bool = True
     repr: bool = True
     hash: bool = True
@@ -1500,15 +1775,15 @@ class Prop(Data[ValT, Idx[*KeyTt2, *KeyTt3], RwxT, FrameT, BaseT, CtxT, *CtxTt])
 
 
 @dataclass
-class Path(Data[ValT, IdxT, RwxT, FrameT, BaseT, CtxT, *CtxTt]):
+class Path(Data[ValT, IdxT, RwxT, ShapeT, BaseT, CtxT, *CtxTt]):
     """Alignment of multiple props."""
 
     props: (
-        tuple[Data[ValT, IdxT, RwxT, FrameT, BaseT, CtxT],]
+        tuple[Data[ValT, IdxT, RwxT, ShapeT, BaseT, CtxT],]
         | tuple[
             Data[Any, Any, RwxT, sqla.FromClause | None, BaseT, CtxT],
             *tuple[Prop[Any, Any, RwxT, sqla.FromClause | None, BaseT, Any], ...],
-            Prop[ValT, Any, RwxT, FrameT, BaseT, Any],
+            Prop[ValT, Any, RwxT, ShapeT, BaseT, Any],
         ]
     )
 
