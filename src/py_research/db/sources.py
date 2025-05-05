@@ -482,9 +482,7 @@ def _push_to_pull_map(rec: type[Record], push_map: PushMap) -> _PullMapping:
     return pull_map
 
 
-async def _sliding_batch_map[
-    H: Hashable, T
-](
+async def _sliding_batch_map[H: Hashable, T](
     data: Iterable[H],
     func: Callable[[H], Coroutine[Any, Any, T]],
     concurrency_limit: int = 1000,
@@ -704,7 +702,7 @@ async def _load_records(
 
     # Define function for async-loading records.
     async def _load_rec_from_item(
-        item: tuple[tuple[Hashable, DirectPath], TreeNode]
+        item: tuple[tuple[Hashable, DirectPath], TreeNode],
     ) -> tuple[Hashable, DirectPath, TreeNode, Hashable | Record | None]:
         (parent_idx, path_idx), data = item
 

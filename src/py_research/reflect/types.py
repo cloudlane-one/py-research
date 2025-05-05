@@ -66,7 +66,7 @@ class TypeRef[T]:
     """Reference to a type."""
 
     hint: SingleTypeDef[T]
-    var_map: dict[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
+    var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
     ctx_module: ModuleType | None = None
 
 

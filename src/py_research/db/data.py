@@ -15,7 +15,7 @@ from collections.abc import (
     Sequence,
 )
 from dataclasses import dataclass, field
-from functools import cache, partial, reduce
+from functools import partial, reduce
 from inspect import getmodule
 from types import NoneType, UnionType
 from typing import (
@@ -180,6 +180,11 @@ class AutoIdx(Generic[AutoIdxT]):
 
 type FullIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
 
+FullIdxT = TypeVar(
+    "FullIdxT",
+    bound=FullIdx,
+    default=Idx[*tuple[Any, ...]],
+)
 KeepIdxT = TypeVar(
     "KeepIdxT",
     bound=Idx,
@@ -303,31 +308,32 @@ type InputData[V, S] = V | Iterable[V] | Mapping[
 
 Params = ParamSpec("Params")
 
+DataT = TypeVar("DataT", bound="Data", default="Data")
 
-def _get_prop_type(hint: SingleTypeDef | str) -> type[Data] | type[None]:
+
+def _map_data_type_name(name: str, base: type[DataT]) -> type[DataT | None]:
+    """Map property type name to class."""
+    name_map = {cls.__name__: cls for cls in get_subclasses(base) if cls is not base}
+    matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
+    return matches[0] if len(matches) == 1 else NoneType
+
+
+def _get_data_type(
+    hint: SingleTypeDef | str, bound: type[DataT] | None = None
+) -> type[DataT] | type[None]:
     """Resolve the prop typehint."""
+    bound = cast(type[DataT], bound or Data)
+
     if has_type(hint, SingleTypeDef):
         base = get_origin(hint)
-        if base is None or not issubclass(base, Data):
+        if base is None or not issubclass(base, bound):
             return NoneType
 
         return base
     elif isinstance(hint, str):
-        return _map_data_type_name(hint)
+        return _map_data_type_name(hint, bound)
     else:
         return NoneType
-
-
-@cache
-def _data_type_name_map() -> dict[str, type[Data]]:
-    return {cls.__name__: cls for cls in get_subclasses(Data) if cls is not Data}
-
-
-def _map_data_type_name(name: str) -> type[Data | None]:
-    """Map property type name to class."""
-    name_map = _data_type_name_map()
-    matches = [name_map[n] for n in name_map if name.startswith(n + "[")]
-    return matches[0] if len(matches) == 1 else NoneType
 
 
 class Frame(Generic[EngineT, ShapeT]):
@@ -637,7 +643,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     def has_type[T: Data](instance: Data, typedef: type[T]) -> TypeGuard[T]:
         """Check if the dataset has the specified type."""
         orig = get_origin(typedef)
-        if orig is None or not issubclass(_get_prop_type(instance.resolved_type), orig):
+        if orig is None or not issubclass(_get_data_type(instance.resolved_type), orig):
             return False
 
         own_typevars = get_typevar_map(instance.resolved_type)
@@ -1552,6 +1558,60 @@ class Align(Data[TupT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         """Get the value types."""
         return tuple(d.value_typeform for d in self.data)
 
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
+        """Get SQL-side reference to this property."""
+        # TODO: Implement this method for the Align class.
+        raise NotImplementedError()
+
+    def _value(self, data: Mapping[str, Any]) -> TupT:
+        """Transform dict-like data (e.g. dataframe row) to declared value type."""
+        # TODO: Implement this method for the Align class.
+        raise NotImplementedError()
+
+    def _index(
+        self: Data[
+            Any,
+            FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]],
+            Any,
+            Dx[Any, ShapeT2],
+        ],
+    ) -> (
+        Data[
+            tuple[*KeyTt2],
+            SelfIdx[*KeyTt2],
+            R,
+            Dx[PL | SQL, Tab],
+            CtxT,
+            *CtxTt,
+            Ctx[TupT, Any, ShapeT2],
+        ]
+        | None
+    ):
+        """Get the index of this data."""
+        # TODO: Implement this method for the Align class.
+        raise NotImplementedError()
+
+    def _subframes(
+        self: Data[
+            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Shape[ShapeT3]]
+        ],
+    ) -> tuple[
+        Data[
+            ValT2,
+            Idx[*KeyTt2],
+            RwxT,
+            Dx[EngineT2, ShapeT3],
+            CtxT,
+            *CtxTt,
+            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], ShapeT3],
+        ],
+        ...,
+    ]:
+        # TODO: Implement this method for the Align class.
+        raise NotImplementedError()
+
 
 @dataclass(kw_only=True)
 class Map(
@@ -1575,6 +1635,40 @@ class Map(
     frame_func: Callable[[Frame[EngineT, ArgShapeT]], Frame[EngineT, ShapeT]] | None = (
         None
     )
+
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
+        """Get SQL-side reference to this property."""
+        # TODO: Implement this method for the Map class.
+        raise NotImplementedError()
+
+    def _value(self, data: Mapping[str, Any]) -> ValT:
+        """Transform dict-like data (e.g. dataframe row) to declared value type."""
+        # TODO: Implement this method for the Map class.
+        raise NotImplementedError()
+
+    def _index(
+        self: Data[
+            Any,
+            FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]],
+            Any,
+            Dx[Any, ShapeT2],
+        ],
+    ) -> (
+        Data[
+            tuple[*KeyTt2],
+            SelfIdx[*KeyTt2],
+            R,
+            Dx[PL | SQL, Tab],
+            Interface[ArgT, Any, ArgShapeT],
+            Ctx[ValT, Any, ShapeT2],
+        ]
+        | None
+    ):
+        """Get the index of this data."""
+        # TODO: Implement this method for the Map class.
+        raise NotImplementedError()
 
 
 @dataclass(kw_only=True)
@@ -1604,6 +1698,40 @@ class Reduce(
         | None
     ) = None
 
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
+        """Get SQL-side reference to this property."""
+        # TODO: Implement this method for the Reduce class.
+        raise NotImplementedError()
+
+    def _value(self, data: Mapping[str, Any]) -> ValT:
+        """Transform dict-like data (e.g. dataframe row) to declared value type."""
+        # TODO: Implement this method for the Reduce class.
+        raise NotImplementedError()
+
+    def _index(
+        self: Data[
+            Any,
+            FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]],
+            Any,
+            Dx[Any, ShapeT2],
+        ],
+    ) -> (
+        Data[
+            tuple[*KeyTt2],
+            SelfIdx[*KeyTt2],
+            R,
+            Dx[PL | SQL, Tab],
+            Interface[tuple[ArgT, ...], Any, ArgShapeT],
+            Ctx[ValT, Any, ShapeT2],
+        ]
+        | None
+    ):
+        """Get the index of this data."""
+        # TODO: Implement this method for the Reduce class.
+        raise NotImplementedError()
+
 
 @dataclass(kw_only=True)
 class Agg(
@@ -1630,6 +1758,40 @@ class Agg(
 
     keep_levels: type[KeepIdxT] | None = None
     agg_levels: type[SubIdxT] | None = None
+
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
+        """Get SQL-side reference to this property."""
+        # TODO: Implement this method for the Agg class.
+        raise NotImplementedError()
+
+    def _value(self, data: Mapping[str, Any]) -> ValT:
+        """Transform dict-like data (e.g. dataframe row) to declared value type."""
+        # TODO: Implement this method for the Agg class.
+        raise NotImplementedError()
+
+    def _index(
+        self: Data[
+            Any,
+            FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]],
+            Any,
+            Dx[Any, ShapeT2],
+        ],
+    ) -> (
+        Data[
+            tuple[*KeyTt2],
+            SelfIdx[*KeyTt2],
+            R,
+            Dx[PL | SQL, Tab],
+            Interface[ArgT, Any, ArgShapeT],
+            Ctx[ValT, Any, ShapeT2],
+        ]
+        | None
+    ):
+        """Get the index of this data."""
+        # TODO: Implement this method for the Agg class.
+        raise NotImplementedError()
 
 
 RuTi = TypeVar("RuTi", bound=R | U, default=R)
@@ -1661,3 +1823,29 @@ class Filter(
         )
 
         return Filter(context=bool_data.root, bool_data=bool_data)
+
+    def _frame(
+        self: Data[Any, Any, Any, Dx[EngineT2, ShapeT2]],
+    ) -> Frame[EngineT2, ShapeT2]:
+        """Get SQL-side reference to this property."""
+        # TODO: Implement this method for the Filter class.
+        raise NotImplementedError()
+
+    def _subframes(
+        self: Data[
+            tuple[ValT2, ...], AnyIdx[*KeyTt2], Any, Dx[EngineT2, Shape[ShapeT3]]
+        ],
+    ) -> tuple[
+        Data[
+            ValT2,
+            Idx[*KeyTt2],
+            RwxT,
+            Dx[EngineT2, ShapeT3],
+            CtxT,
+            *CtxTt,
+            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], ShapeT3],
+        ],
+        ...,
+    ]:
+        # TODO: Implement this method for the Filter class.
+        raise NotImplementedError()
