@@ -257,9 +257,10 @@ RwxT3 = TypeVar("RwxT3", bound=CRUD)
 
 ArgT = TypeVar("ArgT", contravariant=True, default=Any)
 ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=Idx, default=Any)
+ArgShapeT = TypeVar("ArgShapeT", bound=Shape, contravariant=True, default=Any)
 
 
-class Ctx(Generic[ArgT, ArgIdxT, DxT, RwxT]):
+class Ctx(Generic[ArgT, ArgIdxT, ArgShapeT]):
     """Data context."""
 
 
@@ -272,7 +273,7 @@ CtxTt2 = TypeVarTuple("CtxTt2")
 CtxTt3 = TypeVarTuple("CtxTt3")
 
 
-class Base(Ctx[ArgT, Any, Any, RwxT], ABC):
+class Base(Ctx[ArgT, Any, Any], ABC, Generic[ArgT, RwxT]):
     """Base for retrieving/storing data."""
 
     @property
@@ -292,7 +293,7 @@ class Base(Ctx[ArgT, Any, Any, RwxT], ABC):
 BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
 
 
-class Interface(Ctx[ArgT, ArgIdxT, DxT, RwxT]):
+class Interface(Ctx[ArgT, ArgIdxT, ArgShapeT]):
     """Data interface."""
 
 
@@ -546,7 +547,12 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
     def _index(
-        self: Data[Any, FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]]],
+        self: Data[
+            Any,
+            FullIdx[*KeyTt2] | PassIdx[Any, Any, Idx[*KeyTt2]],
+            Any,
+            Dx[Any, ShapeT2],
+        ],
     ) -> (
         Data[
             tuple[*KeyTt2],
@@ -555,7 +561,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             Dx[PL | SQL, Tab],
             CtxT,
             *CtxTt,
-            Ctx[ValT, Any, DxT, RwxT],
+            Ctx[ValT, Any, ShapeT2],
         ]
         | None
     ):
@@ -574,7 +580,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
             Dx[EngineT2, ShapeT3],
             CtxT,
             *CtxTt,
-            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], DxT, RwxT],
+            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], ShapeT3],
         ],
         ...,
     ]:
@@ -872,13 +878,13 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     # 1. Context application, altered index, kept value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], RwxT2, Dx[EngineT2]],
+        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], RwxT2, Dx[EngineT2, ShapeT2]],
         key: Data[
             KeepVal,
             PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             RwxT2,
             Dx[EngineT2, ShapeT3],
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], Any, Any],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], ShapeT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -888,20 +894,20 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT, RwxT],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], ShapeT2],
         *CtxTt3,
     ]: ...
 
     # 2. Context application, altered index, new value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], RwxT2, Dx[EngineT2]],
+        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], RwxT2, Dx[EngineT2, ShapeT2]],
         key: Data[
             ValT3,
             PassIdx[Idx[*KeyTt2], Idx[*KeyTt4], Idx[*KeyTt3]],
             RwxT2,
             Dx[EngineT2, ShapeT3],
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], Any, Any],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], ShapeT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -911,20 +917,20 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT, RwxT],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], ShapeT2],
         *CtxTt3,
     ]: ...
 
     # 3. Context application, new index, kept value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], RwxT2, Dx[EngineT2]],
+        self: Data[ValT2, AnyIdx[*KeyTt2], RwxT2, Dx[EngineT2, ShapeT2]],
         key: Data[
             KeepVal,
             FullIdx[*KeyTt3],
             RwxT2,
             Dx[EngineT2, ShapeT3],
-            Ctx[ValT2, Idx[*KeyTt2], Any, Any],
+            Ctx[ValT2, Idx[*KeyTt2], ShapeT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -934,20 +940,20 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2], DxT, RwxT],
+        Ctx[ValT2, Idx[*KeyTt2], ShapeT2],
         *CtxTt3,
     ]: ...
 
     # 4. Context application, new index, new value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], RwxT2, Dx[EngineT2]],
+        self: Data[ValT2, AnyIdx[*KeyTt2], RwxT2, Dx[EngineT2, ShapeT2]],
         key: Data[
             ValT3,
             FullIdx[*KeyTt3],
             RwxT2,
             Dx[EngineT2, ShapeT3],
-            Ctx[ValT2, Idx[*KeyTt2], Any, Any],
+            Ctx[ValT2, Idx[*KeyTt2], ShapeT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -957,7 +963,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         Dx[EngineT2, ShapeT3],
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2], DxT, RwxT],
+        Ctx[ValT2, Idx[*KeyTt2], ShapeT2],
         *CtxTt3,
     ]: ...
 
@@ -992,7 +998,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     # 9. Key selection
     @overload
     def __getitem__(
-        self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2]],
+        self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2], Any, Dx[Any, ShapeT2]],
         key: tuple[*KeyTt3],
     ) -> Data[
         ValT,
@@ -1001,13 +1007,13 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         DxT,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt3, *KeyTt2], DxT, RwxT],
+        Ctx[ValT, Idx[*KeyTt3, *KeyTt2], ShapeT2],
     ]: ...
 
     # 10. Key selection, scalar
     @overload
     def __getitem__(
-        self: Data[Any, AnyIdx[KeyT3, *KeyTt2]],
+        self: Data[Any, AnyIdx[KeyT3, *KeyTt2], Any, Dx[Any, ShapeT2]],
         key: KeyT3,
     ) -> Data[
         ValT,
@@ -1016,7 +1022,7 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         DxT,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[KeyT3, *KeyTt2], DxT, RwxT],
+        Ctx[ValT, Idx[KeyT3, *KeyTt2], ShapeT2],
     ]: ...
 
     # 11. Base type selection
@@ -1041,11 +1047,12 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
                     alignment = reduce(
                         Data.__matmul__, (self.registry(t) for t in union_types)
                     )
-                    return Reduce(
-                        context=alignment,
-                        func=operator.or_,
-                        frame_func=partial(coalescent_union, coalesce="left"),
-                    )
+                    return alignment[
+                        Reduce(
+                            func=operator.or_,
+                            frame_func=partial(coalescent_union, coalesce="left"),
+                        )
+                    ]
 
                 return self.registry(key)
             case list() | slice() | Hashable():
@@ -1185,7 +1192,8 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         R,
         Dx[EngineT2, ShapeT3],
         CtxT,
-        Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
+        *CtxTt,
+        Ctx[ValT, Idx[*KeyTt2], ShapeT3],
     ]: ...
 
     @overload
@@ -1199,7 +1207,8 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         R,
         Dx[EngineT2, ShapeT3],
         CtxT,
-        Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
+        *CtxTt,
+        Ctx[ValT, Idx[*KeyTt2], ShapeT3],
     ]: ...
 
     @overload
@@ -1213,7 +1222,8 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         R,
         Dx[EngineT2, ShapeT3],
         CtxT,
-        Ctx[ValT, Idx[*KeyTt2], DxT, RwxT],
+        *CtxTt,
+        Ctx[ValT, Idx[*KeyTt2], ShapeT3],
     ]: ...
 
     def _map_reduce_operator(
@@ -1226,64 +1236,41 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         R,
         Any,
         CtxT,
-        Ctx[ValT, Any, DxT, RwxT],
+        *CtxTt,
+        Ctx[ValT, Any, Any],
     ]:
         """Create a scalar comparator for the given operation."""
         if right is not Not.defined:
             mapping = Map(
-                context=Ctx(),
                 func=lambda x: cast(Callable[[Any, Any], Any], op)(x, right),
                 frame_func=lambda frame: cast(Callable[[Any, Any], Any], op)(
                     frame.get(), right
                 ),
             )
             return cast(
-                Data[
-                    Any,
-                    Any,
-                    R,
-                    Any,
-                    CtxT,
-                    Ctx[ValT, Any, DxT, RwxT],
-                ],
+                Data,
                 self[mapping],
             )
 
         if len(inspect.getfullargspec(op).args) == 1:
             op = cast(Callable[[Any], Any], op)
             mapping = Map(
-                context=Ctx(),
                 func=op,
                 frame_func=lambda frame: op(frame.get()),
             )
             return cast(
-                Data[
-                    Any,
-                    Any,
-                    R,
-                    Any,
-                    CtxT,
-                    Ctx[ValT, Any, DxT, RwxT],
-                ],
+                Data,
                 self[mapping],
             )
 
         op = cast(Callable[[Any, Any], Any], op)
         reduction = Reduce(
-            context=Ctx(),
             func=op,
             frame_func=lambda left, right: op(left.get(), right.get()),
         )
         assert issubclass(self.common_value_type, tuple)
         return cast(
-            Data[
-                Any,
-                Any,
-                R,
-                Any,
-                CtxT,
-                Ctx[ValT, Any, DxT, RwxT],
-            ],
+            Data,
             self[reduction],
         )
 
@@ -1376,13 +1363,11 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         """Test values of this dataset for membership in the given iterable."""
         if isinstance(other, slice):
             mapping = Map[bool](
-                context=Ctx(),
                 func=lambda x: other.start <= x <= other.stop,
                 frame_func=partial(frame_isin, values=other),
             )
         else:
             mapping = Map[bool](
-                context=Ctx(),
                 func=lambda x: x in other,
                 frame_func=partial(frame_isin, values=other),
             )
@@ -1405,58 +1390,60 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     # Index set operations:
 
     def __or__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
-        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
+        self: Data[ValT2, Any, Any, DxT2, CtxT2],
+        other: Data[ValT3, Any, Any, DxT2, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
         PassIdx,
         R,
         DxT2,
-        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
         CtxT2,
     ]:
         """Union two databases, right overriding left."""
         alignment = self @ other
+        reduction = Reduce(
+            func=operator.or_,
+            frame_func=partial(coalescent_union, coalesce="left"),
+        )
+
         return cast(
             Data,
-            Reduce(
-                context=alignment,
-                func=operator.or_,
-                frame_func=partial(coalescent_union, coalesce="left"),
-            ),
+            alignment[reduction],
         )
 
     def __xor__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
-        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
+        self: Data[ValT2, Any, Any, DxT2, CtxT2],
+        other: Data[ValT3, Any, Any, DxT2, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
         PassIdx,
         R,
         DxT2,
-        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
         CtxT2,
     ]:
         """Union two databases, right overriding left."""
         alignment = self @ other
         return cast(
             Data,
-            Reduce(
-                context=alignment,
-                func=operator.xor,
-                frame_func=partial(coalescent_union, coalesce="right"),
-            ),
+            alignment[
+                Reduce(
+                    func=operator.xor,
+                    frame_func=partial(coalescent_union, coalesce="right"),
+                )
+            ],
         )
 
     def __lshift__(
-        self: Data[ValT2, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
-        other: Data[ValT3, AnyIdx[*KeyTt2], Any, DxT2, CtxT2],
+        self: Data[ValT2, Any, Any, DxT2, CtxT2],
+        other: Data[ValT3, Any, Any, DxT2, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
         PassIdx,
         R,
         DxT2,
-        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any, Any],
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
         CtxT2,
     ]:
         """Union two databases, right overriding left."""
@@ -1467,11 +1454,12 @@ class Data(Generic[ValT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
         )
         return cast(
             Data,
-            Reduce(
-                context=alignment,
-                func=operator.and_,
-                frame_func=partial(coalescent_union, coalesce="right"),
-            ),
+            alignment[
+                Reduce(
+                    func=operator.and_,
+                    frame_func=partial(coalescent_union, coalesce="right"),
+                )
+            ],
         )
 
     def __ior__(
@@ -1553,19 +1541,16 @@ TupT = TypeVar("TupT", bound=tuple, covariant=True)
 
 
 @dataclass(kw_only=True)
-class Align(Data[TupT, IdxT, RwxT, DxT, CtxT]):
+class Align(Data[TupT, IdxT, RwxT, DxT, CtxT, *CtxTt]):
     """Alignment of multiple props."""
 
-    data: tuple[Data[Any, IdxT, RwxT, Any, CtxT], ...]
+    data: tuple[Data[Any, IdxT, RwxT, Any, CtxT, *CtxTt], ...]
     join: Literal["left", "right", "full"] = "full"
 
     @cached_prop
     def value_types(self) -> tuple[SingleTypeDef[ValT] | UnionType, ...]:
         """Get the value types."""
         return tuple(d.value_typeform for d in self.data)
-
-
-ArgShapeT = TypeVar("ArgShapeT", bound=Shape, covariant=True, default=Any)
 
 
 @dataclass(kw_only=True)
@@ -1575,11 +1560,16 @@ class Map(
         PassIdx,
         R,
         Dx[EngineT, ShapeT],
-        Ctx[ArgT, Any, Dx[EngineT, ArgShapeT]],
+        Interface[ArgT, Any, ArgShapeT],
     ],
     Generic[ArgT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
+
+    context: (
+        Interface[ArgT, Any, ArgShapeT]
+        | Data[Any, Any, Any, Any, Interface[ArgT, Any, ArgShapeT]]
+    ) = field(default_factory=Interface)
 
     func: Callable[[ArgT], ValT]
     frame_func: Callable[[Frame[EngineT, ArgShapeT]], Frame[EngineT, ShapeT]] | None = (
@@ -1594,11 +1584,16 @@ class Reduce(
         PassIdx,
         R,
         Dx[EngineT, ShapeT],
-        Ctx[tuple[ArgT, ...], Any, Dx[EngineT, ArgShapeT]],
+        Interface[tuple[ArgT, ...], Any, ArgShapeT],
     ],
     Generic[ArgT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
+
+    context: (
+        Interface[tuple[ArgT, ...], Any, ArgShapeT]
+        | Data[Any, Any, Any, Any, Interface[tuple[ArgT, ...], Any, ArgShapeT]]
+    ) = field(default_factory=Interface)
 
     func: Callable[[ArgT, ArgT], ValT]
     frame_func: (
@@ -1617,11 +1612,16 @@ class Agg(
         PassIdx[KeepIdxT, SubIdxT],
         R,
         Dx[EngineT, ShapeT],
-        Ctx[ArgT, Any, Dx[EngineT, ArgShapeT]],
+        Interface[ArgT, Any, ArgShapeT],
     ],
     Generic[ArgT, KeepIdxT, SubIdxT, ArgShapeT, ValT, ShapeT, EngineT],
 ):
     """Apply a mapping function to a dataset."""
+
+    context: (
+        Interface[ArgT, Any, ArgShapeT]
+        | Data[Any, Any, Any, Any, Interface[ArgT, Any, ArgShapeT]]
+    ) = field(default_factory=Interface)
 
     func: Callable[[Iterable[ArgT]], ValT]
     frame_func: Callable[[Frame[EngineT, ArgShapeT]], Frame[EngineT, ShapeT]] | None = (
