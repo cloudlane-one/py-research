@@ -108,7 +108,7 @@ DxT = TypeVar(
     "DxT",
     bound=Shape,
     covariant=True,
-    default=Any,
+    default=Shape,
 )
 DxT2 = TypeVar(
     "DxT2",
@@ -129,13 +129,15 @@ class SQL(PL):
     """SQLA engine, supporting polars fallback."""
 
 
-ExT = TypeVar("ExT", bound=PL, default=Any, covariant=True)
+ExT = TypeVar("ExT", bound=PL, default=PL, covariant=True)
 ExT2 = TypeVar("ExT2", bound=PL)
 
 
 @final
 class Idx(Generic[*KeyTt]):
     """Define the custom index type of a dataset."""
+
+    components: tuple[Data[Any, Any, Col, SQL, R, Interface], ...]
 
 
 @final
@@ -187,6 +189,14 @@ AddIdxT = TypeVar(
 
 class ModIdx(Generic[SubIdxT, AddIdxT]):
     """Pass-through index."""
+
+    sub_type: SingleTypeDef[SubIdxT]
+    add: AddIdxT
+
+
+type KeepIdx = ModIdx[Idx[()], Idx[()]]
+type SubIdx[*K] = ModIdx[Idx[*K], Idx[()]]
+type AddIdx[*K] = ModIdx[Idx[()], Idx[*K]]
 
 
 type AnyIdx[*K] = FullIdx[*K] | ModIdx[Any, Any]
@@ -307,8 +317,11 @@ class Frame(Generic[ExT, DxT]):
     ) -> None: ...
 
     @overload
+    def __init__(self: Frame[PL, Tab], data: pl.DataFrame | sqla.Select) -> None: ...
+
+    @overload
     def __init__(
-        self: Frame[PL, Tab | Tabs], data: pl.DataFrame | sqla.Select
+        self: Frame[PL, Tabs], data: dict[str, pl.DataFrame] | dict[str, sqla.Select]
     ) -> None: ...
 
     def __init__(self: Frame, data: Any = None) -> None:  # noqa: D107
@@ -321,28 +334,45 @@ class Frame(Generic[ExT, DxT]):
 
     @overload
     def get(
-        self: Frame[SQL, Tab | Tabs],
+        self: Frame[SQL, Tab],
     ) -> sqla.Select: ...
+
+    @overload
+    def get(
+        self: Frame[SQL, Tabs],
+    ) -> dict[str, sqla.Select]: ...
 
     @overload
     def get(self: Frame[Any, Col]) -> pl.Series | sqla.ColumnElement: ...
 
     @overload
     def get(
-        self: Frame[Any, Tab | Tabs],
+        self: Frame[Any, Tab],
     ) -> pl.DataFrame | sqla.Select: ...
 
     @overload
     def get(
+        self: Frame[Any, Tabs],
+    ) -> dict[str, pl.DataFrame] | dict[str, sqla.Select]: ...
+
+    @overload
+    def get(
         self: Frame[Any, Any],
-    ) -> pl.Series | pl.DataFrame | sqla.ColumnElement | sqla.Select: ...
+    ) -> (
+        pl.Series
+        | pl.DataFrame
+        | sqla.ColumnElement
+        | sqla.Select
+        | dict[str, pl.DataFrame]
+        | dict[str, sqla.Select]
+    ): ...
 
     def get(self: Frame) -> Any:
         """Get the raw data."""
         return self._data
 
 
-def coalescent_union(
+def frame_coalesce(
     left_frame: Frame[ExT2, DxT2],
     right_frame: Frame[ExT2, DxT2],
     coalesce: Literal["left", "right"] = "left",
@@ -420,13 +450,6 @@ def coalescent_union(
             right.selected_columns.keys()
         )
 
-        left_froms = left.get_final_froms()
-        right_froms = right.get_final_froms()
-        assert len(left_froms) == 1 and len(right_froms) == 1
-        assert left_froms[0] is right_froms[0]
-
-        common_from = left_froms[0]
-
         return cast(
             Frame[ExT2, DxT2],
             Frame(
@@ -447,7 +470,7 @@ def coalescent_union(
                         )
                         for col in all_cols
                     )
-                ).select_from(common_from),
+                ),
             ),
         )
 
@@ -498,55 +521,16 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         """Name of the property."""
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _value(self, data: Mapping[str, Any]) -> ValT:
-        """Transform dict-like data (e.g. dataframe row) to declared value type."""
-        raise NotImplementedError()
-
     def _index(
-        self: Data[
-            Any,
-            Idx[*KeyTt2] | ModIdx[Any, Idx[*KeyTt2]],
-            DxT2,
-            ExT2,
-            Any,
-        ],
-    ) -> (
-        Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
-            Tab,
-            ExT2,
-            R,
-            CtxT,
-            *CtxTt,
-            Ctx[ValT, Idx[*KeyTt2], DxT2],
-        ]
-        | None
-    ):
+        self,
+    ) -> IdxT:
         """Get the index of this data."""
         raise NotImplementedError()
 
-    def _subframes(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Shape[DxT3], ExT2],
-    ) -> tuple[
-        Data[
-            ValT2,
-            Idx[*KeyTt2],
-            DxT3,
-            ExT2,
-            RwxT,
-            CtxT,
-            *CtxTt,
-            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], DxT3],
-        ],
-        ...,
-    ]:
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
     def _mutation(
@@ -669,10 +653,16 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         match frame:
             case sqla.Select():
                 return frame
-            case sqla.FromClause():
-                return frame.select()
             case sqla.ColumnElement():
                 return sqla.select(frame)
+            case dict() if has_type(frame, dict[str, sqla.Select]):
+                return sqla.select(
+                    *(
+                        c.label(f"{prefix}.{c.key}")
+                        for prefix, t in frame.items()
+                        for c in t.selected_columns
+                    )
+                )
             case _:
                 return None
 
@@ -723,32 +713,76 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     # Dataframes:
 
+    @overload
+    def df(
+        self: Data[Any, Any, Col, Any, Any, Base],
+    ) -> pl.Series: ...
+
+    @overload
+    def df(
+        self: Data[Any, Any, Tab, Any, Any, Base],
+    ) -> pl.DataFrame: ...
+
+    @overload
+    def df(
+        self: Data[Any, Any, Tabs, Any, Any, Base],
+    ) -> dict[str, pl.DataFrame]: ...
+
+    @overload
+    def df(
+        self: Data[Any, Any, Shape, Any, Any, Base],
+    ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]: ...
+
     def df(
         self: Data[Any, Any, Any, Any, Any, Base],
-    ) -> pl.DataFrame:
+    ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]:
         """Load dataset as dataframe."""
         frame = self._frame().get()
 
-        if isinstance(frame, pl.DataFrame):
+        if isinstance(frame, pl.Series | pl.DataFrame) or has_type(
+            frame, dict[str, pl.DataFrame]
+        ):
             return frame
-        elif isinstance(frame, pl.Series):
-            return frame.to_frame()
 
         select = self.select()
         assert select is not None
 
-        return pl.read_database(
+        res = pl.read_database(
             select,
             self.root.connection,
         )
 
+        if isinstance(frame, dict):
+            return {
+                k: res.select(
+                    *(
+                        pl.col(c).alias(c.split(".")[-1])
+                        for c in res.columns
+                        if c.startswith(f"{k}.")
+                    )
+                )
+                for k in frame.keys()
+            }
+
+        return res
+
     # Collection interface:
 
     def values(
-        self: Data[Any, Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Shape, PL, Any, Base],
     ) -> Sequence[ValT]:
         """Iterable over this dataset's values."""
-        return [self._value(row) for row in self.df().iter_rows(named=True)]
+        df = self.df()
+
+        match df:
+            case pl.Series():
+                return df.to_list()
+            case pl.DataFrame():
+                constructor = self.common_value_type
+                return [constructor(d) for d in df.to_dicts()]
+            case dict():
+                # TODO: implement
+                raise NotImplementedError()
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
@@ -1022,7 +1056,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                     return alignment[
                         Reduce(
                             func=operator.or_,
-                            frame_func=partial(coalescent_union, coalesce="left"),
+                            frame_func=partial(frame_coalesce, coalesce="left"),
                         )
                     ]
 
@@ -1394,11 +1428,19 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         alignment = self @ other
         reduction = Reduce(
             func=operator.or_,
-            frame_func=partial(coalescent_union, coalesce="left"),
+            frame_func=partial(frame_coalesce, coalesce="left"),
         )
 
         return cast(
-            Data,
+            Data[
+                ValT2 | ValT3,
+                ModIdx,
+                DxT2,
+                ExT2,
+                R,
+                Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
+                CtxT2,
+            ],
             alignment[reduction],
         )
 
@@ -1417,11 +1459,19 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         """Union two databases, right overriding left."""
         alignment = self @ other
         return cast(
-            Data,
+            Data[
+                ValT2 | ValT3,
+                ModIdx,
+                DxT2,
+                ExT2,
+                R,
+                Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
+                CtxT2,
+            ],
             alignment[
                 Reduce(
                     func=operator.xor,
-                    frame_func=partial(coalescent_union, coalesce="right"),
+                    frame_func=partial(frame_coalesce, coalesce="right"),
                 )
             ],
         )
@@ -1445,11 +1495,19 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             join="left",
         )
         return cast(
-            Data,
+            Data[
+                ValT2 | ValT3,
+                ModIdx,
+                DxT2,
+                ExT2,
+                R,
+                Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
+                CtxT2,
+            ],
             alignment[
                 Reduce(
                     func=operator.and_,
-                    frame_func=partial(coalescent_union, coalesce="right"),
+                    frame_func=partial(frame_coalesce, coalesce="right"),
                 )
             ],
         )
@@ -1549,59 +1607,16 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         # TODO: Implement this method for the Align class.
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        # TODO: Implement this method for the Align class.
-        raise NotImplementedError()
-
-    def _value(self, data: Mapping[str, Any]) -> TupT:
-        """Transform dict-like data (e.g. dataframe row) to declared value type."""
-        # TODO: Implement this method for the Align class.
-        raise NotImplementedError()
-
     def _index(
-        self: Data[
-            Any,
-            Idx[*KeyTt2] | ModIdx[Any, Idx[*KeyTt2]],
-            DxT2,
-            ExT2,
-            Any,
-        ],
-    ) -> (
-        Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
-            Tab,
-            ExT2,
-            R,
-            CtxT,
-            *CtxTt,
-            Ctx[TupT, Idx[*KeyTt2], DxT2],
-        ]
-        | None
-    ):
+        self,
+    ) -> IdxT:
         """Get the index of this data."""
-        # TODO: Implement this method for the Align class.
         raise NotImplementedError()
 
-    def _subframes(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Shape[DxT3], ExT2, Any],
-    ) -> tuple[
-        Data[
-            ValT2,
-            Idx[*KeyTt2],
-            DxT3,
-            ExT2,
-            RwxT,
-            CtxT,
-            *CtxTt,
-            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], DxT3],
-        ],
-        ...,
-    ]:
-        # TODO: Implement this method for the Align class.
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -1609,7 +1624,7 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 class Map(
     Data[
         ValT,
-        ModIdx,
+        KeepIdx,
         DxT,
         ExT,
         R,
@@ -1632,40 +1647,16 @@ class Map(
         # TODO: Implement this method for the Map class.
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        # TODO: Implement this method for the Map class.
-        raise NotImplementedError()
-
-    def _value(self, data: Mapping[str, Any]) -> ValT:
-        """Transform dict-like data (e.g. dataframe row) to declared value type."""
-        # TODO: Implement this method for the Map class.
-        raise NotImplementedError()
-
     def _index(
-        self: Data[
-            Any,
-            Idx[*KeyTt2] | ModIdx[Any, Idx[*KeyTt2]],
-            DxT2,
-            ExT2,
-            Any,
-        ],
-    ) -> (
-        Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
-            Tab,
-            ExT2,
-            R,
-            Interface[ArgT, Any, ArgDxT],
-            Ctx[ValT, Idx[*KeyTt2], DxT2],
-        ]
-        | None
-    ):
+        self,
+    ) -> KeepIdx:
         """Get the index of this data."""
-        # TODO: Implement this method for the Map class.
+        raise NotImplementedError()
+
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -1673,7 +1664,7 @@ class Map(
 class Reduce(
     Data[
         ValT,
-        ModIdx,
+        KeepIdx,
         DxT,
         ExT,
         R,
@@ -1702,40 +1693,16 @@ class Reduce(
         # TODO: Implement this method for the Reduce class.
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        # TODO: Implement this method for the Reduce class.
-        raise NotImplementedError()
-
-    def _value(self, data: Mapping[str, Any]) -> ValT:
-        """Transform dict-like data (e.g. dataframe row) to declared value type."""
-        # TODO: Implement this method for the Reduce class.
-        raise NotImplementedError()
-
     def _index(
-        self: Data[
-            Any,
-            Idx[*KeyTt2] | ModIdx[Any, Idx[*KeyTt2]],
-            DxT2,
-            ExT2,
-            Any,
-        ],
-    ) -> (
-        Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
-            Tab,
-            ExT2,
-            R,
-            Interface[tuple[ArgT, ...], Any, ArgDxT],
-            Ctx[ValT, Idx[*KeyTt2], DxT2],
-        ]
-        | None
-    ):
+        self,
+    ) -> KeepIdx:
         """Get the index of this data."""
-        # TODO: Implement this method for the Reduce class.
+        raise NotImplementedError()
+
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -1768,40 +1735,16 @@ class Agg(
         # TODO: Implement this method for the Agg class.
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        # TODO: Implement this method for the Agg class.
-        raise NotImplementedError()
-
-    def _value(self, data: Mapping[str, Any]) -> ValT:
-        """Transform dict-like data (e.g. dataframe row) to declared value type."""
-        # TODO: Implement this method for the Agg class.
-        raise NotImplementedError()
-
     def _index(
-        self: Data[
-            Any,
-            Idx[*KeyTt2] | ModIdx[Any, Idx[*KeyTt2]],
-            DxT2,
-            ExT2,
-            Any,
-        ],
-    ) -> (
-        Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
-            Tab,
-            ExT2,
-            R,
-            Interface[ArgT, Any, ArgDxT],
-            Ctx[ValT, Idx[*KeyTt2], DxT2],
-        ]
-        | None
-    ):
+        self,
+    ) -> ModIdx[SubIdxT]:
         """Get the index of this data."""
-        # TODO: Implement this method for the Agg class.
+        raise NotImplementedError()
+
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -1812,7 +1755,7 @@ RuTi = TypeVar("RuTi", bound=R | U, default=R)
 class Filter(
     Data[
         KeepVal,
-        ModIdx,
+        KeepIdx,
         DxT,
         ExT,
         RuTi,
@@ -1839,27 +1782,14 @@ class Filter(
         # TODO: Implement this method for the Filter class.
         raise NotImplementedError()
 
-    def _frame(
-        self: Data[Any, Any, DxT2, ExT2, Any],
-    ) -> Frame[ExT2, DxT2]:
-        """Get SQL-side reference to this property."""
-        # TODO: Implement this method for the Filter class.
+    def _index(
+        self,
+    ) -> KeepIdx:
+        """Get the index of this data."""
         raise NotImplementedError()
 
-    def _subframes(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Shape[DxT3], ExT2, Any],
-    ) -> tuple[
-        Data[
-            ValT2,
-            Idx[*KeyTt2],
-            DxT3,
-            ExT2,
-            RwxT,
-            CtxT,
-            *CtxTt,
-            Ctx[tuple[ValT2, ...], Idx[*KeyTt2], DxT3],
-        ],
-        ...,
-    ]:
-        # TODO: Implement this method for the Filter class.
+    def _frame(
+        self,
+    ) -> Frame[ExT, DxT]:
+        """Get SQL-side reference to this property."""
         raise NotImplementedError()
