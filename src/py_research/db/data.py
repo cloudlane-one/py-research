@@ -373,69 +373,82 @@ class Frame(Generic[ExT, DxT]):
 
 
 def frame_coalesce(
-    left_frame: Frame[ExT2, DxT2],
-    right_frame: Frame[ExT2, DxT2],
+    frame: Frame[ExT2, Shape[DxT2]],
     coalesce: Literal["left", "right"] = "left",
 ) -> Frame[ExT2, DxT2]:
     """Union two data instances and coalesce their columns."""
-    left, right = left_frame.get(), right_frame.get()
+    data = frame.get()
 
-    if isinstance(left, pl.Series) and isinstance(right, pl.Series):
-        if isinstance(left.dtype, pl.Boolean) and isinstance(right.dtype, pl.Boolean):
-            return cast(Frame[ExT2, DxT2], Frame(left | right))
-
-        return cast(
-            Frame[ExT2, DxT2],
-            Frame(
-                pl.DataFrame([left.rename("left"), right.rename("right")]).select(
-                    {
-                        left.name: (
-                            pl.coalesce("left", "right")
-                            if coalesce == "left"
-                            else pl.coalesce("right", "left")
-                        )
-                    }
-                )[left.name]
-            ),
-        )
-
-    if isinstance(left, sqla.ColumnElement) and isinstance(right, sqla.ColumnElement):
-        if isinstance(left.type, sqla.Boolean) and isinstance(right.type, sqla.Boolean):
-            return cast(Frame[ExT2, DxT2], Frame(left | right))
+    if isinstance(data, pl.DataFrame):
+        if all(isinstance(d, pl.Boolean) for d in data.dtypes):
+            return cast(
+                Frame[ExT2, DxT2], Frame(reduce(operator.or_, data.iter_columns()))
+            )
 
         return cast(
             Frame[ExT2, DxT2],
             Frame(
-                sqla.func.coalesce(left, right)
-                if coalesce == "left"
-                else sqla.func.coalesce(right, left)
+                data.select(
+                    coalesced=(
+                        pl.coalesce(*data.columns)
+                        if coalesce == "left"
+                        else pl.coalesce(*reversed(data.columns))
+                    )
+                )["coalesced"]
             ),
         )
 
-    if isinstance(left, pl.DataFrame) and isinstance(right, pl.DataFrame):
-        all_cols = set(left.columns) | set(right.columns)
+    if isinstance(data, sqla.Select):
+        if all(
+            isinstance(c.type, sqla.types.Boolean)
+            for c in data.selected_columns.values()
+        ):
+            return cast(
+                Frame[ExT2, DxT2],
+                Frame(reduce(operator.or_, data.selected_columns.values())),
+            )
+
+        return cast(
+            Frame[ExT2, DxT2],
+            Frame(
+                (
+                    sqla.func.coalesce(*data.selected_columns.values())
+                    if coalesce == "left"
+                    else sqla.func.coalesce(*reversed(data.selected_columns.values()))
+                ).label("coalesced")
+            ),
+        )
+
+    if has_type(data, dict[str, pl.DataFrame]):
+        all_cols = reduce(set.union, (set(d.columns) for d in data.values()))
 
         return cast(
             Frame[ExT2, DxT2],
             Frame(
                 pl.concat(
                     [
-                        left.select(pl.all().name.prefix("left")),
-                        right.select(pl.all().name.prefix("right")),
+                        df.select(pl.all().name.prefix(prefix))
+                        for prefix, df in data.items()
                     ],
                     how="horizontal",
                 ).select(
-                    {
+                    *{
                         col: (
-                            f"left.{col}"
-                            if col not in right.columns
-                            else (
-                                f"right.{col}"
-                                if col not in left.columns
-                                else (
-                                    pl.coalesce(f"left.{col}", f"right.{col}")
-                                    if coalesce == "left"
-                                    else pl.coalesce(f"right.{col}", f"left.{col}")
+                            pl.coalesce(
+                                *(
+                                    f"{prefix}.{col}"
+                                    for prefix in data.keys()
+                                    if col in data[prefix].columns
+                                )
+                            )
+                            if coalesce == "left"
+                            else pl.coalesce(
+                                *reversed(
+                                    [
+                                        f"{prefix}.{col}"
+                                        for prefix in data.keys()
+                                        if col in data[prefix].columns
+                                    ]
                                 )
                             )
                         )
@@ -445,9 +458,13 @@ def frame_coalesce(
             ),
         )
 
-    if isinstance(left, sqla.Select) and isinstance(right, sqla.Select):
-        all_cols = set(left.selected_columns.keys()) | set(
-            right.selected_columns.keys()
+    if has_type(data, dict[str, sqla.Select]):
+        all_cols = reduce(
+            set.union,
+            (
+                set(c.key for c in t.selected_columns.values() if c.key is not None)
+                for t in data.values()
+            ),
         )
 
         return cast(
@@ -456,28 +473,23 @@ def frame_coalesce(
                 sqla.select(
                     *(
                         (
-                            left.c[col]
-                            if col not in right.selected_columns.keys()
-                            else (
-                                right.c[col]
-                                if col not in left.selected_columns.keys()
-                                else (
-                                    sqla.func.coalesce(left.c[col], right.c[col])
-                                    if coalesce == "left"
-                                    else sqla.func.coalesce(right.c[col], left.c[col])
+                            sqla.func.coalesce(
+                                *(t.c[col] for t in data.values() if col in t.c)
+                            )
+                            if coalesce == "left"
+                            else sqla.func.coalesce(
+                                *reversed(
+                                    [t.c[col] for t in data.values() if col in t.c]
                                 )
                             )
-                        )
+                        ).label(col)
                         for col in all_cols
                     )
                 ),
             ),
         )
 
-    raise ValueError(
-        "Incompatible data types for coalescent union: "
-        f"{type(left_frame)}, {type(right_frame)}"
-    )
+    raise ValueError("Incompatible data type for coalescent union: " f"{type(data)}")
 
 
 def frame_isin(
@@ -1054,9 +1066,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                         Data.__matmul__, (self.registry(t) for t in union_types)
                     )
                     return alignment[
-                        Reduce(
+                        Transform(
                             func=operator.or_,
                             frame_func=partial(frame_coalesce, coalesce="left"),
+                            contract="value",
                         )
                     ]
 
@@ -1257,7 +1270,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     ]:
         """Create a scalar comparator for the given operation."""
         if right is not Not.defined:
-            mapping = Map(
+            mapping = Transform(
                 func=lambda x: cast(Callable[[Any, Any], Any], op)(x, right),
                 frame_func=lambda frame: cast(Callable[[Any, Any], Any], op)(
                     frame.get(), right
@@ -1270,7 +1283,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
         if len(inspect.getfullargspec(op).args) == 1:
             op = cast(Callable[[Any], Any], op)
-            mapping = Map(
+            mapping = Transform(
                 func=op,
                 frame_func=lambda frame: op(frame.get()),
             )
@@ -1280,9 +1293,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             )
 
         op = cast(Callable[[Any, Any], Any], op)
-        reduction = Reduce(
+        reduction = Transform(
             func=op,
             frame_func=lambda left, right: op(left.get(), right.get()),
+            contract="value",
         )
         assert issubclass(self.common_value_type, tuple)
         return cast(
@@ -1384,12 +1398,12 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     ]:
         """Test values of this dataset for membership in the given iterable."""
         if isinstance(other, slice):
-            mapping = Map[bool](
+            mapping = Transform[bool](
                 func=lambda x: other.start <= x <= other.stop,
                 frame_func=partial(frame_isin, values=other),
             )
         else:
-            mapping = Map[bool](
+            mapping = Transform[bool](
                 func=lambda x: x in other,
                 frame_func=partial(frame_isin, values=other),
             )
@@ -1426,9 +1440,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     ]:
         """Union two databases, right overriding left."""
         alignment = self @ other
-        reduction = Reduce(
+        reduction = Transform(
             func=operator.or_,
             frame_func=partial(frame_coalesce, coalesce="left"),
+            contract="value",
         )
 
         return cast(
@@ -1469,9 +1484,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                 CtxT2,
             ],
             alignment[
-                Reduce(
+                Transform(
                     func=operator.xor,
                     frame_func=partial(frame_coalesce, coalesce="right"),
+                    contract="value",
                 )
             ],
         )
@@ -1505,9 +1521,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                 CtxT2,
             ],
             alignment[
-                Reduce(
+                Transform(
                     func=operator.and_,
                     frame_func=partial(frame_coalesce, coalesce="right"),
+                    contract="value",
                 )
             ],
         )
@@ -1620,27 +1637,55 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
 
-@dataclass(kw_only=True)
-class Map(
+class Transform(
     Data[
         ValT,
-        KeepIdx,
+        ModIdx[SubIdxT, AddIdxT],
         DxT,
         ExT,
         R,
         Interface[ArgT, Any, ArgDxT],
     ],
-    Generic[ArgT, ArgDxT, ValT, DxT, ExT],
+    Generic[ArgT, ArgDxT, ValT, SubIdxT, AddIdxT, DxT, ExT],
 ):
     """Apply a mapping function to a dataset."""
 
-    context: (
-        Interface[ArgT, Any, ArgDxT]
-        | Data[Any, Any, Any, Any, Any, Interface[ArgT, Any, ArgDxT]]
-    ) = field(default_factory=Interface)
+    @overload
+    def __init__(
+        self: Transform[ValT2, DxT2, ValT3, Idx[()], Idx[()], DxT3, ExT2],
+        func: Callable[[ValT2], ValT3],
+        frame_func: Callable[[Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+    ): ...
 
-    func: Callable[[ArgT], ValT]
-    frame_func: Callable[[Frame[ExT, ArgDxT]], Frame[ExT, DxT]] | None = None
+    @overload
+    def __init__(
+        self: Transform[ValT2, DxT2, ValT3, Idx[*KeyTt2], Idx[()], DxT3, ExT2],
+        func: Callable[[Iterable[ValT2]], ValT3],
+        frame_func: Callable[[Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+        contract: SingleTypeDef[Idx[*KeyTt2]],
+    ): ...
+
+    @overload
+    def __init__(
+        self: Transform[
+            Iterable[ValT2], Shape[DxT3], ValT3, Idx[()], Idx[()], DxT3, ExT2
+        ],
+        func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
+        frame_func: Callable[[Frame[ExT2, Shape[DxT3]]], Frame[ExT2, DxT3]],
+        contract: Literal["value"],
+    ): ...
+
+    @overload
+    def __init__(
+        self: Transform[Iterable[ValT2], DxT2, ValT3, Idx[()], Idx[()], DxT3, ExT2],
+        func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
+        frame_func: Callable[[Frame[ExT2, DxT2], Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+        contract: Literal["value"],
+    ): ...
+
+    def __init__(self, *args, **kwargs):  # noqa: D107
+        self.context = Interface()
+        # TODO: Implement the constructor for the Transform class.
 
     def _name(self) -> str:
         """Name of the property."""
@@ -1649,95 +1694,7 @@ class Map(
 
     def _index(
         self,
-    ) -> KeepIdx:
-        """Get the index of this data."""
-        raise NotImplementedError()
-
-    def _frame(
-        self,
-    ) -> Frame[ExT, DxT]:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-
-@dataclass(kw_only=True)
-class Reduce(
-    Data[
-        ValT,
-        KeepIdx,
-        DxT,
-        ExT,
-        R,
-        Interface[tuple[ArgT, ...], Any, ArgDxT],
-    ],
-    Generic[ArgT, ArgDxT, ValT, DxT, ExT],
-):
-    """Apply a mapping function to a dataset."""
-
-    context: (
-        Interface[tuple[ArgT, ...], Any, ArgDxT]
-        | Data[Any, Any, Any, Any, Any, Interface[tuple[ArgT, ...], Any, ArgDxT]]
-    ) = field(default_factory=Interface)
-
-    func: Callable[[ArgT, ArgT], ValT]
-    frame_func: (
-        Callable[
-            [Frame[ExT, ArgDxT], Frame[ExT, ArgDxT]],
-            Frame[ExT, DxT],
-        ]
-        | None
-    ) = None
-
-    def _name(self) -> str:
-        """Name of the property."""
-        # TODO: Implement this method for the Reduce class.
-        raise NotImplementedError()
-
-    def _index(
-        self,
-    ) -> KeepIdx:
-        """Get the index of this data."""
-        raise NotImplementedError()
-
-    def _frame(
-        self,
-    ) -> Frame[ExT, DxT]:
-        """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-
-@dataclass(kw_only=True)
-class Agg(
-    Data[
-        ValT,
-        ModIdx[SubIdxT],
-        DxT,
-        ExT,
-        R,
-        Interface[ArgT, Any, ArgDxT],
-    ],
-    Generic[ArgT, SubIdxT, ArgDxT, ValT, DxT, ExT],
-):
-    """Apply a mapping function to a dataset."""
-
-    context: (
-        Interface[ArgT, Any, ArgDxT]
-        | Data[Any, Any, Any, Any, Any, Interface[ArgT, Any, ArgDxT]]
-    ) = field(default_factory=Interface)
-
-    func: Callable[[Iterable[ArgT]], ValT]
-    frame_func: Callable[[Frame[ExT, ArgDxT]], Frame[ExT, DxT]] | None = None
-
-    agg_levels: type[SubIdxT] | None = None
-
-    def _name(self) -> str:
-        """Name of the property."""
-        # TODO: Implement this method for the Agg class.
-        raise NotImplementedError()
-
-    def _index(
-        self,
-    ) -> ModIdx[SubIdxT]:
+    ) -> ModIdx[SubIdxT, AddIdxT]:
         """Get the index of this data."""
         raise NotImplementedError()
 
