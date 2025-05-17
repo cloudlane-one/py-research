@@ -13,6 +13,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    Self,
     cast,
     dataclass_transform,
     get_origin,
@@ -20,6 +21,8 @@ from typing import (
 )
 
 import polars as pl
+import sqlalchemy as sqla
+from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
 from py_research.data import Params, copy_and_override
@@ -34,7 +37,28 @@ from py_research.reflect.types import (
 )
 from py_research.types import DataclassInstance, Not
 
-from .data import Ctx, Data, DxT, ExT, FullIdxT, Idx, RwxT, U, ValT, ValT2
+from .data import (
+    PL,
+    AutoIndexable,
+    Base,
+    Ctx,
+    CtxTt,
+    Data,
+    DxT,
+    Expand,
+    ExT,
+    FullIdxT,
+    Idx,
+    Interface,
+    R,
+    Registry,
+    RwxT,
+    Tab,
+    U,
+    ValT,
+    ValT2,
+)
+from .utils import get_pl_schema
 
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
@@ -43,7 +67,7 @@ IdxT = TypeVar("IdxT", bound=Idx, default=Any)
 
 
 @dataclass
-class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT]):
+class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
     """Property definition for a model."""
 
     init_after: ClassVar[set[type[Prop]]] = set()
@@ -72,7 +96,10 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT]):
 
         return matching[0]()
 
-    data: Data[ValT, IdxT, DxT, ExT, RwxT, Ctx[OwnT]] | None = None
+    data: (
+        Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt]
+        | None
+    ) = None
     getter: Callable[[OwnT], ValT | Literal[Not.resolved]] | None = None
     setter: Callable[[OwnT, ValT], None] | None = None
 
@@ -128,15 +155,24 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT]):
     @overload
     def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Prop[ValT, IdxT, RwxT, ExT, DxT, OwnT2]: ...
+    ) -> Data[
+        ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt
+    ]: ...
 
     @overload
-    def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> ValT: ...
+    def __get__(
+        self: Prop[Any, Idx[()]], instance: OwnT2, owner: type[OwnT2]
+    ) -> ValT: ...
 
     @overload
-    def __get__(self, instance: Any, owner: type | None) -> Any: ...
+    def __get__(
+        self: Prop, instance: OwnT2, owner: type[OwnT2]
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Base, Ctx[OwnT, Idx[()], Tab], *CtxTt]: ...
 
-    def __get__(self, instance: Any, owner: type | None) -> Any:  # noqa: D105
+    @overload
+    def __get__(self: Prop, instance: Any, owner: type | None) -> Any: ...
+
+    def __get__(self: Prop, instance: Any, owner: type | None) -> Any:  # noqa: D105
         if owner is None or not issubclass(owner, Model):
             return self
 
@@ -144,8 +180,13 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT]):
             assert self.data is not None
             return self.data
 
+        assert isinstance(instance, Model)
+
+        if self.data is not None and self.data.index() is not None:
+            return cast(OwnT, instance)._data()[self.data]
+
         assert self.getter is not None
-        res = self.getter(instance)
+        res = self.getter(cast(OwnT, instance))
         if res is not Not.resolved:
             return res
 
@@ -286,7 +327,33 @@ class ModelMeta(type):
         }
 
 
-ModT = TypeVar("ModT", bound="Model", covariant=True)
+ModT = TypeVar("ModT", bound="Model[Any]", covariant=True)
+
+
+@dataclass(kw_only=True)
+class Memory(Base["Model", R]):
+    """In-memory base for models."""
+
+    @property
+    def connection(self) -> sqla.engine.Connection:
+        """SQLAlchemy connection to the database."""
+        ...
+
+    def registry[T: AutoIndexable](
+        self: Memory, value_type: type[T]
+    ) -> Registry[T, R, Base[T, R]]:
+        """Get the registry for a type in this base."""
+        ...
+
+
+@dataclass(kw_only=True)
+class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
+    """Local, in-memory singleton model instance."""
+
+    context: Memory | Data[Any, Any, Any, Any, Any, Memory] = Memory()
+    model: ModT
+
+    # TODO: Implement singleton class
 
 
 @dataclass_transform(
@@ -301,12 +368,45 @@ class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
     _derivate: ClassVar[bool] = False
     _root_class: ClassVar[bool] = True
 
+    __pydantic_model: ClassVar[type[BaseModel]] | None = None
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Initialize a new record subclass."""
         super().__init_subclass__(**kwargs)
         cls._root_class = False
         if "_template" not in cls.__dict__:
             cls._template = False
+
+    @classmethod
+    def _pydantic_model(cls) -> type[BaseModel]:
+        """Return the pydantic model for this record."""
+        if cls.__pydantic_model is None:
+            cls.__pydantic_model = create_model(
+                cls.__name__,
+                **cast(
+                    dict[str, Any],
+                    {
+                        p._name(): (
+                            p.typeref.hint if p.typeref is not None else Any,
+                            p.default,
+                        )
+                        for p in cls._props.values()
+                    },
+                ),
+            )
+
+        return cls.__pydantic_model
+
+    @classmethod
+    def _pl_schema(cls) -> dict[str, pl.DataType | type | None]:
+        """Return the schema of the dataset."""
+        return get_pl_schema(
+            {
+                name: (prop.typeref or TypeRef(object))
+                for name, prop in cls._props.items()
+                if prop.getter is not None
+            }
+        )
 
     @classmethod  # pyright: ignore[reportArgumentType]
     def _from_existing(
@@ -322,9 +422,28 @@ class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
             **{k: v if v is not Not.defined else MISSING for k, v in kwargs.items()},
         )  # pyright: ignore[reportCallIssue]
 
+    @classmethod
+    def _is_complete_dict(
+        cls,
+        data: Mapping[Prop, Any] | Mapping[str, Any],
+    ) -> bool:
+        """Check if dict data contains all required info for record type."""
+        in_data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
+        return all(
+            (
+                a.name in in_data
+                or a.default is not Not.defined
+                or a.default_factory is not None
+            )
+            for a in cls._props.values()
+            if a.init is not False and a.name is not None
+        )
+
     def __init__(self, **kwargs: Any) -> None:
         """Initialize a new record instance."""
         super().__init__()
+
+        kwargs = self._pydantic_model().model_validate(kwargs).model_dump()
 
         cls = type(self)
         props = cls._props
@@ -390,132 +509,10 @@ class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
 
         return cast(dict, vals)
 
-    @classmethod
-    def _is_complete_dict(
-        cls,
-        data: Mapping[Prop, Any] | Mapping[str, Any],
-    ) -> bool:
-        """Check if dict data contains all required info for record type."""
-        in_data = {(p if isinstance(p, str) else p.name): v for p, v in data.items()}
-        return all(
-            (
-                a.name in in_data
-                or a.default is not Not.defined
-                or a.default_factory is not None
-            )
-            for a in cls._props.values()
-            if a.init is not False and a.name is not None
-        )
-
     def __repr__(self) -> str:
         """Return a string representation of the record."""
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
-
-AttrT = TypeVar("AttrT")
-
-
-@dataclass(kw_only=True, eq=False)
-class Attr(Prop[AttrT, CtxT, CrudT], Generic[AttrT, CrudT, CtxT]):
-    """Single-value attribute or column."""
-
-    @overload
-    def __get__(self, instance: Model, owner: type[Model]) -> AttrT: ...
-
-    @overload
-    def __get__(
-        self, instance: None, owner: type[ModT]
-    ) -> Attr[AttrT, CrudT, ModT]: ...
-
-    @overload
-    def __get__(self, instance: Any, owner: type | None) -> Any: ...
-
-    def __get__(  # pyright: ignore[reportIncompatibleMethodOverride] (pyright bug?)
-        self, instance: Any, owner: type | None
-    ) -> Any:
-        """Get the value of this attribute."""
-        super_get = Prop.__get__(self, instance, owner)
-        if super_get is not Ungot():
-            return super_get
-
-        assert instance is not None
-
-        if self.name not in instance.__dict__:
-            if self.default is not Undef:
-                instance.__dict__[self.name] = self.default
-            else:
-                assert self.default_factory is not None
-                instance.__dict__[self.name] = self.default_factory()
-
-        return instance.__dict__[self.name]
-
-    def __set__(self: Attr[Any, U, Any], instance: Model, value: AttrT) -> None:
-        """Set the value of this attribute."""
-        super_set = Prop.__set__(self, instance, value)
-        if super_set is not Unset():
-            return
-
-        instance.__dict__[self.name] = value
-
-    @property
-    def _default(self) -> AttrT | type[Undef]:
-        """Default value of the property."""
-        return self._default
-
-    @property
-    def _default_factory(self) -> Callable[[], AttrT] | None:
-        """Default value factory of the property."""
-        return self.default_factory
-
-
-def get_pl_schema(
-    col_map: Mapping[str, Column],
-) -> dict[str, pl.DataType | type | None]:
-    """Return the schema of the dataset."""
-    exact_matches = {
-        name: (pl_type_map.get(col.value_typeform), col)
-        for name, col in col_map.items()
-    }
-    matches = {
-        name: (
-            (match, col.value_typeform)
-            if match is not None
-            else (pl_type_map.get(col.common_value_type), col.value_typeform)
-        )
-        for name, (match, col) in exact_matches.items()
-    }
-
-    return {
-        name: (
-            match if isinstance(match, pl.DataType | type | None) else match(match_type)
-        )
-        for name, (match, match_type) in matches.items()
-    }
-
-
-def records_to_df(
-    records: Iterable[dict[str, Any] | Record],
-) -> pl.DataFrame:
-    """Convert values to a DataFrame."""
-    model_types: set[type[Record]] = {
-        type(val) for val in records if isinstance(val, Record)
-    }
-    df_data = [
-        (
-            val._to_dict(keys="names" if len(model_types) == 1 else "fqns")
-            if isinstance(val, Record)
-            else val
-        )
-        for val in records
-    ]
-
-    return pl.DataFrame(
-        df_data,
-        schema=get_pl_schema(
-            {
-                col.name if len(model_types) == 1 else col.fqn: col
-                for mod in model_types
-                for col in mod._cols()
-            }
-        ),
-    )
+    def _data(self) -> Data[Self, Idx[Any, Any], Tab, Any, R, Base]:
+        """Return the singleton class for this record."""
+        return Singleton(model=self)

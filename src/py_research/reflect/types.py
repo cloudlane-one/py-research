@@ -522,3 +522,15 @@ class TypeRef[T]:
         )
         assert not isinstance(form, UnionType)
         return form
+
+
+def get_common_type[T](
+    typedef: SingleTypeDef[T] | UnionType,
+) -> type[T]:
+    """Get the common type of a type definition."""
+    return get_lowest_common_base(
+        typedef_to_typeset(
+            typedef,
+            remove_null=True,
+        )
+    )

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Hashable, Iterable
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, cast, overload
 
 import polars as pl
 import sqlalchemy as sqla
@@ -16,7 +16,189 @@ from py_research.caching import cached_prop
 from py_research.hashing import gen_int_hash
 from py_research.types import UUID4, Not
 
-from .data import RwxT, U
+from .data import (
+    PL,
+    Base,
+    Col,
+    Ctx,
+    Data,
+    Expand,
+    Frame,
+    FullIdxT,
+    Idx,
+    Interface,
+    ModIdx,
+    RuTi,
+    RwxT,
+    Tab,
+    U,
+    ValT,
+    ValT2,
+)
+from .models import Model, OwnT, Prop
+
+
+@dataclass(kw_only=True, eq=False)
+class Attr(
+    Prop[ValT, Idx[()], RuTi, PL, Col, OwnT],
+    Data[ValT, Expand[Idx[()]], Col, PL, RwxT, Interface[OwnT, Any, Tab]],
+):
+    """Single-value attribute or column."""
+
+    def __post_init__(self) -> None:  # noqa: D105
+        self.context = Interface()
+        self.data = self
+        self.getter = self._attr_getter
+        self.setter = self._attr_setter
+
+    def _attr_getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
+        """Get the value of this attribute on an instance."""
+        if self.name not in instance.__dict__:
+            return Not.resolved
+
+        return instance.__dict__[self.name]
+
+    def _attr_setter(self: Attr[ValT2], instance: OwnT, value: ValT2) -> None:
+        """Set the value of this attribute on an instance."""
+        instance.__dict__[self.name] = value
+
+    def _index(
+        self,
+    ) -> Expand[Idx[()]]:
+        """Get the index of this data."""
+        return ModIdx(reduction=Idx[()], expansion=Idx(tuple()))
+
+    def _frame(
+        self: Data[Any, Any, Col, Any, Any, Base, Ctx[Any, Any, Tab]],
+    ) -> Frame[PL, Col]:
+        """Get SQL-side reference to this property."""
+        parent = self.parent()
+        assert parent is not None
+        parent_df = parent.load()
+
+        return Frame(parent_df[self._name()])
+
+
+class Record(Model[FullIdxT]):
+    """Schema for a table in a database."""
+
+    _root_class = True
+
+    _table_name: ClassVar[str] | None = None
+    _type_map: ClassVar[dict[type, sqla.types.TypeEngine]] = {
+        str: sqla.types.String().with_variant(
+            sqla.types.String(50), "oracle"
+        ),  # Avoid oracle error when VARCHAR has no size parameter
+        UUID4: sqla.types.CHAR(36),
+    }
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Initialize a new record subclass."""
+        super().__init_subclass__(**kwargs)
+
+        for superclass in cls._model_superclasses:
+            if superclass in cls.__bases__ and issubclass(superclass, Record):
+                super_pk = superclass._pk  # type: ignore
+                col_map = {
+                    Column(
+                        _name=pk_col.name,
+                        _type=Column[pk_col.common_target_type],
+                        _owner=cls,
+                    ): pk_col
+                    for pk_col in super_pk.columns
+                }
+                for col in col_map.keys():
+                    setattr(cls, col.name, col)
+
+                pk = Key[super_pk.typeargs[KeyT], cls](columns=tuple(col_map.keys()))
+                setattr(cls, pk.name, pk)
+
+                fk = ForeignKey[superclass, super_pk.typeargs[KeyT], cls](
+                    column_map=col_map
+                )
+                setattr(cls, fk.name, fk)
+
+    @classmethod
+    def _default_table_name(cls) -> str:
+        """Return the name of the table for this schema."""
+        name = cls._table_name or cls._fqn
+        fqn_parts = name.split(".")
+
+        name = fqn_parts[-1]
+        for part in reversed(fqn_parts[:-1]):
+            name = part + "_" + name
+            if len(name) > 40:
+                break
+
+        return name
+
+    @classmethod
+    def _cols(cls) -> set[Column]:
+        """Columns of this record type's table."""
+        return {
+            prop for prop in cls._get_class_props().values() if isinstance(prop, Column)
+        }
+
+    @classmethod
+    def _keys(cls) -> set[Key]:
+        """Columns of this record type's table."""
+        return {
+            prop for prop in cls._get_class_props().values() if isinstance(prop, Key)
+        }
+
+    @classmethod
+    def _fks(cls) -> set[ForeignKey]:
+        """Columns of this record type's table."""
+        return {
+            prop
+            for prop in cls._get_class_props().values()
+            if isinstance(prop, ForeignKey)
+        }
+
+    _published: bool = False
+    _base: Attr[Base[Any, DynBackendID]] = Attr(default_factory=Base)
+
+    _pk: Key[KeyT, Self]
+
+    @cached_prop
+    def _whereclause(self) -> sqla.ColumnElement[bool]:
+        cols = {
+            col.name: sql_col
+            for col, sql_col in self._base._map_cols(type(self)).items()
+        }
+        pk_map = type(self)._pk.gen_value_map(self._pk)
+
+        return sqla.and_(
+            *(cols[col] == val for col, val in pk_map.items()),
+        )
+
+    def _load_dict(self) -> None:
+        if not self._published or self._pk in self._base._get_valid_cache_set(
+            type(self)
+        ):
+            return
+
+        query = self._table.sql.select().where(self._whereclause)
+
+        with self._base.engine.connect() as conn:
+            result = conn.execute(query)
+            row = result.fetchone()
+
+        if row is not None:
+            self.__dict__.update(row._asdict())
+
+    def _save_dict(self) -> None:
+        df = records_to_df([self])
+        self._table.mutate(self._base.table({type(self)}, df))
+        self._base._get_valid_cache_set(type(self)).remove(self._pk)
+
+    def __hash__(self) -> int:
+        """Identify the record by database and id."""
+        return gen_int_hash((self._base if self._published else None, self._pk))
+
+    def __eq__(self, value: Hashable) -> bool:
+        """Check if the record is equal to another record."""
+        return hash(self) == hash(value)
 
 
 @dataclass
@@ -508,139 +690,3 @@ class RecordTable:
             if instance is None
             else instance._base.table(owner)
         )
-
-
-class Record(Model, Generic[KeyT]):
-    """Schema for a table in a database."""
-
-    _root_class = True
-
-    _table_name: ClassVar[str] | None = None
-    _type_map: ClassVar[dict[type, sqla.types.TypeEngine]] = {
-        str: sqla.types.String().with_variant(
-            sqla.types.String(50), "oracle"
-        ),  # Avoid oracle error when VARCHAR has no size parameter
-        UUID4: sqla.types.CHAR(36),
-    }
-
-    _table = RecordTable()
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Initialize a new record subclass."""
-        super().__init_subclass__(**kwargs)
-
-        for superclass in cls._model_superclasses:
-            if superclass in cls.__bases__ and issubclass(superclass, Record):
-                super_pk = superclass._pk  # type: ignore
-                col_map = {
-                    Column(
-                        _name=pk_col.name,
-                        _type=Column[pk_col.common_target_type],
-                        _owner=cls,
-                    ): pk_col
-                    for pk_col in super_pk.columns
-                }
-                for col in col_map.keys():
-                    setattr(cls, col.name, col)
-
-                pk = Key[super_pk.typeargs[KeyT], cls](columns=tuple(col_map.keys()))
-                setattr(cls, pk.name, pk)
-
-                fk = ForeignKey[superclass, super_pk.typeargs[KeyT], cls](
-                    column_map=col_map
-                )
-                setattr(cls, fk.name, fk)
-
-    @classmethod
-    def _default_table_name(cls) -> str:
-        """Return the name of the table for this schema."""
-        name = cls._table_name or cls._fqn
-        fqn_parts = name.split(".")
-
-        name = fqn_parts[-1]
-        for part in reversed(fqn_parts[:-1]):
-            name = part + "_" + name
-            if len(name) > 40:
-                break
-
-        return name
-
-    @classmethod
-    def _cols(cls) -> set[Column]:
-        """Columns of this record type's table."""
-        return {
-            prop for prop in cls._get_class_props().values() if isinstance(prop, Column)
-        }
-
-    @classmethod
-    def _keys(cls) -> set[Key]:
-        """Columns of this record type's table."""
-        return {
-            prop for prop in cls._get_class_props().values() if isinstance(prop, Key)
-        }
-
-    @classmethod
-    def _fks(cls) -> set[ForeignKey]:
-        """Columns of this record type's table."""
-        return {
-            prop
-            for prop in cls._get_class_props().values()
-            if isinstance(prop, ForeignKey)
-        }
-
-    @classmethod
-    def _pl_schema(cls) -> dict[str, pl.DataType | type | None]:
-        """Return the schema of the dataset."""
-        return get_pl_schema(
-            {name: col for name, col in cls._props.items() if isinstance(col, Column)}
-        )
-
-    @classmethod
-    def __clause_element__(cls) -> sqla.TableClause:
-        """Return the table clause element."""
-        return cls._table._base_table_map[cls][0]
-
-    _published: bool = False
-    _base: Attr[Base[Any, DynBackendID]] = Attr(default_factory=Base)
-
-    _pk: Key[KeyT, Self]
-
-    @cached_prop
-    def _whereclause(self) -> sqla.ColumnElement[bool]:
-        cols = {
-            col.name: sql_col
-            for col, sql_col in self._base._map_cols(type(self)).items()
-        }
-        pk_map = type(self)._pk.gen_value_map(self._pk)
-
-        return sqla.and_(
-            *(cols[col] == val for col, val in pk_map.items()),
-        )
-
-    def _load_dict(self) -> None:
-        if not self._published or self._pk in self._base._get_valid_cache_set(
-            type(self)
-        ):
-            return
-
-        query = self._table.sql.select().where(self._whereclause)
-
-        with self._base.engine.connect() as conn:
-            result = conn.execute(query)
-            row = result.fetchone()
-
-        if row is not None:
-            self.__dict__.update(row._asdict())
-
-    def _save_dict(self) -> None:
-        df = records_to_df([self])
-        self._table.mutate(self._base.table({type(self)}, df))
-        self._base._get_valid_cache_set(type(self)).remove(self._pk)
-
-    def __hash__(self) -> int:
-        """Identify the record by database and id."""
-        return gen_int_hash((self._base if self._published else None, self._pk))
-
-    def __eq__(self, value: Hashable) -> bool:
-        """Check if the record is equal to another record."""
-        return hash(self) == hash(value)

@@ -47,7 +47,7 @@ from py_research.reflect.types import (
     SingleTypeDef,
     TypeRef,
     get_base_type,
-    get_lowest_common_base,
+    get_common_type,
     get_typevar_map,
     has_type,
     is_subtype,
@@ -76,7 +76,7 @@ KeyT = TypeVar("KeyT", bound=Hashable)
 KeyT2 = TypeVar("KeyT2", bound=Hashable)
 KeyT3 = TypeVar("KeyT3", bound=Hashable)
 
-KeyTt = TypeVarTuple("KeyTt")
+KeyTt = TypeVarTuple("KeyTt", default=Unpack[tuple[Any, ...]])
 KeyTt2 = TypeVarTuple("KeyTt2")
 KeyTt3 = TypeVarTuple("KeyTt3")
 KeyTt4 = TypeVarTuple("KeyTt4")
@@ -136,6 +136,7 @@ ExT2 = TypeVar("ExT2", bound=PL)
 
 
 @final
+@dataclass
 class Idx(Generic[*KeyTt]):
     """Define the custom index type of a dataset."""
 
@@ -188,9 +189,11 @@ AddIdxT = TypeVar(
     "AddIdxT",
     bound=Idx,
     default=Idx[()],
+    covariant=True,
 )
 
 
+@dataclass
 class ModIdx(Generic[SubIdxT, AddIdxT]):
     """Pass-through index."""
 
@@ -199,8 +202,8 @@ class ModIdx(Generic[SubIdxT, AddIdxT]):
 
 
 type KeepIdx = ModIdx[Idx[()], Idx[()]]
-type Reduce[*K] = ModIdx[Idx[*K], Idx[()]]
-type Expand[*K] = ModIdx[Idx[()], Idx[*K]]
+type Reduce[IdxT: Idx] = ModIdx[IdxT, Idx[()]]
+type Expand[IdxT: Idx] = ModIdx[Idx[()], IdxT]
 
 
 type AnyIdx[*K] = FullIdx[*K] | ModIdx[Any, Any]
@@ -604,12 +607,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     @cached_prop
     def common_value_type(self) -> type:
         """Common base type of the target types."""
-        return get_lowest_common_base(
-            typedef_to_typeset(
-                self.value_typeform,
-                remove_null=True,
-            )
-        )
+        return get_common_type(self.value_typeform)
 
     @cached_prop
     def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
@@ -657,13 +655,13 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     def parent(
         self: Data[
             Any,
-            Expand[*KeyTt2, *KeyTt3],
+            Expand[Idx[*KeyTt2, *KeyTt3]],
             Any,
             ExT2,
             Any,
             CtxT2,
             *CtxTt2,
-            Ctx[ValT3, Expand[*KeyTt3], DxT3],
+            Ctx[ValT3, Expand[Idx[*KeyTt3]], DxT3],
         ],
     ) -> Data[ValT3, Idx[*KeyTt2], DxT3, ExT2, R, CtxT2, *CtxTt2]: ...
 
@@ -741,6 +739,12 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
         return full_idx
 
+    @overload
+    def index(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Idx[()], Any, ExT2],
+    ) -> None: ...
+
+    @overload
     def index(self: Data[Any, AnyIdx[*KeyTt2], Any, ExT2]) -> Data[
         tuple[*KeyTt2],
         SelfIdx[*KeyTt2],
@@ -749,9 +753,27 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         R,
         CtxT,
         *CtxTt,
-    ]:
+    ]: ...
+
+    def index(self: Data[Any, AnyIdx[*KeyTt2], Any, ExT2]) -> (
+        Data[
+            tuple[*KeyTt2],
+            SelfIdx[*KeyTt2],
+            Tab,
+            ExT2,
+            R,
+            CtxT,
+            *CtxTt,
+        ]
+        | None
+    ):
         """Get the index of this data."""
-        alignment = reduce(Data.__matmul__, self._idx_components())
+        idx_comp = self._idx_components()
+
+        if len(idx_comp) == 0:
+            return None
+
+        alignment = reduce(Data.__matmul__, idx_comp)
         return cast(
             Data[
                 tuple[*KeyTt2],
@@ -937,7 +959,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         self: Data[Any, Any, Any, Any, Any, Base],
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
-        return self.index().values()
+        idx = self.index()
+        return idx.values() if idx is not None else [tuple()] * len(self)
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
@@ -1820,7 +1843,7 @@ unstable_hash = Transform(
 )
 
 
-RuTi = TypeVar("RuTi", bound=R | U, default=R)
+RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
 
 
 class Filter(

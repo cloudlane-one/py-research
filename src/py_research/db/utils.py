@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from types import UnionType
@@ -23,7 +23,7 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from py_research.reflect.types import SingleTypeDef
+from py_research.reflect.types import SingleTypeDef, TypeRef, get_common_type
 from py_research.types import UUID4
 
 pl_type_map: dict[
@@ -73,6 +73,31 @@ def pd_to_py_dtype(c: pd.Series | pl.Series) -> type | None:
             return str
 
     return None
+
+
+def get_pl_schema(
+    cols: Mapping[str, TypeRef],
+) -> dict[str, pl.DataType | type | None]:
+    """Return the schema of the dataset."""
+    exact_matches = {
+        name: (pl_type_map.get(get_common_type(typ.typeform)), typ)
+        for name, typ in cols.items()
+    }
+    matches = {
+        name: (
+            (match, typ.base_type)
+            if match is not None
+            else (pl_type_map.get(get_common_type(typ.typeform)), typ.typeform)
+        )
+        for name, (match, typ) in exact_matches.items()
+    }
+
+    return {
+        name: (
+            match if isinstance(match, pl.DataType | type | None) else match(match_type)
+        )
+        for name, (match, match_type) in matches.items()
+    }
 
 
 def sql_to_py_dtype(c: sqla.ColumnElement) -> type | None:
