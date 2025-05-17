@@ -1211,7 +1211,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
                 keymap = self._map_index_filters(key)
 
-                return Filter.from_keymap(keymap)
+                return self[Filter.from_keymap(keymap)]
 
     # Alignment:
 
@@ -1437,120 +1437,89 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def __eq__(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Col, ExT2, Any, CtxT2, *CtxTt2],
+        self: Data[ValT2, Any, Col, ExT2, Any, CtxT2, *CtxTt2],
         other: Data[ValT3, IdxT3, Col, ExT2, Any, CtxT2, *CtxTt2],
     ) -> Data[
-        KeepVal,
-        ModIdx,
-        DxT,
-        ExT,
+        bool,
+        Any,
+        Col,
+        ExT2,
         R,
-        CtxT,
-        *CtxTt,
+        CtxT2,
+        *CtxTt2,
+        Ctx[tuple[ValT2, ValT3], Idx[*tuple[Any, ...]], Any],
     ]: ...
 
     @overload
     def __eq__(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, AnyIdx[*KeyTt2], Col],
+        self: Data[Any, Any, Col, ExT2, Any, CtxT2, *CtxTt2],
         other: Any,
     ) -> Data[
-        KeepVal,
-        ModIdx,
-        DxT,
-        ExT,
+        bool,
+        Any,
+        Col,
+        ExT2,
         R,
-        CtxT,
-        *CtxTt,
+        CtxT2,
+        *CtxTt2,
     ]: ...
 
     def __eq__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Data,
+        self: Data[Any, Any, Col],
         other: Any,
     ) -> (
         Data[
-            KeepVal,
-            ModIdx,
-            DxT,
-            ExT,
+            bool,
+            Any,
+            Col,
+            Any,
             R,
-            CtxT,
-            *CtxTt,
+            Any,
+            *tuple[Any, ...],
         ]
         | bool
     ):
         if not isinstance(other, Data):
-            return cast(
-                Data[
-                    KeepVal,
-                    ModIdx,
-                    DxT,
-                    ExT,
-                    R,
-                    CtxT,
-                    *CtxTt,
-                ],
-                Filter(
-                    context=self.context,
-                    bool_data=self._map_reduce_operator(operator.eq, other),
-                ),
-            )
+            return self._map_reduce_operator(operator.eq, other)
 
         alignment = self @ other
-
-        return cast(
-            Data[
-                KeepVal,
-                ModIdx,
-                DxT,
-                ExT,
-                R,
-                CtxT,
-                *CtxTt,
-            ],
-            Filter(
-                context=self.context,
-                bool_data=alignment._map_reduce_operator(operator.eq),
-            ),
-        )
+        return alignment._map_reduce_operator(operator.eq)
 
     def isin(
-        self: Data[Any, AnyIdx[*KeyTt2], Col],
+        self: Data[Any, Any, Col, ExT2, Any, CtxT2, *CtxTt2],
         other: Collection[ValT2] | slice,
     ) -> Data[
-        KeepVal,
-        ModIdx,
-        DxT,
-        ExT,
+        bool,
+        Any,
+        Col,
+        ExT2,
         R,
-        CtxT,
-        *CtxTt,
+        CtxT2,
+        *CtxTt2,
     ]:
         """Test values of this dataset for membership in the given iterable."""
         if isinstance(other, slice):
-            mapping = Transform[bool](
+            mapping = Transform(
                 func=lambda x: other.start <= x <= other.stop,
                 frame_func=partial(frame_isin, values=other),
             )
         else:
-            mapping = Transform[bool](
+            mapping = Transform(
                 func=lambda x: x in other,
                 frame_func=partial(frame_isin, values=other),
             )
 
         return cast(
             Data[
-                KeepVal,
-                ModIdx,
-                DxT,
-                ExT,
+                bool,
+                Any,
+                Col,
+                ExT2,
                 R,
-                CtxT,
-                *CtxTt,
+                CtxT2,
+                *CtxTt2,
             ],
-            Filter(
-                context=self.context,
-                bool_data=mapping,
-            ),
+            self[mapping],
         )
 
     # Index set operations:
@@ -1854,7 +1823,6 @@ unstable_hash = Transform(
 RuTi = TypeVar("RuTi", bound=R | U, default=R)
 
 
-@dataclass(kw_only=True)
 class Filter(
     Data[
         KeepVal,
@@ -1862,23 +1830,25 @@ class Filter(
         DxT,
         ExT,
         RuTi,
-        CtxT,
+        Interface[Any, Any, Any],
     ]
 ):
     """Filter a dataset."""
 
-    bool_data: Data[bool, Any, DxT, ExT, Any, CtxT]
+    def __init__(self, bool_data: Data[bool, Any, DxT, ExT, Any, CtxT]):  # noqa: D107
+        self.context = Interface()
+        self.bool_data = bool_data
 
     @staticmethod
     def from_keymap(
         keymap: Mapping[Data[Any, Any, Col, ExT2, Any, CtxT], slice | Collection],
-    ) -> Filter[Any, ExT2, Any, CtxT]:
+    ) -> Filter[Any, ExT2, Any]:
         """Construct filter from index key map."""
         bool_data = reduce(
             operator.and_, (idx.isin(filt) for idx, filt in keymap.items())
         )
 
-        return Filter(context=bool_data.root, bool_data=bool_data)
+        return Filter(bool_data=bool_data)
 
     def _name(self) -> str:
         """Name of the property."""
