@@ -34,7 +34,7 @@ from py_research.reflect.types import (
 )
 from py_research.types import DataclassInstance, Not
 
-from .data import Ctx, Data, Dx, ExT, FullIdxT, Idx, RwxT, U, ValT, ValT2, dxT
+from .data import Ctx, Data, DxT, ExT, FullIdxT, Idx, RwxT, U, ValT, ValT2
 
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
@@ -43,7 +43,7 @@ IdxT = TypeVar("IdxT", bound=Idx, default=Any)
 
 
 @dataclass
-class Prop(Generic[ValT, IdxT, RwxT, ExT, dxT, OwnT]):
+class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT]):
     """Property definition for a model."""
 
     init_after: ClassVar[set[type[Prop]]] = set()
@@ -72,7 +72,7 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, dxT, OwnT]):
 
         return matching[0]()
 
-    data: Data[ValT, IdxT, RwxT, Dx[ExT, dxT], Ctx[OwnT]] | None = None
+    data: Data[ValT, IdxT, DxT, ExT, RwxT, Ctx[OwnT]] | None = None
     getter: Callable[[OwnT], ValT | Literal[Not.resolved]] | None = None
     setter: Callable[[OwnT, ValT], None] | None = None
 
@@ -128,7 +128,7 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, dxT, OwnT]):
     @overload
     def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Prop[ValT, IdxT, RwxT, ExT, dxT, OwnT2]: ...
+    ) -> Prop[ValT, IdxT, RwxT, ExT, DxT, OwnT2]: ...
 
     @overload
     def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> ValT: ...

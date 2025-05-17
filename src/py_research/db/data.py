@@ -29,6 +29,7 @@ from typing import (
     Unpack,
     cast,
     final,
+    get_args,
     get_origin,
     overload,
 )
@@ -41,6 +42,7 @@ from typing_extensions import TypeVar, TypeVarTuple
 
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
+from py_research.hashing import gen_int_hash
 from py_research.reflect.types import (
     SingleTypeDef,
     TypeRef,
@@ -154,7 +156,7 @@ class AutoIndexable(Protocol[*KeyTt]):
     """Base class for indexable objects."""
 
     @classmethod
-    def sql_cols(cls) -> list[sqla.ColumnElement]:
+    def _index_components(cls) -> tuple[Data[Any, Any, Col, SQL, R, Interface], ...]:
         """Get SQL columns for this auto-indexed type."""
         ...
 
@@ -165,6 +167,8 @@ AutoIdxT = TypeVar("AutoIdxT", bound=AutoIndexable, covariant=True)
 @final
 class AutoIdx(Generic[AutoIdxT]):
     """Index by custom value derived from self."""
+
+    value_type: type[AutoIdxT]
 
 
 type FullIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
@@ -190,13 +194,13 @@ AddIdxT = TypeVar(
 class ModIdx(Generic[SubIdxT, AddIdxT]):
     """Pass-through index."""
 
-    sub_type: SingleTypeDef[SubIdxT]
-    add: AddIdxT
+    reduction: SingleTypeDef[SubIdxT]
+    expansion: AddIdxT
 
 
 type KeepIdx = ModIdx[Idx[()], Idx[()]]
-type SubIdx[*K] = ModIdx[Idx[*K], Idx[()]]
-type AddIdx[*K] = ModIdx[Idx[()], Idx[*K]]
+type Reduce[*K] = ModIdx[Idx[*K], Idx[()]]
+type Expand[*K] = ModIdx[Idx[()], Idx[*K]]
 
 
 type AnyIdx[*K] = FullIdx[*K] | ModIdx[Any, Any]
@@ -254,7 +258,7 @@ RwxT2 = TypeVar("RwxT2", bound=CRUD)
 RwxT3 = TypeVar("RwxT3", bound=CRUD)
 
 ArgT = TypeVar("ArgT", contravariant=True, default=Any)
-ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=Idx, default=Any)
+ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=Idx | Expand, default=Any)
 ArgDxT = TypeVar("ArgDxT", bound=Shape, contravariant=True, default=Any)
 
 
@@ -289,6 +293,7 @@ class Base(Ctx[ArgT, Any, Any], ABC, Generic[ArgT, RwxT]):
 
 
 BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
+BaseT2 = TypeVar("BaseT2", bound=Base)
 
 
 class Interface(Ctx[ArgT, ArgIdxT, ArgDxT]):
@@ -326,6 +331,29 @@ class Frame(Generic[ExT, DxT]):
 
     def __init__(self: Frame, data: Any = None) -> None:  # noqa: D107
         self._data = data
+
+    def cols(self) -> list[str]:
+        """Get the column names of this frame."""
+        match self._data:
+            case pl.DataFrame():
+                return self._data.columns
+            case pl.Series():
+                return [self._data.name if self._data.name is not None else "0"]
+            case sqla.Select():
+                return [
+                    (c.key if c.key is not None else str(i))
+                    for i, c in enumerate(self._data.selected_columns)
+                ]
+            case sqla.ColumnElement():
+                return [self._data.key if self._data.key is not None else "0"]
+            case dict() if has_type(self._data, dict[str, pl.DataFrame]):
+                return [
+                    f"{prefix}.{col}"
+                    for prefix, df in self._data.items()
+                    for col in df.columns
+                ]
+            case _:
+                raise ValueError("Unsupported data type.")
 
     @overload
     def get(
@@ -540,7 +568,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
     def _frame(
-        self,
+        self: Data[Any, Any, Any, Any, Any, Base, *tuple[Any, ...]],
     ) -> Frame[ExT, DxT]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
@@ -611,14 +639,6 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     # Context:
 
     @cached_prop
-    def root(self) -> CtxT:
-        """Get the root of this property."""
-        if isinstance(self.context, Data):
-            return self.context.root
-
-        return self.context
-
-    @cached_prop
     def fqn(self) -> str:
         """Fully qualified name of this dataset based on relational path."""
         if not isinstance(self.context, Data):
@@ -626,9 +646,101 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
         return self.context.fqn + "." + self._name()
 
+    @overload
+    def parent(
+        self: Data[
+            Any, Any, Any, ExT2, Any, CtxT2, *CtxTt2, Ctx[ValT3, Idx[*KeyTt3], DxT3]
+        ],
+    ) -> Data[ValT3, Idx[*KeyTt3], DxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any,
+            Expand[*KeyTt2, *KeyTt3],
+            Any,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[ValT3, Expand[*KeyTt3], DxT3],
+        ],
+    ) -> Data[ValT3, Idx[*KeyTt2], DxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any, Any, Any, ExT2, Any, Ctx[ValT3, Idx[*KeyTt3], DxT3], *tuple[()]
+        ],
+    ) -> None: ...
+
+    @overload
+    def parent(
+        self: Data,
+    ) -> Data | None: ...
+
+    def parent(
+        self: Data,
+    ) -> Data | None:
+        """Get the context of this property."""
+        if isinstance(self.context, Data):
+            return cast(Data, self.context)
+
+        return None
+
+    def root(self) -> CtxT:
+        """Get the root of this property."""
+        if isinstance(self.context, Data):
+            return self.context.root()
+
+        return self.context
+
+    # Relational Identity:
+
+    def __hash__(self) -> int:  # noqa: D105
+        return gen_int_hash((self.typeref, self.context, self._name(), self._index()))
+
     # Index:
 
-    @cached_prop
+    def _idx_components(
+        self: Data,
+    ) -> tuple[Data[Any, IdxT, Col, ExT, R, CtxT, *tuple[Any, ...]], ...]:
+        """Get the index components of this dataset."""
+        index = self._index()
+
+        full_idx: tuple[Data[Any, Any, Col, Any, R, CtxT, *tuple[Any, ...]], ...]
+        match index:
+            case Idx():
+                full_idx = tuple(self[c] for c in index.components)
+            case SelfIdx():
+                assert self.typeargs[DxT] is Col
+                full_idx = (
+                    cast(Data[Any, Any, Col, Any, R, CtxT, *tuple[Any, ...]], self),
+                )
+            case HashIdx():
+                hashed = cast(
+                    Data[Any, Any, Col, Any, R, CtxT, *tuple[Any, ...]], self
+                )[unstable_hash]
+                full_idx = (hashed,)
+            case AutoIdx():
+                components = cast(
+                    AutoIdx[AutoIndexable], index
+                ).value_type._index_components()
+                full_idx = tuple(self[c] for c in components)
+            case ModIdx():
+                parent = self.parent()
+                assert parent is not None
+                parent_idx = parent._idx_components()
+
+                reduce_args = get_args(index.reduction)
+                reduced_idx = parent_idx[: -len(reduce_args)]
+
+                full_idx = reduced_idx + cast(Idx, index.expansion).components
+            case _:
+                raise ValueError(f"Unsupported index type: {type(index)}")
+
+        return full_idx
+
     def index(self: Data[Any, AnyIdx[*KeyTt2], Any, ExT2]) -> Data[
         tuple[*KeyTt2],
         SelfIdx[*KeyTt2],
@@ -639,26 +751,42 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         *CtxTt,
     ]:
         """Get the index of this data."""
-        # TODO: implement, resolve keep-idx, sub-idx and add-idx config
-        raise NotImplementedError()
+        alignment = reduce(Data.__matmul__, self._idx_components())
+        return cast(
+            Data[
+                tuple[*KeyTt2],
+                SelfIdx[*KeyTt2],
+                Tab,
+                ExT2,
+                R,
+                CtxT,
+                *CtxTt,
+            ],
+            alignment,
+        )
 
-    def _map_index_selectors(
+    def _map_index_filters(
         self, sel: list | slice | tuple[list | slice, ...]
-    ) -> Mapping[Data[Any, Any, Col, SQL | PL, Any, CtxT], slice | Collection]:
-        # TODO: implement
-        raise NotImplementedError()
+    ) -> Mapping[Data[Any, IdxT, Col, ExT, R, CtxT, *tuple[Any, ...]], list | slice]:
+        idx = self._idx_components()
+
+        match sel:
+            case list() | slice():
+                return {idx[0]: sel}
+            case tuple():
+                return {i: s for i, s in zip(idx, sel)}
 
     # SQL:
 
     @overload
-    def select(  # pyright: ignore[reportOverlappingOverload]
+    def select(
         self: Data[Any, Any, Any, SQL],
     ) -> sqla.Select: ...
 
     @overload
-    def select(self: Data[Any, Any, Any, PL]) -> None: ...
+    def select(self: Data[Any, Any, Any, PL]) -> sqla.Select | None: ...
 
-    def select(self: Data) -> sqla.SelectBase | None:
+    def select(self: Data) -> sqla.Select | None:
         """Return select statement for this dataset."""
         frame = self._frame().get()
 
@@ -726,27 +854,27 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     # Dataframes:
 
     @overload
-    def df(
+    def load(
         self: Data[Any, Any, Col, Any, Any, Base],
     ) -> pl.Series: ...
 
     @overload
-    def df(
+    def load(
         self: Data[Any, Any, Tab, Any, Any, Base],
     ) -> pl.DataFrame: ...
 
     @overload
-    def df(
+    def load(
         self: Data[Any, Any, Tabs, Any, Any, Base],
     ) -> dict[str, pl.DataFrame]: ...
 
     @overload
-    def df(
+    def load(
         self: Data[Any, Any, Shape, Any, Any, Base],
     ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]: ...
 
-    def df(
-        self: Data[Any, Any, Any, Any, Any, Base],
+    def load(
+        self: Data[Any, Any, Any, PL, Any, Base],
     ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]:
         """Load dataset as dataframe."""
         frame = self._frame().get()
@@ -761,7 +889,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
         res = pl.read_database(
             select,
-            self.root.connection,
+            self.root().connection,
         )
 
         if isinstance(frame, dict):
@@ -784,17 +912,16 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         self: Data[Any, Any, Shape, PL, Any, Base],
     ) -> Sequence[ValT]:
         """Iterable over this dataset's values."""
-        df = self.df()
+        data = self.load()
 
-        match df:
+        match data:
             case pl.Series():
-                return df.to_list()
+                return data.to_list()
             case pl.DataFrame():
                 constructor = self.common_value_type
-                return [constructor(d) for d in df.to_dicts()]
+                return [constructor(d) for d in data.to_dicts()]
             case dict():
-                # TODO: implement
-                raise NotImplementedError()
+                return self.common_value_type(*data.values())
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
@@ -810,7 +937,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         self: Data[Any, Any, Any, Any, Any, Base],
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
-        return self.index.values()
+        return self.index().values()
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
@@ -874,9 +1001,11 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         query = self.query()
         assert query is not None
 
-        count = self.root.connection.execute(
-            sqla.select(sqla.func.count()).select_from(query)
-        ).scalar()
+        count = (
+            self.root()
+            .connection.execute(sqla.select(sqla.func.count()).select_from(query))
+            .scalar()
+        )
         assert count is not None
 
         return count
@@ -1080,7 +1209,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                 ):
                     key = [key]
 
-                keymap = self._map_index_selectors(key)
+                keymap = self._map_index_filters(key)
 
                 return Filter.from_keymap(keymap)
 
@@ -1201,7 +1330,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             CtxT2,
         ](
             data=self_data + other_data,
-            context=self.root,
+            context=self.root(),
         )
 
     # Reduction:
@@ -1506,7 +1635,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     ]:
         """Union two databases, right overriding left."""
         alignment = Align(
-            context=self.root,
+            context=self.root(),
             data=(self, other),
             join="left",
         )
@@ -1537,7 +1666,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         mutations = self._mutation(input_data, mode={C, U})
 
         for mutation in mutations:
-            self.root.connection.execute(mutation)
+            self.root().connection.execute(mutation)
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
@@ -1549,7 +1678,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         mutations = self._mutation(input_data, mode={C})
 
         for mutation in mutations:
-            self.root.connection.execute(mutation)
+            self.root().connection.execute(mutation)
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
@@ -1561,7 +1690,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         mutations = self._mutation(input_data, mode={U})
 
         for mutation in mutations:
-            self.root.connection.execute(mutation)
+            self.root().connection.execute(mutation)
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
@@ -1577,7 +1706,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             mutations = self._mutation(input_data, mode={C, U, D})
 
             for mutation in mutations:
-                self.root.connection.execute(mutation)
+                self.root().connection.execute(mutation)
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
@@ -1703,6 +1832,23 @@ class Transform(
     ) -> Frame[ExT, DxT]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
+
+
+def unstable_frame_hash(
+    frame: Frame[ExT, Col],
+) -> Frame[ExT, Col]:
+    """Get a hash of the frame."""
+    data = frame.get()
+    if isinstance(data, pl.Series):
+        return cast(Frame[ExT, Col], Frame(data.hash()))
+
+    return cast(Frame[ExT, Col], Frame(sqla.func.MD5(data)))
+
+
+unstable_hash = Transform(
+    func=hash,
+    frame_func=unstable_frame_hash,
+)
 
 
 RuTi = TypeVar("RuTi", bound=R | U, default=R)

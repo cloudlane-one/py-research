@@ -356,3 +356,27 @@ def safe_update(
     else:
         # Correlated update.
         raise NotImplementedError("Correlated update not supported yet.")
+
+
+def split_df_by_prefixes(
+    df: pl.DataFrame,
+    prefixes: Iterable[str],
+    sep: str = ".",
+) -> dict[str, pl.DataFrame]:
+    """Split a dataframe into multiple dataframes by column prefixes.
+
+    Args:
+        df: The dataframe to split.
+        prefixes: The prefixes to split by.
+        sep: The separator between the prefix and the rest of the column name.
+
+    Returns:
+        A dictionary of dataframes, where the keys are the prefixes and the values
+        are the corresponding dataframes.
+    """
+    return {
+        prefix: df.select(
+            *(pl.col(c) for c in df.columns if c.startswith(prefix + sep))
+        )
+        for prefix in prefixes
+    }
