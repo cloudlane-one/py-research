@@ -8,10 +8,10 @@ from typing import Literal
 from py_research.db import (
     Array,
     BackLink,
+    Edge,
     Entity,
     Link,
     Record,
-    Relation,
     Schema,
     Table,
     Var,
@@ -22,7 +22,7 @@ class TestSchema(Schema):
     """Test schema."""
 
 
-class SearchResult(Relation["Search", "Project"]):
+class SearchResult(Edge["Search", "Project"]):
     """Link search to a result."""
 
     score: Var[float]
@@ -36,7 +36,7 @@ class Search(Record[str], TestSchema):
     results: Table[Project, SearchResult] = Table(default=True)
 
 
-type Assignment = Relation["User", "Task"]
+type Assignment = Edge["User", "Task"]
 
 
 class Task(Entity):
@@ -61,7 +61,7 @@ class User(Entity):
         return all(task.status == "done" for task in self.tasks)
 
 
-class Membership(Relation["User", "Project"]):
+class Membership(Edge["User", "Project"]):
     """Link user to a project."""
 
     role: Var[str] = Var(default="member")

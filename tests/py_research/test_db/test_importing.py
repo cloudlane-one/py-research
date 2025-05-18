@@ -13,12 +13,12 @@ from py_research.db import (
     BackLink,
     DataBase,
     DataSource,
+    Edge,
     Entity,
     Link,
     RecMap,
     Record,
     RefMap,
-    Relation,
     SubMap,
     Table,
     Var,
@@ -41,7 +41,7 @@ class Search(Record[str]):
     results: Table[Project, SearchResult] = Table(default=True)
 
 
-Assignment = Relation["User", "Task"]
+Assignment = Edge["User", "Task"]
 
 
 class Task(Entity):
@@ -66,7 +66,7 @@ class User(Entity):
         return all(task.status == "done" for task in self.tasks)
 
 
-class Membership(Relation["User", "Project"]):
+class Membership(Edge["User", "Project"]):
     """Link user to a project."""
 
     member: Link[User] = Link(primary_key=True)

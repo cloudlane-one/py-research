@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence, Set
+from collections.abc import Callable, Iterable, Mapping
 from copy import copy
 from dataclasses import MISSING, Field, dataclass
 from functools import cache, cmp_to_key, reduce
@@ -21,7 +21,6 @@ from typing import (
 )
 
 import polars as pl
-import sqlalchemy as sqla
 from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
@@ -51,8 +50,6 @@ from .data import (
     ExT,
     Frame,
     Idx,
-    InputData,
-    InputFrame,
     Interface,
     R,
     Root,
@@ -361,14 +358,6 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
         self: Data[Any, Any, SxT2],
     ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Data[Any, Any, Any, Any, R],
-        input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[R]] = {R},
-    ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
 

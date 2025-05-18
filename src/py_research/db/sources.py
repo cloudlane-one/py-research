@@ -25,7 +25,6 @@ from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import SupportsItems, has_type
 from py_research.telemetry import tqdm
 
-from .conflicts import DataConflictPolicy
 from .records import (
     Array,
     BackLink,
@@ -36,7 +35,6 @@ from .records import (
     Link,
     Record,
     Rel,
-    Symbolic,
     Table,
     Var,
 )

@@ -33,6 +33,7 @@ from typing import (
     overload,
 )
 
+import networkx as nx
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
@@ -68,7 +69,7 @@ ValTo = TypeVar("ValTo", default=None)
 ValTt2 = TypeVarTuple("ValTt2")
 ValTt3 = TypeVarTuple("ValTt3")
 
-KeyT = TypeVar("KeyT", bound=Hashable)
+KeyT = TypeVar("KeyT", bound=Hashable, default=Any)
 KeyT2 = TypeVar("KeyT2", bound=Hashable)
 KeyT3 = TypeVar("KeyT3", bound=Hashable)
 
@@ -579,6 +580,10 @@ def frame_isin(
     return cast(Frame[ExT2, Col], Frame(data))
 
 
+class Node:
+    """Base class for graphable objects."""
+
+
 @dataclass(kw_only=True)
 class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
     """Property definition for a model."""
@@ -605,16 +610,19 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
     ) -> Frame[ExT, SxT2]:
-        """Get SQL expression or Polars data of this property."""
+        """Get SQL expression or Polars data."""
         raise NotImplementedError()
 
-    @abstractmethod
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
+        """Get mutation statements to set this data SQL-side."""
+        raise NotImplementedError()
+
+    def graph(self: Data[Node]) -> nx.Graph:
+        """Get the graph of this data."""
         raise NotImplementedError()
 
     # Context:
@@ -2075,14 +2083,6 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
-    def _mutation(
-        self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RwxT2]] = {C, U},
-    ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
-        raise NotImplementedError()
-
 
 class Transform(
     Data[
@@ -2149,14 +2149,6 @@ class Transform(
         self: Data[Any, Any, SxT2],
     ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
-        raise NotImplementedError()
-
-    def _mutation(
-        self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RwxT2]] = {C, U},
-    ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
 

@@ -3,12 +3,12 @@
 from .records import Array as Array
 from .records import BackLink as BackLink
 from .records import DataBase as DataBase
+from .records import Edge as Edge
 from .records import Entity as Entity
+from .records import LabelEdge as LabelEdge
 from .records import Link as Link
 from .records import Record as Record
 from .records import Rel as Rel
-from .records import Relation as Relation
-from .records import RelIndex as RelIndex
 from .records import Schema as Schema
 from .records import Table as Table
 from .records import Var as Var

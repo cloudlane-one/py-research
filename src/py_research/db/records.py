@@ -2,16 +2,37 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence, Set
+from collections.abc import (
+    Callable,
+    Generator,
+    Hashable,
+    Iterable,
+    Mapping,
+    Sequence,
+    Set,
+)
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
+from inspect import getmodule
 from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
-from typing import Any, ClassVar, Generic, Literal, LiteralString, Self, cast
+from types import ModuleType, new_class
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Literal,
+    LiteralString,
+    Self,
+    cast,
+)
+from uuid import uuid4
 
+import networkx as nx
 import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
@@ -46,6 +67,7 @@ from .data import (
     InputFrame,
     Interface,
     KeySelect,
+    KeyT,
     KeyTt,
     ModIdx,
     R,
@@ -61,7 +83,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import Model, Prop
+from .models import Model, ModelMeta, Prop
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -78,13 +100,13 @@ RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], RuTi, PL, Col, RecT],
-    Data[ValT, Expand[Idx[()]], Col, PL, RwxT, Interface[RecT, Any, Tab]],
+    Prop[ValT, Idx[()], RuTi, SQL, Col, RecT],
+    Data[ValT, Expand[Idx[()]], Col, SQL, RuTi, Interface[RecT, Any, Tab]],
 ):
     """Single-value attribute or column."""
 
-    data: Data[ValT, Expand[Idx[()]], Col, PL, RuTi, Interface[RecT, Any, Tab]] = field(
-        init=False
+    data: Data[ValT, Expand[Idx[()]], Col, SQL, RuTi, Interface[RecT, Any, Tab]] = (
+        field(init=False)
     )
     context: Interface[RecT] | Data[Any, Any, Any, Any, Any, Interface[RecT]] = (
         Interface()
@@ -124,7 +146,7 @@ class Attr(
 
     def _frame(
         self: Data[Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]],
-    ) -> Frame[PL, Col]:
+    ) -> Frame[SQL, Col]:
         """Get SQL-side reference to this property."""
         parent = self.parent()
         assert parent is not None
@@ -193,12 +215,12 @@ class AttrTuple(
 
 
 @dataclass(eq=False)
-class Key(AttrTuple[TupT, RecT]):
+class Key(AttrTuple[tuple[*KeyTt]]):
     """Index property for a record type."""
 
-    attrs: tuple[Attr[Any, Any, RecT], ...] = ()
+    attrs: tuple[Attr, ...] = ()
 
-    def __set_name__(self, owner: type[RecT], name: str) -> None:  # noqa: D105
+    def __set_name__(self, owner: type[Record], name: str) -> None:  # noqa: D105
         super().__set_name__(owner, name)
 
         if len(self.attrs) == 0:
@@ -212,7 +234,7 @@ class Key(AttrTuple[TupT, RecT]):
             setattr(owner, f"{name}_attr", self.attrs[0])
 
 
-TgtT = TypeVar("TgtT", bound="Record", covariant=True)
+TgtT = TypeVar("TgtT", bound="Record", covariant=True, default=Any)
 
 
 @dataclass(eq=False)
@@ -273,7 +295,7 @@ def records_to_df(
             {
                 attr.name: attr.common_value_type
                 for rec in model_types
-                for attr in rec._attrs()
+                for attr in rec._attrs().values()
             }
         ),
     )
@@ -335,17 +357,21 @@ class Record(Model, AutoIndexable[*KeyTt]):
         return name
 
     @classmethod
-    def _attrs(cls) -> set[Attr]:
+    def _attrs(cls) -> dict[str, Attr]:
         """Columns of this record type's table."""
         return {
-            prop for prop in cls._get_class_props().values() if isinstance(prop, Attr)
+            prop.name: prop
+            for prop in cls._get_class_props().values()
+            if isinstance(prop, Attr)
         }
 
     @classmethod
-    def _keys(cls) -> set[Key]:
+    def _keys(cls) -> dict[str, Key]:
         """Columns of this record type's table."""
         return {
-            prop for prop in cls._get_class_props().values() if isinstance(prop, Key)
+            prop.name: prop
+            for prop in cls._get_class_props().values()
+            if isinstance(prop, Key)
         }
 
     @classmethod
@@ -354,10 +380,10 @@ class Record(Model, AutoIndexable[*KeyTt]):
         return cls.__dict__["_pk"]
 
     @classmethod
-    def _foreign_keys(cls) -> set[ForeignKey]:
+    def _foreign_keys(cls) -> dict[str, ForeignKey]:
         """Columns of this record type's table."""
         return {
-            prop
+            prop.name: prop
             for prop in cls._get_class_props().values()
             if isinstance(prop, ForeignKey)
         }
@@ -365,7 +391,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
     _published: bool = False
     _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
 
-    _pk: Key[tuple[*KeyTt], Self]
+    _pk: Key[*KeyTt]
 
     @cached_prop
     def _table(self) -> Table[Self, Any]:
@@ -654,6 +680,203 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
         return table
 
 
+class DynRecordMeta(ModelMeta):
+    """Metaclass for dynamically defined record types."""
+
+    def __getitem__(self, name: str) -> Attr:
+        """Get dynamic attribute by dynamic name."""
+        return Attr(alias=name, context=Interface(self))
+
+    def __getattr__(self, name: str) -> Attr:
+        """Get dynamic attribute by name."""
+        if not TYPE_CHECKING and name.startswith("__"):
+            return super().__getattribute__(name)
+        return Attr(alias=name, context=Interface(self))
+
+
+class DynRecord(Record, metaclass=DynRecordMeta):
+    """Dynamically defined record type."""
+
+    _template = True
+
+
+x = DynRecord
+
+
+def dynamic_record_type[T: Record](
+    base: type[T] | tuple[type[T], ...],
+    name: str,
+    props: Iterable[Prop] = [],
+    src_module: ModuleType | None = None,
+    extra_attrs: dict[str, Any] = {},
+) -> type[T]:
+    """Create a dynamically defined record type."""
+    base = base if isinstance(base, tuple) else (base,)
+    return cast(
+        type[T],
+        new_class(
+            name,
+            base,
+            None,
+            lambda ns: ns.update(
+                {
+                    **{p.name: p for p in props},
+                    "__annotations__": {
+                        p.name: p.typeref.typeform
+                        for p in props
+                        if p.typeref is not None
+                    },
+                    "_src_mod": src_module or base[0]._src_mod or getmodule(base[0]),
+                    **extra_attrs,
+                }
+            ),
+        ),
+    )
+
+
+class HashRec(Record[str]):
+    """Record type with a default hashed primary key."""
+
+    _template = True
+
+    def __post_init__(self) -> None:  # noqa: D105
+        setattr(
+            self,
+            self._primary_key().attrs[0].name,
+            gen_str_hash(
+                {a.name: getattr(self, a.name) for a in type(self)._attrs().values()}
+            ),
+        )
+
+
+class Entity(Record[UUID4]):
+    """Record type with a default UUID4 primary key."""
+
+    _template = True
+    _pk: Key[UUID4] = Key(default_factory=lambda: (UUID4(uuid4()),))
+
+
+type SymbolicAttr = Data[Any, Any, Any, Any, Any, Interface]
+
+type SingleFkMap = (SymbolicAttr | dict[SymbolicAttr, SymbolicAttr] | set[SymbolicAttr])
+type MultiFkMap = dict[type[Record], SingleFkMap]
+
+LnT = TypeVar("LnT", bound=Record | None, default=Any)
+
+
+@dataclass(kw_only=True, eq=False)
+class Link(
+    Attr[LnT, RuTi, RecT],
+):
+    """Link to a single record."""
+
+    fks: SingleFkMap | MultiFkMap | None = None
+
+
+class Item(Record[KeyT], Generic[ValT, RecT, KeyT]):
+    """Dynamically defined scalar record type."""
+
+    _template = True
+    _array: ClassVar[Array]
+
+    _from: Link[RecT] = Link()
+    _idx: Attr[KeyT] = Attr()
+    _val: Attr[ValT]
+
+    _pk: Key[*tuple[Any, ...], KeyT] = Key(attrs=(_from, _idx))
+
+
+class Edge(Record[str, str], Generic[RecT, TgtT]):
+    """Automatically defined relation record type."""
+
+    _template = True
+
+    _from: Link[RecT] = Link()
+    _to: Link[RecT] = Link()
+
+    _pk: Key[str, str] = Key(
+        attrs=(
+            _from,
+            _to,
+        )
+    )
+
+
+class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
+    """Automatically defined relation record type with index substitution."""
+
+    _template = True
+
+    _from: Link[RecT] = Link()
+    _to: Link[RecT] = Link()
+    _rel_idx: Attr[KeyT] = Attr()
+
+    _pk: Key[str, str, KeyT] = Key(attrs=(_from, _to, _rel_idx))
+
+
+IdxT = TypeVar("IdxT", bound=Idx, default=Any)
+
+
+@dataclass(kw_only=True, eq=False)
+class BackLink(
+    Prop[TgtT, IdxT, RuTi, SQL, Col, RecT],
+    Data[TgtT, Expand[IdxT], Col, SQL, RuTi, Interface[RecT, Any, Tab]],
+):
+    """Backlink record set."""
+
+    to: (
+        Data[RecT, Idx[()], Col, Any, Any, Interface[TgtT]]
+        | set[Data[RecT, Idx[()], Col, Any, Any, Interface[TgtT]]]
+    )
+
+
+# _item_classes: dict[str, type[Item]] = {}
+
+
+# @dataclass(eq=False)
+# class Array(
+#     Data[
+#         ValT,
+#         ArrayIdx[Any, *KeyTt],
+#         CrudT,
+#         BaseT,
+#         Ctx["Item[ValT, KeyT, OwnT]", Idx[*KeyTt], CrudT, BaseT, AnyCtx[OwnT]],
+#     ],
+#     Generic[ValT, KeyT, CrudT, OwnT, BaseT],
+# ):
+#     """Set / array of scalar values."""
+
+#     @cached_prop
+#     def _key_type(self) -> type[KeyT]:
+#         typedef = get_typevar_map(self._resolved_typehint)[KeyT]
+#         return typedef_to_typeset(typedef).pop()
+
+#     @cached_prop
+#     def relation_type(self) -> type[Item[ValT, KeyT, OwnT]]:
+#         """Return the dynamic relation record type."""
+#         assert self._ctx_table is not None
+#         assert issubclass(self._ctx_table.common_type, Record)
+#         base_array_fqn = copy_and_override(Array, self, _ctx=self._ctx_table).fqn
+
+#         rec = _item_classes.get(
+#             base_array_fqn,
+#             dynamic_record_type(
+#                 Item[self.target_typeform, self._key_type, self._ctx_table.common_type],
+#                 f"{self._ctx_table.common_type.__name__}.{self.name}",
+#                 src_module=self._ctx_table.common_type._src_mod
+#                 or getmodule(self._ctx_table.common_type),
+#                 extra_attrs={
+#                     "_array": copy_and_override(
+#                         Array, self, _base=symbol_base, _ctx=self._ctx_table
+#                     )
+#                 },
+#             ),
+#         )
+#         _item_classes[base_array_fqn] = rec
+
+#         return rec
+
+
 class Schema:
     """Group multiple record types into a schema."""
 
@@ -871,14 +1094,14 @@ class DataBase(
         """Get the registry for a type in this base."""
         ...
 
-    def validate(self: Base[Any, DynBackendID, Any]) -> None:
+    def validate(self) -> None:
         """Perform pre-defined schema validations."""
         recs = {rec: isinstance(req, Require) for rec, req in self._rec_types.items()}
         inspector = sqla.inspect(self.engine)
 
         # Iterate over all tables and perform validations for each
         for rec, req in recs.items():
-            self.table({rec}).validate(inspector, required=req)
+            self.table(rec).validate(inspector, required=req)
 
     def commit(self) -> None:
         """Commit the transaction."""
@@ -890,12 +1113,12 @@ class DataBase(
 
     @contextmanager
     def edit(
-        self: Base[BaseT, BackT, C | U | D], overlay_type: OverlayType = "transaction"
-    ) -> Generator[Base[BaseT, BackT, RwxT]]:
+        self: DataBase[Any, C | U | D], overlay_type: OverlayType = "transaction"
+    ) -> Generator[DataBase[BackT, RwxT]]:
         """Context manager to create temp overlay of base and auto-commit on exit."""
         assert self.overlay is None, "Cannot edit base with already active overlay."
         edit_base = copy_and_override(
-            Base[BaseT, BackT, RwxT], self, overlay=True, backend=self.backend
+            DataBase[BackT, RwxT], self, overlay=True, backend=self.backend
         )
 
         try:
@@ -906,16 +1129,18 @@ class DataBase(
     @cached_prop
     def _schema_map(
         self,
-    ) -> Mapping[type[BaseT], Literal[True] | Require | str | sqla.TableClause]:
+    ) -> Mapping[
+        type[Schema | Record], Literal[True] | Require | str | sqla.TableClause
+    ]:
         return (
             {self.schema: True}
             if isinstance(self.schema, type)
             else (
                 cast(
-                    dict[type[BaseT], Literal[True]],
+                    dict[type[Schema | Record], Literal[True]],
                     {rec: True for rec in self.schema},
                 )
-                if isinstance(self.schema, set)
+                if isinstance(self.schema, Set)
                 else self.schema if self.schema is not None else {}
             )
         )
@@ -932,17 +1157,17 @@ class DataBase(
     def _get_base_table(
         self,
         rec_type: type[Record],
-        mode: Literal["read"] | MutationMode = "read",
+        mode: Set[type[C | R | U | D]] = {R},
     ) -> sqla.Table:
         """Return the base SQLAlchemy table object for this data's record type."""
         orig_table: sqla.Table | None = None
 
         if (
-            mode != "read"
+            {C, U, D} & mode
             and self._overlay_name is not None
             and rec_type not in self._subs
         ):
-            orig_table = self._get_base_table(rec_type, "read")
+            orig_table = self._get_base_table(rec_type, {R})
 
             # Create an empty overlay table for the record type
             self._subs[rec_type] = sqla.table(
@@ -988,7 +1213,7 @@ class DataBase(
 
         self._create_sql_table(table)
 
-        if orig_table is not None and mode == "upsert":
+        if orig_table is not None and mode == {C, U}:
             with self.engine.begin() as conn:
                 conn.execute(
                     sqla.insert(table).from_select(
@@ -1002,7 +1227,7 @@ class DataBase(
         return table
 
     @cached_method
-    def _map_cols(self, rec_type: type[Record]) -> dict[Column, sqla.Column]:
+    def _map_cols(self, rec_type: type[Record]) -> dict[Attr, sqla.Column]:
         """Columns of this record type's table."""
         registry = orm.registry(
             metadata=self._metadata,
@@ -1010,15 +1235,15 @@ class DataBase(
         )
 
         return {
-            col: sqla.Column(
-                col.name,
+            attr: sqla.Column(
+                attr.name,
                 registry._resolve_type(
-                    col.value_typeform  # pyright: ignore[reportArgumentType]
+                    attr.value_typeform  # pyright: ignore[reportArgumentType]
                 ),
                 autoincrement=False,
-                nullable=has_type(None, col.value_typeform),
+                nullable=has_type(None, attr.value_typeform),
             )
-            for col in rec_type._cols()
+            for attr in rec_type._attrs().values()
         }
 
     @cached_method
@@ -1027,18 +1252,18 @@ class DataBase(
         return {
             k: sqla.Index(
                 f"{self._get_base_table_name(rec_type)}_key_{k.name}",
-                *(col.name for col in k.columns),
+                *(col.name for col in k.attrs),
                 unique=True,
             )
-            for k in rec_type._keys()
+            for k in rec_type._keys().values()
         }
 
     @cached_method
     def _map_pk(self, rec_type: type[Record]) -> sqla.PrimaryKeyConstraint:
         """Columns of this record type's table."""
-        pk = rec_type._pk  # type: ignore
+        pk = rec_type._primary_key()
         return sqla.PrimaryKeyConstraint(
-            *[col.name for col in pk.columns],
+            *[col.name for col in pk.attrs],
         )
 
     @cached_method
@@ -1047,13 +1272,13 @@ class DataBase(
     ) -> dict[ForeignKey, sqla.ForeignKeyConstraint]:
         fks: dict[ForeignKey, sqla.ForeignKeyConstraint] = {}
 
-        for fk in rec_type._fks():
+        for fk in rec_type._foreign_keys().values():
             target_type = cast(type[Record], fk.target)
             target_table = self._get_base_table(target_type)
 
             fks[fk] = sqla.ForeignKeyConstraint(
-                [col.name for col in fk.column_map.keys()],
-                [target_table.c[col.name] for col in fk.column_map.values()],
+                [col.name for col in fk.attr_map.keys()],
+                [target_table.c[col.name] for col in fk.attr_map.values()],
                 name=f"{self._get_base_table_name(rec_type)}_fk_{fk.name}_{target_type._fqn}",
             )
 
@@ -1136,3 +1361,14 @@ class DataBase(
                 self._subs,
             )
         )
+
+    def graph(
+        self,
+    ) -> nx.Graph:
+        """Export links between select database objects in a graph format.
+
+        E.g. for usage with `Gephi`_
+
+        .. _Gephi: https://gephi.org/
+        """
+        raise NotImplementedError("Graph export is not implemented yet.")
