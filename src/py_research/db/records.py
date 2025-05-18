@@ -19,7 +19,6 @@ from py_research.types import UUID4, Not
 from .data import (
     PL,
     AutoIndexable,
-    Base,
     Col,
     Ctx,
     Data,
@@ -30,7 +29,7 @@ from .data import (
     KeyTt,
     ModIdx,
     R,
-    RuTi,
+    Root,
     RwxT,
     Tab,
     U,
@@ -40,6 +39,7 @@ from .data import (
 from .models import Model, Prop
 
 RecT = TypeVar("RecT", bound="Record", contravariant=True, default=Any)
+RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
 
 
 @dataclass(kw_only=True, eq=False)
@@ -84,14 +84,14 @@ class Attr(
         return ModIdx(reduction=Idx[()], expansion=Idx(tuple()))
 
     def _frame(
-        self: Data[Any, Any, Col, Any, Any, Base, Ctx[Any, Any, Tab]],
+        self: Data[Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]],
     ) -> Frame[PL, Col]:
         """Get SQL-side reference to this property."""
         parent = self.parent()
         assert parent is not None
         parent_df = parent.load()
 
-        return Frame(parent_df[self._name()])
+        return Frame(parent_df[self._id()])
 
 
 TupT = TypeVar("TupT", bound=tuple[Any, ...], default=Any)
@@ -292,7 +292,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
         }
 
     _published: bool = False
-    _base: Attr[Base] = Attr(default_factory=Base)
+    _base: Attr[Root] = Attr(default_factory=Root)
 
     _pk: Key[tuple[*KeyTt], Self]
 

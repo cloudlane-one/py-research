@@ -13,6 +13,7 @@ from collections.abc import (
     Iterator,
     Mapping,
     Sequence,
+    Set,
 )
 from dataclasses import dataclass, field
 from functools import partial, reduce
@@ -52,7 +53,7 @@ from py_research.types import Not, Ordinal
 
 
 @final
-class KeepVal:
+class Keep:
     """Singleton to allow keeping of context value type."""
 
     __hash__: ClassVar[None]  # pyright: ignore[reportIncompatibleMethodOverride]
@@ -103,16 +104,26 @@ class Tabs(Shape[Tab]):
 
 DxT = TypeVar(
     "DxT",
-    bound=Shape,
+    bound=Shape | Keep,
     covariant=True,
-    default=Shape,
+    default=Shape | Keep,
 )
 DxT2 = TypeVar(
     "DxT2",
-    bound=Shape,
+    bound=Shape | Keep,
 )
 DxT3 = TypeVar(
     "DxT3",
+    bound=Shape | Keep,
+)
+
+SxT = TypeVar("SxT", bound=Shape, covariant=True, default=Shape)
+SxT2 = TypeVar(
+    "SxT2",
+    bound=Shape,
+)
+SxT3 = TypeVar(
+    "SxT3",
     bound=Shape,
 )
 
@@ -255,9 +266,15 @@ RwxT = TypeVar("RwxT", bound=CRUD, default=Any, contravariant=True)
 RwxT2 = TypeVar("RwxT2", bound=CRUD)
 RwxT3 = TypeVar("RwxT3", bound=CRUD)
 
+
+@final
+class FromChild:
+    """Singleton to mark type as derived from child (e.g. the same)."""
+
+
 ArgT = TypeVar("ArgT", contravariant=True, default=Any)
-ArgIdxT = TypeVar("ArgIdxT", contravariant=True, bound=Idx | Expand, default=Any)
-ArgDxT = TypeVar("ArgDxT", bound=Shape, contravariant=True, default=Any)
+ArgIdxT = TypeVar("ArgIdxT", bound=Idx | FromChild, contravariant=True, default=Any)
+ArgDxT = TypeVar("ArgDxT", bound=Shape | FromChild, contravariant=True, default=Any)
 
 
 class Ctx(Generic[ArgT, ArgIdxT, ArgDxT]):
@@ -273,25 +290,29 @@ CtxTt2 = TypeVarTuple("CtxTt2")
 CtxTt3 = TypeVarTuple("CtxTt3")
 
 
-class Base(Ctx[ArgT, Any, Any], ABC, Generic[ArgT, RwxT]):
+class Root(Ctx[ArgT, Any, Any], Generic[ArgT]):
+    """Base for retrieving/storing data."""
+
+
+RootT = TypeVar("RootT", bound=Root, covariant=True, default=Any)
+RootT2 = TypeVar("RootT2", bound=Root)
+
+
+class Base(Root[ArgT], ABC, Generic[ArgT, RwxT]):
     """Base for retrieving/storing data."""
 
     @property
     @abstractmethod
-    def connection(self) -> sqla.engine.Connection:
+    def connection(self: Root[SQL]) -> sqla.engine.Connection:
         """SQLAlchemy connection to the database."""
         ...
 
     @abstractmethod
     def registry[T: AutoIndexable](
-        self: Base[T, Any], value_type: type[T]
+        self: Base[T], value_type: type[T]
     ) -> Registry[T, RwxT, Base[T, RwxT]]:
         """Get the registry for a type in this base."""
         ...
-
-
-BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
-BaseT2 = TypeVar("BaseT2", bound=Base)
 
 
 @dataclass
@@ -308,7 +329,7 @@ type InputData[V, S] = V | Iterable[V] | Mapping[
 Params = ParamSpec("Params")
 
 
-class Frame(Generic[ExT, DxT]):
+class Frame(Generic[ExT, SxT]):
     """Raw data."""
 
     @overload
@@ -402,20 +423,20 @@ class Frame(Generic[ExT, DxT]):
 
 
 def frame_coalesce(
-    frame: Frame[ExT2, Shape[DxT2]],
+    frame: Frame[ExT2, Shape[SxT2]],
     coalesce: Literal["left", "right"] = "left",
-) -> Frame[ExT2, DxT2]:
+) -> Frame[ExT2, SxT2]:
     """Union two data instances and coalesce their columns."""
     data = frame.get()
 
     if isinstance(data, pl.DataFrame):
         if all(isinstance(d, pl.Boolean) for d in data.dtypes):
             return cast(
-                Frame[ExT2, DxT2], Frame(reduce(operator.or_, data.iter_columns()))
+                Frame[ExT2, SxT2], Frame(reduce(operator.or_, data.iter_columns()))
             )
 
         return cast(
-            Frame[ExT2, DxT2],
+            Frame[ExT2, SxT2],
             Frame(
                 data.select(
                     coalesced=(
@@ -433,12 +454,12 @@ def frame_coalesce(
             for c in data.selected_columns.values()
         ):
             return cast(
-                Frame[ExT2, DxT2],
+                Frame[ExT2, SxT2],
                 Frame(reduce(operator.or_, data.selected_columns.values())),
             )
 
         return cast(
-            Frame[ExT2, DxT2],
+            Frame[ExT2, SxT2],
             Frame(
                 (
                     sqla.func.coalesce(*data.selected_columns.values())
@@ -452,7 +473,7 @@ def frame_coalesce(
         all_cols = reduce(set.union, (set(d.columns) for d in data.values()))
 
         return cast(
-            Frame[ExT2, DxT2],
+            Frame[ExT2, SxT2],
             Frame(
                 pl.concat(
                     [
@@ -497,7 +518,7 @@ def frame_coalesce(
         )
 
         return cast(
-            Frame[ExT2, DxT2],
+            Frame[ExT2, SxT2],
             Frame(
                 sqla.select(
                     *(
@@ -557,7 +578,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     # Extension methods:
 
-    def _name(self) -> str:
+    def _id(self) -> str:
         """Name of the property."""
         raise NotImplementedError()
 
@@ -568,15 +589,15 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
     def _frame(
-        self: Data[Any, Any, Any, Any, Any, Base, *tuple[Any, ...]],
-    ) -> Frame[ExT, DxT]:
+        self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
+    ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, DxT],
-        mode: set[type[RwxT2]] = {C, U},
+        mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
@@ -587,35 +608,112 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     def fqn(self) -> str:
         """Fully qualified name of this dataset based on relational path."""
         if not isinstance(self.context, Data):
-            return self._name()
+            return self._id()
 
-        return self.context.fqn + "." + self._name()
-
-    @overload
-    def parent(
-        self: Data[
-            Any, Any, Any, ExT2, Any, CtxT2, *CtxTt2, Ctx[ValT3, Idx[*KeyTt3], DxT3]
-        ],
-    ) -> Data[ValT3, Idx[*KeyTt3], DxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+        return self.context.fqn + "." + self._id()
 
     @overload
     def parent(
         self: Data[
+            ValT2,
+            IdxT2,
+            SxT2,
+            ExT2,
             Any,
-            Expand[Idx[*KeyTt2, *KeyTt3]],
+            CtxT2,
+            *CtxTt2,
+            Ctx[FromChild, FromChild, FromChild],
+        ],
+    ) -> Data[ValT2, IdxT2, SxT2, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            ValT2,
+            IdxT2,
             Any,
             ExT2,
             Any,
             CtxT2,
             *CtxTt2,
-            Ctx[ValT3, Expand[Idx[*KeyTt3]], DxT3],
+            Ctx[FromChild, FromChild, SxT3],
         ],
-    ) -> Data[ValT3, Idx[*KeyTt2], DxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+    ) -> Data[ValT2, IdxT2, SxT3, ExT2, R, CtxT2, *CtxTt2]: ...
 
     @overload
     def parent(
         self: Data[
-            Any, Any, Any, ExT2, Any, Ctx[ValT3, Idx[*KeyTt3], DxT3], *tuple[()]
+            ValT2,
+            Any,
+            SxT2,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[FromChild, Idx[*KeyTt3], FromChild],
+        ],
+    ) -> Data[ValT2, Idx[*KeyTt3], SxT2, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any,
+            IdxT2,
+            SxT2,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[ValT3, FromChild, FromChild],
+        ],
+    ) -> Data[ValT3, IdxT2, SxT2, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any,
+            IdxT2,
+            Any,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[ValT3, FromChild, SxT3],
+        ],
+    ) -> Data[ValT3, IdxT2, SxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any,
+            Any,
+            SxT2,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[ValT3, Idx[*KeyTt3], FromChild],
+        ],
+    ) -> Data[ValT3, Idx[*KeyTt3], SxT2, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any,
+            Any,
+            Any,
+            ExT2,
+            Any,
+            CtxT2,
+            *CtxTt2,
+            Ctx[ValT3, Idx[*KeyTt3], SxT3],
+        ],
+    ) -> Data[ValT3, Idx[*KeyTt3], SxT3, ExT2, R, CtxT2, *CtxTt2]: ...
+
+    @overload
+    def parent(
+        self: Data[
+            Any, Any, Any, ExT2, Any, Ctx[ValT3, Idx[*KeyTt3], SxT3], *tuple[()]
         ],
     ) -> None: ...
 
@@ -643,7 +741,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     # Relational Identity:
 
     def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.typeref, self.context, self._name(), self._index()))
+        return gen_int_hash((self.typeref, self.context, self._id(), self._index()))
 
     # Index:
 
@@ -749,13 +847,13 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def select(
-        self: Data[Any, Any, Any, SQL],
+        self: Data[Any, Any, Any, SQL, Any, Base],
     ) -> sqla.Select: ...
 
     @overload
     def select(self: Data[Any, Any, Any, PL]) -> sqla.Select | None: ...
 
-    def select(self: Data) -> sqla.Select | None:
+    def select(self: Data[Any, Any, Shape]) -> sqla.Select | None:
         """Return select statement for this dataset."""
         frame = self._frame().get()
 
@@ -777,7 +875,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def select_str(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, SQL],
+        self: Data[Any, Any, Any, SQL, Any, Base],
     ) -> str: ...
 
     @overload
@@ -791,10 +889,11 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         if select is None:
             return None
 
-        assert isinstance(self.root, Base)
+        root = self.root()
+        assert isinstance(root, Base)
 
         return sqlparse.format(
-            str(select.compile(self.root.connection)),
+            str(select.compile(root.connection)),
             reindent=True,
             keyword_case="upper",
         )
@@ -824,26 +923,26 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def load(
-        self: Data[Any, Any, Col, Any, Any, Base],
+        self: Data[Any, Any, Col, Any, Any, Root],
     ) -> pl.Series: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Tab, Any, Any, Base],
+        self: Data[Any, Any, Tab, Any, Any, Root],
     ) -> pl.DataFrame: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Tabs, Any, Any, Base],
+        self: Data[Any, Any, Tabs, Any, Any, Root],
     ) -> dict[str, pl.DataFrame]: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Shape, Any, Any, Base],
+        self: Data[Any, Any, Shape, Any, Any, Root],
     ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]: ...
 
     def load(
-        self: Data[Any, Any, Any, PL, Any, Base],
+        self: Data[Any, Any, Any, PL, Any, Root],
     ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]:
         """Load dataset as dataframe."""
         frame = self._frame().get()
@@ -856,9 +955,12 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         select = self.select()
         assert select is not None
 
+        base = self.root()
+        assert isinstance(base, Base)
+
         res = pl.read_database(
             select,
-            self.root().connection,
+            base.connection,
         )
 
         if isinstance(frame, dict):
@@ -878,7 +980,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     # Collection interface:
 
     def values(
-        self: Data[Any, Any, Shape, PL, Any, Base],
+        self: Data[Any, Any, Shape, PL, Any, Root],
     ) -> Sequence[ValT]:
         """Iterable over this dataset's values."""
         data = self.load()
@@ -894,16 +996,16 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, FullIdx[KeyT2], Any, Any, Any, Base],
+        self: Data[Any, FullIdx[KeyT2], Any, Any, Any, Root],
     ) -> Sequence[KeyT2]: ...
 
     @overload
     def keys(
-        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Any, Base],
+        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Any, Root],
     ) -> Sequence[tuple[*KeyTt2]]: ...
 
     def keys(
-        self: Data[Any, Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Any, Any, Any, Root],
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
         idx = self.index()
@@ -911,43 +1013,43 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, FullIdx[KeyT2], Any, Any, Any, Base],
+        self: Data[Any, FullIdx[KeyT2], Any, Any, Any, Root],
     ) -> Iterable[tuple[KeyT2, ValT]]: ...
 
     @overload
     def items(
-        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Any, Base],
+        self: Data[Any, FullIdx[*KeyTt2], Any, Any, Any, Root],
     ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
 
     def items(
-        self: Data[Any, Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Any, Any, Any, Root],
     ) -> Iterable[tuple[Any, ValT]]:
         """Iterable over index keys."""
         return zip(self.keys(), self.values())
 
     @overload
     def get(
-        self: Data[Any, Idx[()], Any, Any, Any, Base],
+        self: Data[Any, Idx[()], Any, Any, Any, Root],
         key: None = ...,
         default: ValTo = ...,
     ) -> ValT | ValTo: ...
 
     @overload
     def get(
-        self: Data[ValT2, FullIdx[KeyT2], Any, Any, Any, Base],
+        self: Data[ValT2, FullIdx[KeyT2], Any, Any, Any, Root],
         key: KeyT2 | tuple[KeyT2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     @overload
     def get(
-        self: Data[ValT2, FullIdx[*KeyTt2], Any, Any, Any, Base],
+        self: Data[ValT2, FullIdx[*KeyTt2], Any, Any, Any, Root],
         key: tuple[*KeyTt2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     def get(
-        self: Data[Any, Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Any, Any, Any, Root],
         key: Hashable = None,
         default: ValTo = None,
     ) -> ValT | ValTo:
@@ -958,11 +1060,11 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             return default
 
     def __iter__(  # noqa: D105
-        self: Data[Any, Any, Any, Any, Any, Base],
+        self: Data[Any, Any, Any, Any, Any, Root],
     ) -> Iterator[ValT]:
         return iter(self.values())
 
-    def __len__(self: Data[Any, Any, Any, Any, Any, Base]) -> int:
+    def __len__(self: Data[Any, Any, Any, Any, Any, Root]) -> int:
         """Get the number of items in the dataset."""
         frame = self._frame().get()
         if isinstance(frame, pl.Series | pl.DataFrame):
@@ -971,28 +1073,54 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         query = self.query()
         assert query is not None
 
-        count = (
-            self.root()
-            .connection.execute(sqla.select(sqla.func.count()).select_from(query))
-            .scalar()
-        )
+        base = self.root()
+        assert isinstance(base, Base)
+
+        count = base.connection.execute(
+            sqla.select(sqla.func.count()).select_from(query)
+        ).scalar()
         assert count is not None
 
         return count
 
     # Application:
 
-    # 1. Context application, altered index, kept value
+    # 1. Context application, altered index, kept value + DxT
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
         key: Data[
-            KeepVal,
+            Keep,
+            ModIdx[Idx[*KeyTt4], Idx[*KeyTt3]],
+            Keep,
+            ExT2,
+            RwxT2,
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        RwxT2,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+        *CtxTt3,
+    ]: ...
+
+    # 2. Context application, altered index, kept value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
+        key: Data[
+            Keep,
             ModIdx[Idx[*KeyTt4], Idx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT2],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1003,11 +1131,11 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT2],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 2. Context application, altered index, new value
+    # 3. Context application, altered index, new value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
@@ -1017,7 +1145,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT2],
+            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1028,21 +1156,46 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], DxT2],
+        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 3. Context application, new index, kept value
+    # 4. Context application, new index, kept value + DxT
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
         key: Data[
-            KeepVal,
+            Keep,
+            FullIdx[*KeyTt3],
+            Keep,
+            ExT2,
+            RwxT2,
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt3],
+        DxT2,
+        ExT2,
+        RwxT2,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
+        *CtxTt3,
+    ]: ...
+
+    # 5. Context application, new index, kept value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
+        key: Data[
+            Keep,
             FullIdx[*KeyTt3],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2], DxT2],
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1053,11 +1206,11 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2], DxT2],
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 4. Context application, new index, new value
+    # 6. Context application, new index, new value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
@@ -1067,7 +1220,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2], DxT2],
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1078,42 +1231,56 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2], DxT2],
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 5. Key list / slice filtering, scalar index type
+    # 7. Key list / slice filtering, scalar index type
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], Any, Any, RU],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, DxT, ExT, RU, CtxT, *CtxTt]: ...
 
-    # 6. Key list / slice filtering
+    # 8. Key list / slice filtering
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any, RU],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, DxT, ExT, RU, CtxT, *CtxTt]: ...
 
-    # 7. Key list / slice filtering, scalar index type, ro
+    # 9. Key list / slice filtering, scalar index type, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], Any, Any, R],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, DxT, ExT, R, CtxT, *CtxTt]: ...
 
-    # 8. Key list / slice filtering, ro
+    # 10. Key list / slice filtering, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any, R],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, DxT, ExT, R, CtxT, *CtxTt]: ...
 
-    # 9. Key selection
+    # 11. Key selection, fully rooted
     @overload
     def __getitem__(
-        self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2], DxT2],
+        self: Data[Any, AnyIdx[*KeyTt3], Any, Any, Any, Root],
+        key: tuple[*KeyTt3],
+    ) -> ValT: ...
+
+    # 12. Key selection, fully rooted, scalar
+    @overload
+    def __getitem__(
+        self: Data[Any, AnyIdx[KeyT3], Any, Any, Any, Root],
+        key: KeyT3,
+    ) -> ValT: ...
+
+    # 13. Key selection
+    @overload
+    def __getitem__(
+        self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2], SxT2],
         key: tuple[*KeyTt3],
     ) -> Data[
         ValT,
@@ -1123,13 +1290,13 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt3, *KeyTt2], DxT2],
+        Ctx[ValT, Idx[*KeyTt3, *KeyTt2], SxT2],
     ]: ...
 
-    # 10. Key selection, scalar
+    # 14. Key selection, scalar
     @overload
     def __getitem__(
-        self: Data[Any, AnyIdx[KeyT3, *KeyTt2], DxT2],
+        self: Data[Any, AnyIdx[KeyT3, *KeyTt2], SxT2],
         key: KeyT3,
     ) -> Data[
         ValT,
@@ -1139,18 +1306,18 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         RwxT,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[KeyT3, *KeyTt2], DxT2],
+        Ctx[ValT, Idx[KeyT3, *KeyTt2], SxT2],
     ]: ...
 
-    # 11. Base type selection
+    # 15. Base type selection
     @overload
     def __getitem__(
-        self: Base[ValT2, RwxT2],
+        self: Base[ValT2],
         key: type[ValT2],
     ) -> Data[ValT2, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
 
     def __getitem__(
-        self,
+        self: Data | Base,
         key: Data | list | slice | tuple[slice, ...] | Hashable | type,
     ) -> Data | ValT:
         """Expand the relational-computational graph."""
@@ -1174,14 +1341,26 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
                 return self.registry(key)
             case list() | slice() | Hashable():
+                assert isinstance(self, Data)
+
+                rooted = False
                 if not isinstance(key, list | slice) and not has_type(
                     key, tuple[slice, ...]
                 ):
                     key = [key]
+                    if len(key) == len(self._idx_components()) and is_subtype(
+                        self.typeargs[CtxT], Root
+                    ):
+                        rooted = True
 
                 keymap = self._map_index_filters(key)
+                filtered = self[Filter.from_keymap(keymap)]
 
-                return self[Filter.from_keymap(keymap)]
+                if rooted:
+                    vals = cast(Data[Any, Any, Any, Any, Any, Root], filtered).values()
+                    return vals[0]
+
+                return filtered
 
     # Alignment:
 
@@ -1307,50 +1486,50 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     @overload
     def _map_reduce_operator(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Shape[DxT3], ExT2],
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], Shape[SxT3], ExT2],
         op: Callable[[ValT2, ValT2], ValT3],
         right: Literal[Not.defined] = ...,
     ) -> Data[
         ValT3,
         Idx[*KeyTt2],
-        DxT3,
+        SxT3,
         ExT2,
         R,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DxT3],
+        Ctx[ValT, Idx[*KeyTt2], SxT3],
     ]: ...
 
     @overload
     def _map_reduce_operator(
-        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], DxT3, ExT2],
+        self: Data[tuple[ValT2, ...], AnyIdx[*KeyTt2], SxT3, ExT2],
         op: Callable[[ValT2, ValT4], ValT3],
         right: ValT4,
     ) -> Data[
         ValT3,
         Idx[*KeyTt2],
-        DxT3,
+        SxT3,
         ExT2,
         R,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DxT3],
+        Ctx[ValT, Idx[*KeyTt2], SxT3],
     ]: ...
 
     @overload
     def _map_reduce_operator(
-        self: Data[ValT2, AnyIdx[*KeyTt2], DxT3, ExT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], SxT3, ExT2],
         op: Callable[[ValT2], ValT3],
         right: Literal[Not.defined] = ...,
     ) -> Data[
         ValT3,
         Idx[*KeyTt2],
-        DxT3,
+        SxT3,
         ExT2,
         R,
         CtxT,
         *CtxTt,
-        Ctx[ValT, Idx[*KeyTt2], DxT3],
+        Ctx[ValT, Idx[*KeyTt2], SxT3],
     ]: ...
 
     def _map_reduce_operator(
@@ -1654,12 +1833,12 @@ RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)
 
 
 @dataclass(kw_only=True)
-class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, BaseT, None]):
+class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, RootT, None]):
     """Represent a base data type collection."""
 
     _instance_map: dict[Hashable, RegT] = field(default_factory=dict)
 
-    def _name(self) -> str:
+    def _id(self) -> str:
         ctx_module = getmodule(self.common_value_type)
         return (
             (
@@ -1668,7 +1847,7 @@ class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, BaseT, None]):
                 else self.common_value_type.__name__
             )
             + "."
-            + self._name()
+            + self._id()
         )
 
 
@@ -1687,7 +1866,7 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         """Get the value types."""
         return tuple(d.value_typeform for d in self.data)
 
-    def _name(self) -> str:
+    def _id(self) -> str:
         """Name of the property."""
         # TODO: Implement this method for the Align class.
         raise NotImplementedError()
@@ -1699,8 +1878,8 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
     def _frame(
-        self,
-    ) -> Frame[ExT, DxT]:
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -1720,34 +1899,34 @@ class Transform(
 
     @overload
     def __init__(
-        self: Transform[ValT2, DxT2, ValT3, Idx[()], Idx[()], DxT3, ExT2],
+        self: Transform[ValT2, SxT2, ValT3, Idx[()], Idx[()], SxT3, ExT2],
         func: Callable[[ValT2], ValT3],
-        frame_func: Callable[[Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+        frame_func: Callable[[Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
     ): ...
 
     @overload
     def __init__(
-        self: Transform[ValT2, DxT2, ValT3, Idx[*KeyTt2], Idx[()], DxT3, ExT2],
+        self: Transform[ValT2, SxT2, ValT3, Idx[*KeyTt2], Idx[()], SxT3, ExT2],
         func: Callable[[Iterable[ValT2]], ValT3],
-        frame_func: Callable[[Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+        frame_func: Callable[[Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
         contract: SingleTypeDef[Idx[*KeyTt2]],
     ): ...
 
     @overload
     def __init__(
         self: Transform[
-            Iterable[ValT2], Shape[DxT3], ValT3, Idx[()], Idx[()], DxT3, ExT2
+            Iterable[ValT2], Shape[SxT3], ValT3, Idx[()], Idx[()], SxT3, ExT2
         ],
         func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
-        frame_func: Callable[[Frame[ExT2, Shape[DxT3]]], Frame[ExT2, DxT3]],
+        frame_func: Callable[[Frame[ExT2, Shape[SxT3]]], Frame[ExT2, SxT3]],
         contract: Literal["value"],
     ): ...
 
     @overload
     def __init__(
-        self: Transform[Iterable[ValT2], DxT2, ValT3, Idx[()], Idx[()], DxT3, ExT2],
+        self: Transform[Iterable[ValT2], SxT2, ValT3, Idx[()], Idx[()], SxT3, ExT2],
         func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
-        frame_func: Callable[[Frame[ExT2, DxT2], Frame[ExT2, DxT2]], Frame[ExT2, DxT3]],
+        frame_func: Callable[[Frame[ExT2, SxT2], Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
         contract: Literal["value"],
     ): ...
 
@@ -1755,7 +1934,7 @@ class Transform(
         self.context = Interface()
         # TODO: Implement the constructor for the Transform class.
 
-    def _name(self) -> str:
+    def _id(self) -> str:
         """Name of the property."""
         # TODO: Implement this method for the Map class.
         raise NotImplementedError()
@@ -1767,8 +1946,8 @@ class Transform(
         raise NotImplementedError()
 
     def _frame(
-        self,
-    ) -> Frame[ExT, DxT]:
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -1790,29 +1969,26 @@ unstable_hash = Transform(
 )
 
 
-RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
-
-
 class Filter(
     Data[
-        KeepVal,
+        Keep,
         KeepIdx,
-        DxT,
+        Keep,
         ExT,
-        RuTi,
-        Interface[Any, Any, Any],
+        R | U,
+        Interface,
     ]
 ):
     """Filter a dataset."""
 
-    def __init__(self, bool_data: Data[bool, Any, DxT, ExT, Any, CtxT]):  # noqa: D107
+    def __init__(self, bool_data: Data[bool, Any, Col, ExT, Any]):  # noqa: D107
         self.context = Interface()
         self.bool_data = bool_data
 
     @staticmethod
     def from_keymap(
-        keymap: Mapping[Data[Any, Any, Col, ExT2, Any, CtxT], slice | Collection],
-    ) -> Filter[Any, ExT2, Any]:
+        keymap: Mapping[Data[Any, Any, Col, ExT2, Any], slice | Collection],
+    ) -> Filter[ExT2]:
         """Construct filter from index key map."""
         bool_data = reduce(
             operator.and_, (idx.isin(filt) for idx, filt in keymap.items())
@@ -1820,7 +1996,7 @@ class Filter(
 
         return Filter(bool_data=bool_data)
 
-    def _name(self) -> str:
+    def _id(self) -> str:
         """Name of the property."""
         # TODO: Implement this method for the Filter class.
         raise NotImplementedError()
@@ -1832,7 +2008,57 @@ class Filter(
         raise NotImplementedError()
 
     def _frame(
-        self,
-    ) -> Frame[ExT, DxT]:
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Data[Any, Any, Any, Any, RwxT2],
+        input_data: InputData[ValT, DxT],
+        mode: Set[type[RwxT2]] = {U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
+        raise NotImplementedError()
+
+
+class KeySelect(
+    Data[
+        Keep,
+        Reduce[SubIdxT],
+        Keep,
+        ExT,
+        R | U,
+        Interface,
+    ]
+):
+    """Select a specific key value (prefix)."""
+
+    def __init__(self: KeySelect[Idx[*KeyTt2]], key: tuple[*KeyTt2]):  # noqa: D107
+        self.context = Interface()
+        self.key = key
+
+    def _id(self) -> str:
+        """Name of the property."""
+        # TODO: Implement this method for the Filter class.
+        raise NotImplementedError()
+
+    def _index(
+        self,
+    ) -> Reduce[SubIdxT]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[ExT, SxT2]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Data[Any, Any, Any, Any, RwxT2],
+        input_data: InputData[ValT, DxT],
+        mode: Set[type[RwxT2]] = {U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()

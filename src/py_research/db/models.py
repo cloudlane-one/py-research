@@ -21,7 +21,6 @@ from typing import (
 )
 
 import polars as pl
-import sqlalchemy as sqla
 from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
@@ -41,19 +40,20 @@ from py_research.types import DataclassInstance, Not
 
 from .data import (
     PL,
-    AutoIndexable,
-    Base,
+    SQL,
     Ctx,
     CtxTt,
     Data,
     DxT,
     Expand,
     ExT,
+    Frame,
     Idx,
     Interface,
     R,
-    Registry,
+    Root,
     RwxT,
+    SxT2,
     Tab,
     U,
     ValT,
@@ -136,15 +136,11 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
                 if self.setter is not None:
                     self.setter = default_prop.setter
 
-    def _name(self) -> str:
-        """Name of the property."""
-        assert self.alias is not None
-        return self.alias
-
     @property
     def name(self) -> str:
         """Name of the property."""
-        return self._name()
+        assert self.alias is not None
+        return self.alias
 
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash((self.typeref, self.alias, self.typeargs[OwnT]))
@@ -166,7 +162,7 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
     @overload
     def __get__(
         self: Prop, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Base, Ctx[OwnT, Idx[()], Tab], *CtxTt]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT, Idx[()], Tab], *CtxTt]: ...
 
     @overload
     def __get__(self: Prop, instance: Any, owner: type | None) -> Any: ...
@@ -310,7 +306,7 @@ class ModelMeta(type):
     @property
     def __dataclass_fields__(cls) -> dict[str, Field]:  # noqa: D105
         return {
-            p._name(): Field(
+            p.name: Field(
                 p.default if p.default is not Not.defined else MISSING,
                 (
                     p.default_factory if p.default_factory is not None else MISSING
@@ -330,19 +326,8 @@ ModT = TypeVar("ModT", bound="Model", covariant=True)
 
 
 @dataclass(kw_only=True)
-class Memory(Base["Model", R]):
+class Memory(Root["Model"]):
     """In-memory base for models."""
-
-    @property
-    def connection(self) -> sqla.engine.Connection:
-        """SQLAlchemy connection to the database."""
-        ...
-
-    def registry[T: AutoIndexable](
-        self: Memory, value_type: type[T]
-    ) -> Registry[T, R, Base[T, R]]:
-        """Get the registry for a type in this base."""
-        ...
 
 
 @dataclass(kw_only=True)
@@ -388,7 +373,7 @@ class Model(DataclassInstance, metaclass=ModelMeta):
                 **cast(
                     dict[str, Any],
                     {
-                        p._name(): (
+                        p.name: (
                             p.typeref.hint if p.typeref is not None else Any,
                             p.default,
                         )
@@ -518,6 +503,32 @@ class Model(DataclassInstance, metaclass=ModelMeta):
         """Return a string representation of the record."""
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
-    def _data(self) -> Data[Self, Idx[Any, Any], Tab, Any, R, Base]:
+    def _data(self) -> Data[Self, Idx[Any, Any], Tab, Any, R, Root]:
         """Return the singleton class for this record."""
         return Singleton(model=self)
+
+
+ModTi = TypeVar("ModTi", bound=Model, default=Any)
+
+
+class Crawl(Data[ModTi, Idx, Tab, SQL, R, Interface[ModTi, Any, Tab]]):
+    """Perform recursive union through prop loops."""
+
+    loops: Iterable[Data[ModTi, Any, Tab, SQL, Any, Interface[ModTi, Any, Tab]]]
+
+    def _id(self) -> str:
+        """Name of the property."""
+        # TODO: Implement this method for the Crawl class.
+        raise NotImplementedError()
+
+    def _index(
+        self,
+    ) -> Idx:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[SQL, SxT2]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
