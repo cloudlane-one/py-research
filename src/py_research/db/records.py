@@ -7,7 +7,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
 from io import BytesIO
-from operator import attrgetter
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
@@ -60,6 +59,7 @@ from .data import (
     U,
     ValT,
     ValT2,
+    frame_coalesce,
 )
 from .models import Model, Prop
 from .utils import (
@@ -496,7 +496,9 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
                 input_sql = input_sql.select().with_only_columns(
                     *(
                         input_sql.c[col.name].label(name)
-                        for name, col in self._base_col_map[base_type].items()
+                        for name, col in self._base_table_map[base_type][
+                            0
+                        ].columns.items()
                     )
                 )
 
@@ -535,26 +537,58 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
             type[Record], tuple[sqla.Table, sqla.ColumnElement[bool] | None]
         ] = {}
 
-        for rec in self.value_type_set:
-            super_recs = (r for r in rec._model_superclasses if issubclass(r, Record))
-            for base_rec in (rec, *super_recs):
-                if base_rec not in base_table_map:
-                    table = base._get_base_table(rec)
-                    join_on = (
-                        None
-                        if base_rec is rec
-                        else reduce(
+        rec_list = list(
+            sorted(
+                self.value_type_set,
+                key=cmp_to_key(
+                    lambda x, y: (
+                        -1 if issubclass(y, x) else 1 if issubclass(x, y) else 0
+                    )
+                ),
+            )
+        )
+
+        first_rec = rec_list[0]
+        first_table = base._get_base_table(first_rec)
+        base_table_map[first_rec] = (first_table, None)
+
+        for leaf_rec in rec_list[1:]:
+            leaf_table = base._get_base_table(leaf_rec)
+            base_table_map[leaf_rec] = (
+                leaf_table,
+                reduce(
+                    sqla.and_,
+                    (
+                        pk_first == pk_leaf
+                        for pk_first, pk_leaf in zip(
+                            first_table.primary_key.columns,
+                            leaf_table.primary_key.columns,
+                            strict=False,
+                        )
+                    ),
+                ),
+            )
+
+            super_recs = (
+                r for r in leaf_rec._model_superclasses if issubclass(r, Record)
+            )
+            for super_rec in super_recs:
+                if super_rec not in base_table_map:
+                    super_table = base._get_base_table(leaf_rec)
+                    base_table_map[super_rec] = (
+                        super_table,
+                        reduce(
                             sqla.and_,
                             (
-                                pk_sel == pk_super
-                                for pk_sel, pk_super in zip(
-                                    base._map_pk(rec).columns,
-                                    base._map_pk(base_rec).columns,
+                                pk_leaf == pk_super
+                                for pk_leaf, pk_super in zip(
+                                    leaf_table.primary_key.columns,
+                                    super_table.primary_key.columns,
+                                    strict=True,
                                 )
                             ),
-                        )
+                        ),
                     )
-                    base_table_map[base_rec] = (table, join_on)
 
         return dict(
             sorted(
@@ -569,95 +603,30 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
             )
         )
 
-    @cached_prop
-    def _base_col_map(self) -> dict[type[Record], dict[str, sqla.Column]]:
-        """Return the column set for all record types."""
-        name_attr = attrgetter("name" if len(self.value_type_set) == 1 else "fqn")
-        return {
-            rec: {
-                name_attr(col): sql_col
-                for col, sql_col in self.root()._map_cols(rec).items()
-            }
-            for rec in self._base_table_map.keys()
-        }
-
     def _get_base_union(self) -> sqla.FromClause:
         """Recursively join all bases of this record to get the full data."""
-        sel_tables = {
-            rec: table
-            for rec, (table, join_on) in self._base_table_map.items()
-            if join_on is None
+        bm_vals = list(self._base_table_map.values())
+
+        joined = reduce(
+            lambda x, y: x.join(y[0], y[1]), bm_vals[1:], bm_vals[0][0]
+        ).select()
+
+        split = {
+            rec._fqn: joined.with_only_columns(*tab.columns)
+            for rec, (tab, _) in self._base_table_map.items()
         }
-        base = self.root()
 
-        def _union(
-            union_stage: tuple[type[Record] | None, sqla.Select],
-            next_union: tuple[type[Record], sqla.Join | sqla.Table],
-        ) -> tuple[type[Record] | None, sqla.Select]:
-            left_rec, left_table = union_stage
-            right_rec, right_table = next_union
+        coalesced = frame_coalesce(Frame(split)).get()
 
-            right_table = right_table.select().with_only_columns(
-                *(
-                    col.label(name)
-                    for name, col in self._base_col_map[right_rec].items()
-                )
-            )
-
-            if left_rec is not None and len(
-                set(left_rec._pk.columns) & set(right_rec._pk.columns)  # type: ignore
-            ):
-                return left_rec, coalescent_join_sql(
-                    left_table.alias(),
-                    right_table.alias(),
-                    reduce(
-                        sqla.and_,
-                        (
-                            left_pk == right_pk
-                            for left_pk, right_pk in zip(
-                                base._map_pk(left_rec).columns,
-                                base._map_pk(right_rec).columns,
-                            )
-                        ),
-                    ),
-                )
-            else:
-                return None, left_table.union(right_table).select()
-
-        if len(sel_tables) > 1:
-            rec_query_items = list(sel_tables.items())
-            first_rec, first_select = rec_query_items[0]
-            first: tuple[type[Record] | None, sqla.Select] = (
-                first_rec,
-                first_select.select().with_only_columns(
-                    *(
-                        col.label(name)
-                        for name, col in self._base_col_map[first_rec].items()
-                    )
-                ),
-            )
-
-            _, base_union = reduce(_union, rec_query_items[1:], first)
-        else:
-            base_union = list(sel_tables.values())[0]
-
-        base_join = base_union
-        for base_table, join_on in self._base_table_map.values():
-            if join_on is not None:
-                base_join = base_join.join(base_table, join_on)
-
-        res = base_join.subquery() if isinstance(base_join, sqla.Select) else base_join
-        setattr(res, "_tab", self)
-        return res
+        query = coalesced.subquery()
+        setattr(query, "_tab", self)
+        return query
 
     def _get_upload_table(self) -> sqla.Table:
         cols = {
-            name: col.copy()
-            for cols in self._base_col_map.values()
-            for name, col in cols.items()
+            name: sqla.Column(col.key, col.type)
+            for name, col in self.select().c.items()
         }
-        for name, col in cols.items():
-            col.name = name
 
         return sqla.Table(
             f"upload/{self.fqn.replace('.', '_')}/{token_hex(5)}",
@@ -895,6 +864,10 @@ class DataBase(
     def registry[T: AutoIndexable](
         self: Base[T], value_type: type[T]
     ) -> Registry[T, RwxT, Base[T, RwxT]]:
+        """Get the registry for a type in this base."""
+        ...
+
+    def table[T: Record](self, value_type: type[T]) -> Table[T, RwxT]:
         """Get the registry for a type in this base."""
         ...
 

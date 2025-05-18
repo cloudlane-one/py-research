@@ -344,7 +344,10 @@ class Frame(Generic[ExT, SxT]):
     def __init__(self: Frame[SQL, Col], data: sqla.ColumnElement) -> None: ...
 
     @overload
-    def __init__(self: Frame[SQL, Tab | Tabs], data: sqla.Select) -> None: ...
+    def __init__(self: Frame[SQL, Tab], data: sqla.Select) -> None: ...
+
+    @overload
+    def __init__(self: Frame[SQL, Tabs], data: dict[str, sqla.Select]) -> None: ...
 
     @overload
     def __init__(
@@ -2047,7 +2050,8 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     """Alignment of multiple props."""
 
     data: tuple[Data[Any, IdxT, Any, Any, RwxT, CtxT, *CtxTt], ...]
-    join: Literal["left", "right", "full"] = "full"
+    join: Literal["left", "right", "outer", "inner"] = "outer"
+    match_idx_on: Literal["value", "value+id", "value+id+path"] = "value"
 
     @cached_prop
     def value_types(self) -> tuple[SingleTypeDef[ValT] | UnionType, ...]:

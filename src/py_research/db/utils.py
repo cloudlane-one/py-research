@@ -288,7 +288,9 @@ def safe_delete(
             )
         )
     else:
-        raise NotImplementedError("Replacement not supported for this dialect.")
+        raise NotImplementedError(
+            f"Deletion not supported for dialect {engine.dialect.name}."
+        )
 
 
 def safe_insert(
@@ -351,7 +353,9 @@ def safe_insert(
         return statement.prefix_with("INSERT IGNORE INTO")
     else:
         # For others, use CTE: https://docs.sqlalchemy.org/en/20/core/selectable.html#sqlalchemy.sql.expression.Select.cte
-        raise NotImplementedError("Upsert not supported for this database dialect.")
+        raise NotImplementedError(
+            f"Upsert not supported for dialect {engine.dialect.name}."
+        )
 
 
 def safe_update(
@@ -379,7 +383,9 @@ def safe_update(
         )
     else:
         # Correlated update.
-        raise NotImplementedError("Correlated update not supported yet.")
+        raise NotImplementedError(
+            f"Correlated update not supported for dialect {engine.dialect.name}."
+        )
 
 
 def split_df_by_prefixes(

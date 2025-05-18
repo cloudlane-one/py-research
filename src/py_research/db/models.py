@@ -146,8 +146,13 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
         assert self.alias is not None
         return self.alias
 
+    @property
+    def owner(self: Prop[Any, Any, Any, Any, Any, OwnT2]) -> type[OwnT2]:
+        """Owner of the property."""
+        return cast(type[OwnT2], self.typeargs[OwnT])
+
     def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.typeref, self.alias, self.typeargs[OwnT]))
+        return gen_int_hash((self.typeref, self.alias, self.owner))
 
     # Descriptor read/write:
 
