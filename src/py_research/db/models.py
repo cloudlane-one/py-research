@@ -1,4 +1,4 @@
-"""Static schemas for universal relational databases."""
+"""Basis for modeling complex data."""
 
 from __future__ import annotations
 
@@ -26,10 +26,12 @@ from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
 from py_research.data import Params, copy_and_override
+from py_research.hashing import gen_int_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
     GenericAlias,
     SingleTypeDef,
+    TypeAware,
     TypeRef,
     get_base_type,
     get_typevar_map,
@@ -47,7 +49,6 @@ from .data import (
     DxT,
     Expand,
     ExT,
-    FullIdxT,
     Idx,
     Interface,
     R,
@@ -67,7 +68,7 @@ IdxT = TypeVar("IdxT", bound=Idx, default=Any)
 
 
 @dataclass
-class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
+class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
     """Property definition for a model."""
 
     init_after: ClassVar[set[type[Prop]]] = set()
@@ -94,18 +95,13 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
         if len(matching) == 0:
             return None
 
-        return matching[0]()
+        return cast(Callable[[], Prop], matching[0])()
 
-    data: (
-        Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt]
-        | None
-    ) = None
-    getter: Callable[[OwnT], ValT | Literal[Not.resolved]] | None = None
+    data: Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt]
+    getter: Callable[[OwnT], ValT | Literal[Not.resolved]]
     setter: Callable[[OwnT, ValT], None] | None = None
 
     alias: str | None = None
-    typeref: TypeRef | None = None
-
     default: ValT | Literal[Not.defined] = Not.defined
     default_factory: Callable[[], ValT] | None = None
     init: bool = True
@@ -149,6 +145,9 @@ class Prop(Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
     def name(self) -> str:
         """Name of the property."""
         return self._name()
+
+    def __hash__(self) -> int:  # noqa: D105
+        return gen_int_hash((self.typeref, self.alias, self.typeargs[OwnT]))
 
     # Descriptor read/write:
 
@@ -327,7 +326,7 @@ class ModelMeta(type):
         }
 
 
-ModT = TypeVar("ModT", bound="Model[Any]", covariant=True)
+ModT = TypeVar("ModT", bound="Model", covariant=True)
 
 
 @dataclass(kw_only=True)
@@ -361,12 +360,13 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
     field_specifiers=(Prop,),
     eq_default=False,
 )
-class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
+class Model(DataclassInstance, metaclass=ModelMeta):
     """Schema for a record in a database."""
 
     _template: ClassVar[bool]
     _derivate: ClassVar[bool] = False
     _root_class: ClassVar[bool] = True
+    _fqn: ClassVar[str] = "dbase.Model"
 
     __pydantic_model: ClassVar[type[BaseModel]] | None = None
 
@@ -376,6 +376,8 @@ class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
         cls._root_class = False
         if "_template" not in cls.__dict__:
             cls._template = False
+
+        cls._fqn = f"{cls.__module__}.{cls.__name__}"
 
     @classmethod
     def _pydantic_model(cls) -> type[BaseModel]:
@@ -448,8 +450,11 @@ class Model(DataclassInstance, Generic[FullIdxT], metaclass=ModelMeta):
         cls = type(self)
         props = cls._props
         prop_types = {
-            get_base_type(
-                p.typeref.hint if p.typeref is not None else type(p), bound=Prop
+            cast(
+                type[Prop],
+                get_base_type(
+                    p.typeref.hint if p.typeref is not None else type(p), bound=Prop
+                ),
             )
             for p in props.values()
         }

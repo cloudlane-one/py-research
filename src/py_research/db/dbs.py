@@ -1,4 +1,4 @@
-"""Static schemas for universal relational databases."""
+"""Relational databases."""
 
 from __future__ import annotations
 
@@ -83,6 +83,260 @@ type OverlayType = Literal["transaction", "name_prefix", "db_schema"]
 
 
 type MutationMode = Literal["update", "upsert", "replace", "insert", "delete"]
+
+
+@dataclass
+class Table(Generic[RecT, BackT, RwxT]):
+    """Table matching a table model, may be filtered."""
+
+    base: Base[Any, BackT]
+    rec_types: set[type[RecT]]
+    content: (
+        str | sqla.FromClause | pd.DataFrame | pl.DataFrame | Iterable[Record] | None
+    ) = None
+
+    @cached_prop
+    def fqn(self) -> str:
+        """Fully qualified name of this table based on its record types."""
+        return "|".join(rec._fqn for rec in self.rec_types)
+
+    @cached_prop
+    def sql(self) -> sqla.FromClause:
+        """This table's from clause."""
+        match self.content:
+            case str():
+                return sqla.table(self.content)
+            case sqla.FromClause():
+                return self.content
+            case pd.DataFrame() | pl.DataFrame():
+                return self._upload_df(self.content)
+            case Iterable():
+                return self._upload_df(records_to_df(self.content))
+            case None:
+                return self._get_base_union()
+
+    def df(self: Table[Any, DynBackendID, Any]) -> pl.DataFrame:
+        """Return the table as a DataFrame."""
+        return pl.read_database(self.sql, self.base.connection)
+
+    def mutate(
+        self: Table[Any, Any, CRUD],
+        input_table: Table[RecT2, BackT, Any],
+        mode: MutationMode = "update",
+    ) -> None:
+        """Mutate given table."""
+        tables = {rec: table for rec, (table, _) in self._base_table_map.items()}
+        input_sql = input_table.sql
+
+        statements: list[sqla.Executable] = []
+
+        if mode in ("replace", "delete"):
+            # Delete current records first.
+            statements += [
+                safe_delete(table, input_sql, self.base.engine)
+                for table in tables.values()
+            ]
+
+        if mode != "delete":
+            for base_type, table in tables.items():
+                # Rename input columns to match base table columns.
+                input_sql = input_sql.select().with_only_columns(
+                    *(
+                        input_sql.c[col.name].label(name)
+                        for name, col in self._base_col_map[base_type].items()
+                    )
+                )
+
+                if mode == "update":
+                    statements.append(safe_update(table, input_sql, self.base.engine))
+                else:
+                    statements.append(
+                        safe_insert(
+                            table,
+                            input_sql,
+                            self.base.engine,
+                            upsert=(mode == "upsert"),
+                        )
+                    )
+
+        # Execute delete / insert / update statements.
+        con = self.base.connection
+        for statement in statements:
+            con.execute(statement)
+
+        if self.base.backend_type == "excel-file":
+            self.base._save_to_excel(
+                # {self.record_type, *self.record_type._record_superclasses}
+            )
+
+    def validate(
+        self, inspector: sqla.Inspector | None = None, required: bool = False
+    ) -> None:
+        """Perform pre-defined schema validations."""
+        inspector = inspector or sqla.inspect(self.base.engine)
+
+        for table, _ in self._base_table_map.values():
+            validate_sql_table(inspector, table, required)
+
+    def __clause_element__(self) -> sqla.FromClause:
+        """Return the table clause element."""
+        return self.sql
+
+    @cached_prop
+    def _base_table_map(
+        self,
+    ) -> dict[type[Record], tuple[sqla.Table, sqla.ColumnElement[bool] | None]]:
+        """Return the base SQLAlchemy table objects for all record types."""
+        base_table_map: dict[
+            type[Record], tuple[sqla.Table, sqla.ColumnElement[bool] | None]
+        ] = {}
+        for rec in self.rec_types:
+            super_recs = (r for r in rec._model_superclasses if issubclass(r, Record))
+            for base_rec in (rec, *super_recs):
+                if base_rec not in base_table_map:
+                    table = self.base._get_base_table(rec)
+                    join_on = (
+                        None
+                        if base_rec is rec
+                        else reduce(
+                            sqla.and_,
+                            (
+                                pk_sel == pk_super
+                                for pk_sel, pk_super in zip(
+                                    self.base._map_pk(rec).columns,
+                                    self.base._map_pk(base_rec).columns,
+                                )
+                            ),
+                        )
+                    )
+                    base_table_map[base_rec] = (table, join_on)
+
+        return dict(
+            sorted(
+                base_table_map.items(),
+                key=cmp_to_key(
+                    lambda x, y: (
+                        -1
+                        if issubclass(y[0], x[0])
+                        else 1 if issubclass(x[0], y[0]) else 0
+                    )
+                ),
+            )
+        )
+
+    @cached_prop
+    def _base_col_map(self) -> dict[type[Record], dict[str, sqla.Column]]:
+        """Return the column set for all record types."""
+        name_attr = attrgetter("name" if len(self.rec_types) == 1 else "fqn")
+        return {
+            rec: {
+                name_attr(col): sql_col
+                for col, sql_col in self.base._map_cols(rec).items()
+            }
+            for rec in self._base_table_map.keys()
+        }
+
+    def _get_base_union(self) -> sqla.FromClause:
+        """Recursively join all bases of this record to get the full data."""
+        sel_tables = {
+            rec: table
+            for rec, (table, join_on) in self._base_table_map.items()
+            if join_on is None
+        }
+
+        def _union(
+            union_stage: tuple[type[Record] | None, sqla.Select],
+            next_union: tuple[type[Record], sqla.Join | sqla.Table],
+        ) -> tuple[type[Record] | None, sqla.Select]:
+            left_rec, left_table = union_stage
+            right_rec, right_table = next_union
+
+            right_table = right_table.select().with_only_columns(
+                *(
+                    col.label(name)
+                    for name, col in self._base_col_map[right_rec].items()
+                )
+            )
+
+            if left_rec is not None and len(
+                set(left_rec._pk.columns) & set(right_rec._pk.columns)  # type: ignore
+            ):
+                return left_rec, coalescent_join_sql(
+                    left_table.alias(),
+                    right_table.alias(),
+                    reduce(
+                        sqla.and_,
+                        (
+                            left_pk == right_pk
+                            for left_pk, right_pk in zip(
+                                self.base._map_pk(left_rec).columns,
+                                self.base._map_pk(right_rec).columns,
+                            )
+                        ),
+                    ),
+                )
+            else:
+                return None, left_table.union(right_table).select()
+
+        if len(sel_tables) > 1:
+            rec_query_items = list(sel_tables.items())
+            first_rec, first_select = rec_query_items[0]
+            first: tuple[type[Record] | None, sqla.Select] = (
+                first_rec,
+                first_select.select().with_only_columns(
+                    *(
+                        col.label(name)
+                        for name, col in self._base_col_map[first_rec].items()
+                    )
+                ),
+            )
+
+            _, base_union = reduce(_union, rec_query_items[1:], first)
+        else:
+            base_union = list(sel_tables.values())[0]
+
+        base_join = base_union
+        for base_table, join_on in self._base_table_map.values():
+            if join_on is not None:
+                base_join = base_join.join(base_table, join_on)
+
+        res = base_join.subquery() if isinstance(base_join, sqla.Select) else base_join
+        setattr(res, "_tab", self)
+        return res
+
+    def _get_upload_table(self) -> sqla.Table:
+        cols = {
+            name: col.copy()
+            for cols in self._base_col_map.values()
+            for name, col in cols.items()
+        }
+        for name, col in cols.items():
+            col.name = name
+
+        return sqla.Table(
+            f"upload/{self.fqn.replace('.', '_')}/{token_hex(5)}",
+            self.base._metadata,
+            *cols.values(),
+        )
+
+    def _upload_df(self, df: pd.DataFrame | pl.DataFrame) -> sqla.Table:
+        table = self._get_upload_table()
+
+        if isinstance(df, pl.DataFrame):
+            df.write_database(
+                str(table),
+                self.base.connection,
+                if_table_exists="replace",
+            )
+        else:
+            df.reset_index().to_sql(
+                table.name,
+                self.base.connection,
+                if_exists="replace",
+                index=False,
+            )
+
+        return table
 
 
 @dataclass

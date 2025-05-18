@@ -1,4 +1,4 @@
-"""Static schemas for universal relational databases."""
+"""Complex relations within databases."""
 
 from __future__ import annotations
 

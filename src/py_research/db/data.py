@@ -1,4 +1,4 @@
-"""Static schemas for universal relational databases."""
+"""Basic types for relational data expression."""
 
 from __future__ import annotations
 
@@ -25,12 +25,10 @@ from typing import (
     Literal,
     ParamSpec,
     Protocol,
-    TypeGuard,
     Unpack,
     cast,
     final,
     get_args,
-    get_origin,
     overload,
 )
 
@@ -45,10 +43,7 @@ from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash
 from py_research.reflect.types import (
     SingleTypeDef,
-    TypeRef,
-    get_base_type,
-    get_common_type,
-    get_typevar_map,
+    TypeAware,
     has_type,
     is_subtype,
     typedef_to_typeset,
@@ -177,7 +172,7 @@ type FullIdx[*K] = Idx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*
 FullIdxT = TypeVar(
     "FullIdxT",
     bound=FullIdx,
-    default=Idx[*tuple[Any, ...]],
+    default=FullIdx[*tuple[Any, ...]],
 )
 
 SubIdxT = TypeVar(
@@ -299,8 +294,11 @@ BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
 BaseT2 = TypeVar("BaseT2", bound=Base)
 
 
+@dataclass
 class Interface(Ctx[ArgT, ArgIdxT, ArgDxT]):
     """Data interface."""
+
+    arg_type: SingleTypeDef[ArgT] | None = None
 
 
 type InputData[V, S] = V | Iterable[V] | Mapping[
@@ -550,13 +548,12 @@ def frame_isin(
 
 
 @dataclass(kw_only=True)
-class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
+class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     """Property definition for a model."""
 
     # Core attributes:
 
     context: CtxT | Data[Any, Any, Any, Any, Any, CtxT]
-    typeref: TypeRef[Data[ValT]] | None = None
 
     # Extension methods:
 
@@ -583,56 +580,6 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
-
-    # Type:
-
-    @cached_prop
-    def resolved_type(self) -> SingleTypeDef[Data[ValT]]:
-        """Resolved type of this prop."""
-        if self.typeref is None:
-            return cast(SingleTypeDef[Data[ValT]], type(self))
-
-        return self.typeref.typeform
-
-    @cached_prop
-    def value_typeform(self) -> SingleTypeDef[ValT] | UnionType:
-        """Target typeform of this prop."""
-        return get_typevar_map(self.resolved_type)[ValT]
-
-    @cached_prop
-    def value_type_set(self) -> set[type[ValT]]:
-        """Target types of this prop (>1 in case of union typeform)."""
-        return typedef_to_typeset(self.value_typeform)
-
-    @cached_prop
-    def common_value_type(self) -> type:
-        """Common base type of the target types."""
-        return get_common_type(self.value_typeform)
-
-    @cached_prop
-    def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
-        """Type arguments of this prop."""
-        return get_typevar_map(self.resolved_type)
-
-    @staticmethod
-    def has_type[T: Data](instance: Data, typedef: type[T]) -> TypeGuard[T]:
-        """Check if the dataset has the specified type."""
-        orig = get_origin(typedef)
-        if orig is None or not issubclass(
-            get_base_type(instance.resolved_type, bound=Data), orig
-        ):
-            return False
-
-        own_typevars = get_typevar_map(instance.resolved_type)
-        target_typevars = get_typevar_map(typedef)
-
-        for tv, tv_type in target_typevars.items():
-            if tv not in own_typevars:
-                return False
-            if not is_subtype(own_typevars[tv], tv_type):
-                return False
-
-        return True
 
     # Context:
 

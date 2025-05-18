@@ -1,5 +1,7 @@
 """Reflection utilities for types."""
 
+from __future__ import annotations
+
 import operator
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,6 +29,7 @@ from typing import (
 from beartype.door import is_bearable, is_subhint
 from typing_extensions import TypeVar, runtime_checkable
 
+from py_research.caching import cached_prop
 from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.types import Not
@@ -534,3 +537,60 @@ def get_common_type[T](
             remove_null=True,
         )
     )
+
+
+@dataclass(kw_only=True)
+class TypeAware(Generic[T]):
+    """Property definition for a model."""
+
+    # Core attributes:
+
+    typeref: TypeRef[TypeAware[T]] | None = None
+
+    @cached_prop
+    def resolved_type(self) -> SingleTypeDef[TypeAware[T]]:
+        """Resolved type of this prop."""
+        if self.typeref is None:
+            return cast(SingleTypeDef[TypeAware[T]], type(self))
+
+        return self.typeref.typeform
+
+    @cached_prop
+    def value_typeform(self) -> SingleTypeDef[T] | UnionType:
+        """Target typeform of this prop."""
+        return get_typevar_map(self.resolved_type)[T]
+
+    @cached_prop
+    def value_type_set(self) -> set[type[T]]:
+        """Target types of this prop (>1 in case of union typeform)."""
+        return typedef_to_typeset(self.value_typeform)
+
+    @cached_prop
+    def common_value_type(self) -> type:
+        """Common base type of the target types."""
+        return get_common_type(self.value_typeform)
+
+    @cached_prop
+    def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
+        """Type arguments of this prop."""
+        return get_typevar_map(self.resolved_type)
+
+    @staticmethod
+    def has_type[U: TypeAware](instance: TypeAware, typedef: type[U]) -> TypeGuard[U]:
+        """Check if the dataset has the specified type."""
+        orig = get_origin(typedef)
+        if orig is None or not issubclass(
+            get_base_type(instance.resolved_type, bound=TypeAware), orig
+        ):
+            return False
+
+        own_typevars = get_typevar_map(instance.resolved_type)
+        target_typevars = get_typevar_map(typedef)
+
+        for tv, tv_type in target_typevars.items():
+            if tv not in own_typevars:
+                return False
+            if not is_subtype(own_typevars[tv], tv_type):
+                return False
+
+        return True
