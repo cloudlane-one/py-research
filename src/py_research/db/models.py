@@ -52,6 +52,7 @@ from .data import (
     Frame,
     Idx,
     InputData,
+    InputFrame,
     Interface,
     R,
     Root,
@@ -359,7 +360,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
         self: Data[Any, Any, Any, Any, R],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[R]] = {R},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""

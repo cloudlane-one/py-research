@@ -298,16 +298,14 @@ RootT = TypeVar("RootT", bound=Root, covariant=True, default=Any)
 RootT2 = TypeVar("RootT2", bound=Root)
 
 
-class Base(Root[ArgT], ABC, Generic[ArgT, RwxT]):
+class Base(Root[ArgT], Generic[ArgT, RwxT]):
     """Base for retrieving/storing data."""
 
     @property
-    @abstractmethod
     def connection(self: Root[SQL]) -> sqla.engine.Connection:
         """SQLAlchemy connection to the database."""
         ...
 
-    @abstractmethod
     def registry[T: AutoIndexable](
         self: Base[T], value_type: type[T]
     ) -> Registry[T, RwxT, Base[T, RwxT]]:
@@ -322,9 +320,19 @@ class Interface(Ctx[ArgT, ArgIdxT, ArgDxT]):
     arg_type: SingleTypeDef[ArgT] | None = None
 
 
-type InputData[V, S] = V | Iterable[V] | Mapping[
+type InputFrame = (
+    pl.DataFrame
+    | pd.DataFrame
+    | sqla.Select
+    | sqla.FromClause
+    | pl.Series
+    | pd.Series
+    | sqla.ColumnElement
+)
+
+type InputData[V, S, I] = Data[V] | V | Iterable[V] | Mapping[
     Hashable, V
-] | pd.DataFrame | pl.DataFrame | S | Data[V]
+] | S | Mapping[str, I]
 
 Params = ParamSpec("Params")
 
@@ -600,7 +608,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     @abstractmethod
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -1782,9 +1790,51 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
             ],
         )
 
+    @overload
     def __ior__(
-        self: Data[Any, Any, DxT2, Any, C | U, Base],
-        input_data: InputData[ValT, DxT2],
+        self: Data[Any, Any, Col, SQL, C | U, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Col, Any, C | U, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Tab, SQL, C | U, Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Tab, Any, C | U, Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Tabs, SQL, C | U, Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Tabs, Any, C | U, Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    def __ior__(
+        self: Data[Any, Any, Any, Any, C | U, Base],
+        input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
         """Union two databases, right overriding left."""
         mutations = self._mutation(input_data, mode={C, U})
@@ -1794,9 +1844,51 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
+    @overload
     def __ixor__(
-        self: Data[Any, Any, DxT2, Any, C, Base],
-        input_data: InputData[ValT, DxT2],
+        self: Data[Any, Any, Col, SQL, C, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ixor__(
+        self: Data[Any, Any, Col, Any, C, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ixor__(
+        self: Data[Any, Any, Tab, SQL, C, Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ixor__(
+        self: Data[Any, Any, Tab, Any, C, Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ixor__(
+        self: Data[Any, Any, Tabs, SQL, C, Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ixor__(
+        self: Data[Any, Any, Tabs, Any, C, Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    def __ixor__(
+        self: Data[Any, Any, Any, Any, C, Base],
+        input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
         """Union two databases, right overriding left."""
         mutations = self._mutation(input_data, mode={C})
@@ -1806,9 +1898,51 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
+    @overload
     def __ilshift__(
-        self: Data[Any, Any, DxT2, Any, U, Base],
-        input_data: InputData[ValT, DxT2],
+        self: Data[Any, Any, Col, SQL, U, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Col, Any, U, Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tab, SQL, U, Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tab, Any, U, Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tabs, SQL, U, Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tabs, Any, U, Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    def __ilshift__(
+        self: Data[Any, Any, Any, Any, U, Base],
+        input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
         """Union two databases, right overriding left."""
         mutations = self._mutation(input_data, mode={U})
@@ -1818,10 +1952,58 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Col, SQL, C | U | D, Base],
+        key: slice,
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Col, Any, C | U | D, Base],
+        key: slice,
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Tab, SQL, C | U | D, Base],
+        key: slice,
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Tab, Any, C | U | D, Base],
+        key: slice,
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Tabs, SQL, C | U | D, Base],
+        key: slice,
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __setitem__(
+        self: Data[Any, Any, Tabs, Any, C | U | D, Base],
+        key: slice,
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
     def __setitem__(
         self: Data[Any, Any, DxT2, Any, C | U | D, Base],
         key: slice,
-        input_data: InputData[ValT, DxT2],
+        input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
         """Union two databases, right overriding left."""
         assert key == slice(None, None, None)
@@ -1891,7 +2073,7 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -1967,7 +2149,7 @@ class Transform(
 
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -2037,7 +2219,7 @@ class Filter(
 
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -2079,7 +2261,7 @@ class KeySelect(
 
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""

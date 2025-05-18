@@ -11,7 +11,7 @@ from operator import attrgetter
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
-from typing import Any, ClassVar, Generic, Literal, Self, cast, overload
+from typing import Any, ClassVar, Generic, Literal, LiteralString, Self, cast
 
 import pandas as pd
 import polars as pl
@@ -32,16 +32,19 @@ from py_research.types import UUID4, Not
 from .data import (
     PL,
     SQL,
+    AutoIdx,
     AutoIndexable,
     Base,
+    C,
     Col,
     Ctx,
+    D,
     Data,
-    DxT,
     Expand,
     Frame,
     Idx,
     InputData,
+    InputFrame,
     Interface,
     KeySelect,
     KeyTt,
@@ -50,7 +53,10 @@ from .data import (
     Registry,
     Root,
     RwxT,
+    RwxT2,
+    SxT2,
     Tab,
+    Tabs,
     U,
     ValT,
     ValT2,
@@ -128,7 +134,7 @@ class Attr(
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
         self: Data[Any, Any, Any, Any, RuTi],
-        input_data: InputData[ValT, DxT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RuTi]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
@@ -357,24 +363,24 @@ class Record(Model, AutoIndexable[*KeyTt]):
         }
 
     _published: bool = False
-    _base: Attr[Base] = Attr(default_factory=Base)
+    _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
 
     _pk: Key[tuple[*KeyTt], Self]
 
     @cached_prop
-    def _registry(self) -> Registry[Self, Any, Base]:
+    def _table(self) -> Table[Self, Any]:
         """Return the singleton class for this record."""
-        return self._base.registry(type(self))
+        return self._base.table(type(self))
 
     @cached_method
     def _data(self) -> Data[Self, Idx[()], Tab, SQL, R | U, Base]:
         """Return the singleton class for this record."""
-        registry = cast(Registry[Record[*tuple[Any, ...]]], self._registry)
+        registry = cast(Registry[Record[*tuple[Any, ...]]], self._table)
         single_rec = registry[KeySelect(self._pk)]
         return cast(Data[Self, Idx[()], Tab, SQL, R | U, Base], single_rec)
 
     def _load_dict(self) -> None:
-        if not self._published or self._pk in self._registry._instance_map:
+        if not self._published or self._pk in self._table._instance_map:
             return
 
         query = self._data().select()
@@ -401,35 +407,90 @@ class Record(Model, AutoIndexable[*KeyTt]):
 register_sqlite_adapters()
 
 
-type TableInput[T: Record] = pd.DataFrame | pl.DataFrame | Iterable[T] | sqla.FromClause
+type TableInput = (
+    Record
+    | Iterable[Record]
+    | Mapping[Hashable, Record]
+    | pl.DataFrame
+    | pd.DataFrame
+    | sqla.Select
+    | sqla.FromClause
+    | Mapping[str, pl.Series | pd.Series | sqla.ColumnElement]
+)
 
 
 type OverlayType = Literal["transaction", "name_prefix", "db_schema"]
 
 
+TabT = TypeVar("TabT", bound=Record)
+
+
 @dataclass
-class Table(Generic[RecT, BackT, RwxT]):
+class Table(Registry[TabT, RwxT, "DataBase"]):
     """Table matching a table model, may be filtered."""
 
-    def mutate(
-        self: Table[Any, Any, CRUD],
-        input_table: Table[RecT2, BackT, Any],
-        mode: MutationMode = "update",
-    ) -> None:
-        """Mutate given table."""
+    input_data: InputData | None = None
+
+    def _id(self) -> str:
+        """Identity of the data object."""
+        # TODO: implement this for Table class.
+        raise NotImplementedError()
+
+    def _index(
+        self,
+    ) -> AutoIdx[TabT]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
+    ) -> Frame[SQL, SxT2]:
+        """Get SQL expression or Polars data of this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Table[Any, RwxT2],
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[RwxT2]] = {C, U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
         tables = {rec: table for rec, (table, _) in self._base_table_map.items()}
-        input_sql = input_table.sql
+        base = self.root()
+
+        assert has_type(
+            input_data,
+            TableInput,
+        )
+
+        if has_type(input_data, Record | Iterable[Record]):
+            input_data = records_to_df(input_data)
+        elif has_type(input_data, Mapping[Hashable, Record]):
+            input_data = records_to_df(input_data.values())
+        elif has_type(input_data, Mapping[str, pl.Series]):
+            input_data = pl.concat(
+                [s.rename(k) for k, s in input_data.items()], how="horizontal"
+            )
+        elif has_type(input_data, Mapping[str, pd.Series]):
+            input_data = pd.concat(input_data, axis="columns")
+        elif has_type(input_data, Mapping[str, sqla.ColumnElement]):
+            input_data = sqla.select(*(c.label(k) for k, c in input_data.items()))
+
+        if isinstance(input_data, pl.DataFrame | pd.DataFrame):
+            input_sql = self._upload_df(input_data)
+        else:
+            assert isinstance(input_data, sqla.Select | sqla.FromClause)
+            input_sql = input_data
 
         statements: list[sqla.Executable] = []
 
-        if mode in ("replace", "delete"):
+        if D in mode:
             # Delete current records first.
             statements += [
-                safe_delete(table, input_sql, self.base.engine)
+                safe_delete(table, input_sql, base.connection.engine)
                 for table in tables.values()
             ]
 
-        if mode != "delete":
+        if {C, R, U} & mode:
             for base_type, table in tables.items():
                 # Rename input columns to match base table columns.
                 input_sql = input_sql.select().with_only_columns(
@@ -439,33 +500,27 @@ class Table(Generic[RecT, BackT, RwxT]):
                     )
                 )
 
-                if mode == "update":
-                    statements.append(safe_update(table, input_sql, self.base.engine))
+                if U in mode:
+                    statements.append(
+                        safe_update(table, input_sql, base.connection.engine)
+                    )
                 else:
                     statements.append(
                         safe_insert(
                             table,
                             input_sql,
-                            self.base.engine,
-                            upsert=(mode == "upsert"),
+                            base.connection.engine,
+                            upsert=(U in mode and C in mode),
                         )
                     )
 
-        # Execute delete / insert / update statements.
-        con = self.base.connection
-        for statement in statements:
-            con.execute(statement)
-
-        if self.base.backend_type == "excel-file":
-            self.base._save_to_excel(
-                # {self.record_type, *self.record_type._record_superclasses}
-            )
+        return statements
 
     def validate(
         self, inspector: sqla.Inspector | None = None, required: bool = False
     ) -> None:
         """Perform pre-defined schema validations."""
-        inspector = inspector or sqla.inspect(self.base.engine)
+        inspector = inspector or sqla.inspect(self.root().engine)
 
         for table, _ in self._base_table_map.values():
             validate_sql_table(inspector, table, required)
@@ -475,14 +530,16 @@ class Table(Generic[RecT, BackT, RwxT]):
         self,
     ) -> dict[type[Record], tuple[sqla.Table, sqla.ColumnElement[bool] | None]]:
         """Return the base SQLAlchemy table objects for all record types."""
+        base = self.root()
         base_table_map: dict[
             type[Record], tuple[sqla.Table, sqla.ColumnElement[bool] | None]
         ] = {}
-        for rec in self.rec_types:
+
+        for rec in self.value_type_set:
             super_recs = (r for r in rec._model_superclasses if issubclass(r, Record))
             for base_rec in (rec, *super_recs):
                 if base_rec not in base_table_map:
-                    table = self.base._get_base_table(rec)
+                    table = base._get_base_table(rec)
                     join_on = (
                         None
                         if base_rec is rec
@@ -491,8 +548,8 @@ class Table(Generic[RecT, BackT, RwxT]):
                             (
                                 pk_sel == pk_super
                                 for pk_sel, pk_super in zip(
-                                    self.base._map_pk(rec).columns,
-                                    self.base._map_pk(base_rec).columns,
+                                    base._map_pk(rec).columns,
+                                    base._map_pk(base_rec).columns,
                                 )
                             ),
                         )
@@ -515,11 +572,11 @@ class Table(Generic[RecT, BackT, RwxT]):
     @cached_prop
     def _base_col_map(self) -> dict[type[Record], dict[str, sqla.Column]]:
         """Return the column set for all record types."""
-        name_attr = attrgetter("name" if len(self.rec_types) == 1 else "fqn")
+        name_attr = attrgetter("name" if len(self.value_type_set) == 1 else "fqn")
         return {
             rec: {
                 name_attr(col): sql_col
-                for col, sql_col in self.base._map_cols(rec).items()
+                for col, sql_col in self.root()._map_cols(rec).items()
             }
             for rec in self._base_table_map.keys()
         }
@@ -531,6 +588,7 @@ class Table(Generic[RecT, BackT, RwxT]):
             for rec, (table, join_on) in self._base_table_map.items()
             if join_on is None
         }
+        base = self.root()
 
         def _union(
             union_stage: tuple[type[Record] | None, sqla.Select],
@@ -557,8 +615,8 @@ class Table(Generic[RecT, BackT, RwxT]):
                         (
                             left_pk == right_pk
                             for left_pk, right_pk in zip(
-                                self.base._map_pk(left_rec).columns,
-                                self.base._map_pk(right_rec).columns,
+                                base._map_pk(left_rec).columns,
+                                base._map_pk(right_rec).columns,
                             )
                         ),
                     ),
@@ -603,7 +661,7 @@ class Table(Generic[RecT, BackT, RwxT]):
 
         return sqla.Table(
             f"upload/{self.fqn.replace('.', '_')}/{token_hex(5)}",
-            self.base._metadata,
+            self.root()._metadata,
             *cols.values(),
         )
 
@@ -613,18 +671,28 @@ class Table(Generic[RecT, BackT, RwxT]):
         if isinstance(df, pl.DataFrame):
             df.write_database(
                 str(table),
-                self.base.connection,
+                self.root().connection,
                 if_table_exists="replace",
             )
         else:
             df.reset_index().to_sql(
                 table.name,
-                self.base.connection,
+                self.root().connection,
                 if_exists="replace",
                 index=False,
             )
 
         return table
+
+
+class Schema:
+    """Group multiple record types into a schema."""
+
+    _schema_types: set[type[Record]]
+
+    def __init_subclass__(cls) -> None:  # noqa: D105
+        cls._schema_types = set()
+        super().__init_subclass__()
 
 
 @dataclass
@@ -634,9 +702,18 @@ class Require:
     present: bool = True
 
 
+BackT = TypeVar("BackT", bound=LiteralString | None, default=None)
+
+
 @dataclass(eq=False)
-class DataBase(Generic[BaseT, BackT, RwxT]):
+class DataBase(
+    Data[Record, Idx[*tuple[Any, ...]], Tabs, SQL, RwxT, Base[Record, RwxT]],
+    Base[Record, RwxT],
+    Generic[BackT, RwxT],
+):
     """Database connection."""
+
+    context: Base | Data[Any, Any, Any, Any, Any, Base] = field(init=False)
 
     backend: BackT = None  # pyright: ignore[reportAssignmentType]
     """Unique name to identify this database's backend by."""
@@ -644,12 +721,12 @@ class DataBase(Generic[BaseT, BackT, RwxT]):
     """Connection URL or path."""
 
     schema: (
-        type[BaseT]
+        type[Schema]
         | Mapping[
-            type[BaseT],
+            type[Schema] | type[Record],
             Literal[True] | Require | str | sqla.TableClause,
         ]
-        | set[type[BaseT]]
+        | Set[type[Schema] | type[Record]]
         | None
     ) = None
     validate_on_init: bool = False
@@ -675,6 +752,8 @@ class DataBase(Generic[BaseT, BackT, RwxT]):
     _transaction: sqla.Transaction | None = None
 
     def __post_init__(self):  # noqa: D105
+        self.context = self
+
         tables: dict[type[Record], Literal[True] | Require | str | sqla.TableClause] = {
             tab: tab_def
             for tab, tab_def in self._schema_map.items()
@@ -704,17 +783,39 @@ class DataBase(Generic[BaseT, BackT, RwxT]):
         if self._overlay_name is not None and self.overlay_type == "transaction":
             self._transaction = sqla.Transaction(self.engine.connect())
 
-        if not isinstance(self.backend, Symbolic) and self.validate_on_init:
-            cast(Base[Any, DynBackendID, Any], self).validate()
+        if self.validate_on_init:
+            self.validate()
+
+    def _id(self) -> str:
+        """Identity of the data object."""
+        raise NotImplementedError()
+
+    def _index(
+        self,
+    ) -> Idx:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
+    ) -> Frame[SQL, SxT2]:
+        """Get SQL expression or Polars data of this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Data[Any, Any, Any, Any, RwxT2],
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[RwxT2]] = {C, U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
+        raise NotImplementedError()
 
     @property
     def db_id(self) -> str:
         """Return the unique database ID."""
         db_id = self._db_id
         if db_id is None:
-            if isinstance(self.backend, Symbolic):
-                db_id = "symbolic"
-            elif self.backend is None:
+            if self.backend is None:
                 db_id = token_hex(4)
             else:
                 db_id = self.backend + (
@@ -791,29 +892,11 @@ class DataBase(Generic[BaseT, BackT, RwxT]):
             else self.engine.connect()
         )
 
-    @overload
-    def table(
-        self: Base[BaseT2, DynBackendID, CRU],
-        rec_types: type[BaseT2] | set[type[BaseT2]],
-        input_data: TableInput[BaseT2],
-    ) -> Table[BaseT2, BackT, R]: ...
-
-    @overload
-    def table(
-        self: Base[BaseT2, Any, Any],
-        rec_types: type[BaseT2] | set[type[BaseT2]],
-        input_data: None = ...,
-    ) -> Table[BaseT2, BackT, RwxT]: ...
-
-    def table(
-        self,
-        rec_types: type[RecT2] | set[type[RecT2]],
-        input_data: TableInput[RecT2] | None = None,
-    ) -> Table[RecT2, BackT, Any]:
-        """Create a table from input data."""
-        return Table(
-            self, rec_types if isinstance(rec_types, set) else {rec_types}, input_data
-        )
+    def registry[T: AutoIndexable](
+        self: Base[T], value_type: type[T]
+    ) -> Registry[T, RwxT, Base[T, RwxT]]:
+        """Get the registry for a type in this base."""
+        ...
 
     def validate(self: Base[Any, DynBackendID, Any]) -> None:
         """Perform pre-defined schema validations."""
