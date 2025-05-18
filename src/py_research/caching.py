@@ -401,7 +401,7 @@ class cached_prop(Generic[S, P, R, M]):  # noqa: N801
 
 
 def cached_method(
-    func: Callable[Concatenate[S, P], R]
+    func: Callable[Concatenate[S, P], R],
 ) -> Callable[Concatenate[S, P], R]:
     """Decorator to cache method results on the instance level."""
 

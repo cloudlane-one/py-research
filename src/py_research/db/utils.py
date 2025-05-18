@@ -23,7 +23,7 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from py_research.reflect.types import SingleTypeDef, TypeRef, get_common_type
+from py_research.reflect.types import SingleTypeDef, get_common_type
 from py_research.types import UUID4
 
 pl_type_map: dict[
@@ -76,18 +76,17 @@ def pd_to_py_dtype(c: pd.Series | pl.Series) -> type | None:
 
 
 def get_pl_schema(
-    cols: Mapping[str, TypeRef],
+    cols: Mapping[str, SingleTypeDef],
 ) -> dict[str, pl.DataType | type | None]:
     """Return the schema of the dataset."""
     exact_matches = {
-        name: (pl_type_map.get(get_common_type(typ.typeform)), typ)
-        for name, typ in cols.items()
+        name: (pl_type_map.get(get_common_type(typ)), typ) for name, typ in cols.items()
     }
     matches = {
         name: (
-            (match, typ.base_type)
+            (match, get_common_type(typ))
             if match is not None
-            else (pl_type_map.get(get_common_type(typ.typeform)), typ.typeform)
+            else (pl_type_map.get(get_common_type(typ)), typ)
         )
         for name, (match, typ) in exact_matches.items()
     }
@@ -405,3 +404,50 @@ def split_df_by_prefixes(
         )
         for prefix in prefixes
     }
+
+
+def validate_sql_table(
+    con: sqla.Engine | sqla.Inspector, table: sqla.Table, required: bool = False
+) -> None:
+    """Perform pre-defined schema validations."""
+    inspector = con if isinstance(con, sqla.Inspector) else sqla.inspect(con)
+    has_table = inspector.has_table(table.name, table.schema)
+
+    if not has_table and not required:
+        return
+
+    # Check if table exists
+    assert has_table
+
+    db_columns = {c["name"]: c for c in inspector.get_columns(table.name, table.schema)}
+    for column in table.columns:
+        # Check if column exists
+        assert column.name in db_columns
+
+        db_col = db_columns[column.name]
+
+        # Check if column type and nullability match
+        assert isinstance(db_col["type"], type(column.type))
+        assert db_col["nullable"] == column.nullable or column.nullable is None
+
+    # Check if primary key is compatible
+    db_pk = inspector.get_pk_constraint(table.name, table.schema)
+    if len(db_pk["constrained_columns"]) > 0:  # Allow source tbales without pk
+        assert set(db_pk["constrained_columns"]) == set(
+            table.primary_key.columns.keys()
+        )
+
+    # Check if foreign keys are compatible
+    db_fks = inspector.get_foreign_keys(table.name, table.schema)
+    for fk in table.foreign_key_constraints:
+        matches = [
+            (
+                set(db_fk["constrained_columns"]) == set(fk.column_keys),
+                (db_fk["referred_table"].lower() == fk.referred_table.name.lower()),
+                set(db_fk["referred_columns"])
+                == set(f.column.name for f in fk.elements),
+            )
+            for db_fk in db_fks
+        ]
+
+        assert any(all(m) for m in matches)

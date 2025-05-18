@@ -569,7 +569,7 @@ def frame_isin(
 
 
 @dataclass(kw_only=True)
-class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
+class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
     """Property definition for a model."""
 
     # Core attributes:
@@ -578,22 +578,26 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     # Extension methods:
 
+    @abstractmethod
     def _id(self) -> str:
-        """Name of the property."""
+        """Identity of the data object."""
         raise NotImplementedError()
 
+    @abstractmethod
     def _index(
         self,
     ) -> IdxT:
         """Get the index of this data."""
         raise NotImplementedError()
 
+    @abstractmethod
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
     ) -> Frame[ExT, SxT2]:
-        """Get SQL-side reference to this property."""
+        """Get SQL expression or Polars data of this property."""
         raise NotImplementedError()
 
+    @abstractmethod
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, DxT],
@@ -1347,20 +1351,22 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
                 if not isinstance(key, list | slice) and not has_type(
                     key, tuple[slice, ...]
                 ):
-                    key = [key]
+                    key = key if isinstance(key, tuple) else (key,)
                     if len(key) == len(self._idx_components()) and is_subtype(
                         self.typeargs[CtxT], Root
                     ):
                         rooted = True
 
+                    data = self[KeySelect(cast(tuple, key))]
+
+                    if rooted:
+                        vals = cast(Data[Any, Any, Any, Any, Any, Root], data).values()
+                        return vals[0]
+
+                    return data
+
                 keymap = self._map_index_filters(key)
-                filtered = self[Filter.from_keymap(keymap)]
-
-                if rooted:
-                    vals = cast(Data[Any, Any, Any, Any, Any, Root], filtered).values()
-                    return vals[0]
-
-                return filtered
+                return self[Filter.from_keymap(keymap)]
 
     # Alignment:
 
@@ -1833,7 +1839,7 @@ RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)
 
 
 @dataclass(kw_only=True)
-class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, RootT, None]):
+class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, RootT, None], ABC):
     """Represent a base data type collection."""
 
     _instance_map: dict[Hashable, RegT] = field(default_factory=dict)
@@ -1881,6 +1887,14 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         self: Data[Any, Any, SxT2],
     ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Data[Any, Any, Any, Any, RwxT2],
+        input_data: InputData[ValT, DxT],
+        mode: Set[type[RwxT2]] = {C, U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
 
@@ -1949,6 +1963,14 @@ class Transform(
         self: Data[Any, Any, SxT2],
     ) -> Frame[ExT, SxT2]:
         """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(
+        self: Data[Any, Any, Any, Any, RwxT2],
+        input_data: InputData[ValT, DxT],
+        mode: Set[type[RwxT2]] = {C, U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
 
@@ -2027,7 +2049,7 @@ class KeySelect(
         Keep,
         Reduce[SubIdxT],
         Keep,
-        ExT,
+        SQL,
         R | U,
         Interface,
     ]
@@ -2051,7 +2073,7 @@ class KeySelect(
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[SQL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 

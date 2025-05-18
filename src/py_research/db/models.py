@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from copy import copy
 from dataclasses import MISSING, Field, dataclass
 from functools import cache, cmp_to_key, reduce
@@ -21,9 +21,11 @@ from typing import (
 )
 
 import polars as pl
+import sqlalchemy as sqla
 from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
+from py_research.caching import cached_method
 from py_research.data import Params, copy_and_override
 from py_research.hashing import gen_int_hash
 from py_research.reflect.runtime import get_subclasses
@@ -49,6 +51,7 @@ from .data import (
     ExT,
     Frame,
     Idx,
+    InputData,
     Interface,
     R,
     Root,
@@ -337,7 +340,30 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
     context: Memory | Data[Any, Any, Any, Any, Any, Memory] = Memory()
     model: ModT
 
-    # TODO: Implement singleton class
+    def _id(self) -> str:
+        """Identity of the data object."""
+        # TODO: Implement this method for the Singleton class.
+        raise NotImplementedError()
+
+    def _index(
+        self,
+    ) -> Idx[()]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, SxT2],
+    ) -> Frame[ExT, SxT2]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self: Data[Any, Any, Any, Any, R],
+        input_data: InputData[ValT, DxT],
+        mode: Set[type[R]] = {R},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
+        raise NotImplementedError()
 
 
 @dataclass_transform(
@@ -389,7 +415,7 @@ class Model(DataclassInstance, metaclass=ModelMeta):
         """Return the schema of the dataset."""
         return get_pl_schema(
             {
-                name: (prop.typeref or TypeRef(object))
+                name: prop.common_value_type
                 for name, prop in cls._props.items()
                 if prop.getter is not None
             }
@@ -503,7 +529,8 @@ class Model(DataclassInstance, metaclass=ModelMeta):
         """Return a string representation of the record."""
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
-    def _data(self) -> Data[Self, Idx[Any, Any], Tab, Any, R, Root]:
+    @cached_method
+    def _data(self) -> Data[Self, Idx[()], Tab, Any, R, Root]:
         """Return the singleton class for this record."""
         return Singleton(model=self)
 
