@@ -17,6 +17,7 @@ from typing import (
     runtime_checkable,
 )
 
+import polars as pl
 from typing_extensions import TypeVar
 
 from py_research.caching import cached_method
@@ -89,30 +90,35 @@ class Convertible(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
         ...
 
 
+@runtime_checkable
+class BatchConvertible(  # pyright: ignore[reportInvalidTypeVarUse]
+    Convertible[T], Protocol[T]
+):
+    """Protocol for classes that can be converted to arbitrary types/formats."""
+
+    @classmethod
+    def __batch_parse__(
+        cls,
+        batch: pl.Series,
+        realm: Realm,
+        annotation: SingleTypeDef[Convertible[T]] | None = None,
+    ) -> pl.Series:
+        """Parse from the source type or format."""
+        ...
+
+    @classmethod
+    def __batch_convert__(
+        cls,
+        batch: pl.Series,
+        targets: Set[T | SingleTypeDef[T]],
+        realm: Realm,
+        annotation: SingleTypeDef[Convertible[T]] | None = None,
+    ) -> pl.Series:
+        """Convert to the target type or format."""
+        ...
+
+
 U = TypeVar("U")
-
-
-# class ParserFunc[U, T](Protocol):
-#     """Parse from the source type or format."""
-
-#     def __call__(  # noqa: D102
-#         self,
-#         source: T,
-#         realm: Realm,
-#         annotation: SingleTypeDef[U] | None = None,
-#     ) -> U: ...
-
-
-# class ConverterFunc[U, T2](Protocol):
-#     """Convert to the target type or format."""
-
-#     def __call__(  # noqa: D102
-#         self,
-#         instance: U,
-#         targets: Set[T2 | SingleTypeDef[T2]],
-#         realm: Realm,
-#         annotation: SingleTypeDef[U] | None = None,
-#     ) -> T2: ...
 
 
 @dataclass
@@ -165,3 +171,24 @@ class Converter(ABC, Generic[U, T]):
     ) -> T2:
         """Convert to the target type or format."""
         ...
+
+    @classmethod
+    def batch_parse(
+        cls,
+        batch: pl.Series,
+        realm: Realm,
+        annotation: SingleTypeDef[U] | None = None,
+    ) -> pl.Series:
+        """Parse a batch of data from the source type or format."""
+        return batch.map_elements(lambda x: cls.parse(x, realm, annotation))
+
+    @classmethod
+    def batch_convert(
+        cls,
+        batch: pl.Series,
+        targets: Set[T | SingleTypeDef[T]],
+        realm: Realm,
+        annotation: SingleTypeDef[U] | None = None,
+    ) -> pl.Series:
+        """Convert a batch of data to the target type or format."""
+        return batch.map_elements(lambda x: cls.convert(x, targets, realm, annotation))

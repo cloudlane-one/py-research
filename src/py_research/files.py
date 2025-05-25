@@ -45,6 +45,7 @@ additional_mime = {
     ".parquet": "application/vnd.apache.parquet",
     ".xlsx": "application/vnd.ms-excel",
     ".npy": "application/x-npy",
+    ".pkl": "application/pickle",
 }
 additional_mime_inv = {
     g: [k for k, _ in g_items]

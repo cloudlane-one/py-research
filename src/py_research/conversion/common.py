@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 import xml.etree.ElementTree as xml  # noqa: N813
 from collections.abc import Set
 from typing import Any, BinaryIO, Literal, TextIO, cast
@@ -11,6 +12,8 @@ import numpy as np
 import pandas as pd
 import polars as pl
 import pydantic as pyd
+import sqlalchemy as sqla
+import sqlparse
 import yaml
 from typing_extensions import TypeVar
 
@@ -412,6 +415,57 @@ class NpConv(Converter[np.ndarray, NpFile]):
 
 converters[np.ndarray] = NpConv
 
+# SQL statements
+
+type SQLFile = File[TextIO, Literal["application/sql"]]
+
+SQLF = TypeVar("SQLF", bound=SQLFile, default=SQLFile)
+
+
+class SQLConv(Converter[sqla.sql.expression.ClauseElement, SQLFile]):
+    """Converter for SQL statements."""
+
+    @classmethod
+    def parse(
+        cls,
+        source: SQLFile,
+        realm: Any,
+        annotation: SingleTypeDef[sqla.sql.expression.ClauseElement] | None = None,
+    ) -> sqla.sql.expression.ClauseElement:
+        """Parse a SQL statement from a file."""
+        content = source.content.read()
+        stmt = sqla.text(content)
+        if annotation is not None and not has_type(stmt, annotation):
+            raise ValueError(f"Parsed SQL does not match expected type: {annotation}")
+        return stmt
+
+    @classmethod
+    def convert(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls: type[Converter[Any, SQLF]],
+        instance: sqla.sql.expression.ClauseElement,
+        targets: Set[SQLF | SingleTypeDef[SQLF]],
+        realm: Any,
+        annotation: SingleTypeDef[sqla.sql.expression.ClauseElement] | None = None,
+    ) -> SQLF:
+        """Convert a SQL statement to a file."""
+        matched_targets = cls.conv_types().match_targets(targets)
+
+        for target in matched_targets:
+            assert isinstance(target, File), "Target must be a File instance."
+            target.content.write(
+                sqlparse.format(
+                    str(instance),
+                    reindent=True,
+                    keyword_case="upper",
+                )
+            )
+            return cast(SQLF, target)
+
+        raise ValueError("No suitable target found for converting SQL statement.")
+
+
+converters[sqla.sql.expression.ClauseElement] = SQLConv
+
 # PIL images, if PIL is installed
 
 try:
@@ -533,3 +587,48 @@ try:
 except ImportError:
     # BeautifulSoup is not installed, so we won't register any converters for HTML
     pass
+
+
+# Pickle files
+
+type PickleFile = File[BinaryIO, Literal["application/pickle"]]
+
+
+class PickleConv(Converter[Any, PickleFile]):
+    """Converter for Pickle files."""
+
+    @classmethod
+    def parse(
+        cls,
+        source: PickleFile,
+        realm: Any,
+        annotation: SingleTypeDef[Any] | None = None,
+    ) -> Any:
+        """Parse an object from a Pickle file."""
+        obj = pickle.load(source.content)
+        if annotation is not None and not has_type(obj, annotation):
+            raise ValueError(
+                f"Parsed object does not match expected type: {annotation}"
+            )
+        return obj
+
+    @classmethod
+    def convert(  # pyright: ignore[reportIncompatibleMethodOverride]
+        cls: type[Converter[Any, PickleFile]],
+        instance: Any,
+        targets: Set[PickleFile | SingleTypeDef[PickleFile]],
+        realm: Any,
+        annotation: SingleTypeDef[Any] | None = None,
+    ) -> PickleFile:
+        """Convert an object to a Pickle file."""
+        matched_targets = cls.conv_types().match_targets(targets)
+
+        for target in matched_targets:
+            assert isinstance(target, File), "Target must be a File instance."
+            pickle.dump(instance, target.content)
+            return cast(PickleFile, target)
+
+        raise ValueError("No suitable target found for converting to Pickle.")
+
+
+converters[object] = PickleConv
