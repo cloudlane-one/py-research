@@ -729,7 +729,7 @@ def dynamic_record_type[T: Record](
                 {
                     **{p.name: p for p in props},
                     "__annotations__": {
-                        p.name: p.typeref.typeform
+                        p.name: p.typeref.single_typedef
                         for p in props
                         if p.typeref is not None
                     },

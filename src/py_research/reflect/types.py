@@ -503,9 +503,29 @@ def get_base_type(hint: SingleTypeDef[T] | str, bound: type[T]) -> type[T]:
 class TypeRef[T]:
     """Reference to a type."""
 
-    hint: SingleTypeDef[T] | str = "Any"
+    hint: SingleTypeDef[T] | UnionType | str = "Any"
     var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
     ctx_module: ModuleType | None = None
+
+    @cached_prop
+    def typeform(self) -> SingleTypeDef[T] | UnionType:
+        """Return the type format."""
+        form = hint_to_typedef(
+            self.hint,
+            typevar_map=self.var_map,
+            ctx_module=self.ctx_module,
+        )
+        return form
+
+    @cached_prop
+    def type_set(self) -> set[type[T]]:
+        """Target types of this prop (>1 in case of union typeform)."""
+        return typedef_to_typeset(self.typeform)
+
+    @cached_prop
+    def common_type(self) -> type:
+        """Common base type of the target types."""
+        return get_common_type(self.typeform)
 
     @property
     def base_type(self) -> type[T]:
@@ -513,18 +533,16 @@ class TypeRef[T]:
         typeargs = get_typeargs(self)
         bound: type[Any] = typeargs[0] if typeargs is not None else object
 
-        return get_base_type(self.hint, bound)
+        return get_base_type(self.single_typedef, bound)
 
     @property
-    def typeform(self) -> SingleTypeDef[T]:
+    def single_typedef(self) -> SingleTypeDef[T]:
         """Return the type format."""
-        form = hint_to_typedef(
-            self.hint,
-            typevar_map=self.var_map,
-            ctx_module=self.ctx_module,
+        return (
+            self.typeform
+            if not isinstance(self.typeform, UnionType)
+            else self.common_type
         )
-        assert not isinstance(form, UnionType)
-        return form
 
 
 def get_common_type[T](
@@ -553,22 +571,7 @@ class TypeAware(Generic[T]):
         if self.typeref is None:
             return cast(SingleTypeDef[TypeAware[T]], type(self))
 
-        return self.typeref.typeform
-
-    @cached_prop
-    def value_typeform(self) -> SingleTypeDef[T] | UnionType:
-        """Target typeform of this prop."""
-        return get_typevar_map(self.resolved_type)[T]
-
-    @cached_prop
-    def value_type_set(self) -> set[type[T]]:
-        """Target types of this prop (>1 in case of union typeform)."""
-        return typedef_to_typeset(self.value_typeform)
-
-    @cached_prop
-    def common_value_type(self) -> type:
-        """Common base type of the target types."""
-        return get_common_type(self.value_typeform)
+        return self.typeref.single_typedef
 
     @cached_prop
     def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:

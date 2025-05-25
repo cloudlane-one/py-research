@@ -33,6 +33,7 @@ from py_research.reflect.types import (
     SingleTypeDef,
     TypeRef,
     get_base_type,
+    get_common_type,
     get_typevar_map,
     hint_to_typedef,
     is_subtype,
@@ -149,9 +150,8 @@ class Prop(
         """Get the common type of this property."""
         return cast(
             type[PropT],
-            get_base_type(
-                self.typeref.hint if self.typeref is not None else type(self),
-                bound=Prop,
+            get_common_type(
+                self.typeref.typeform if self.typeref is not None else type(self)
             ),
         )
 
@@ -551,7 +551,8 @@ class Model(DataclassInstance, metaclass=ModelMeta):
             cast(
                 type[Prop],
                 get_base_type(
-                    p.typeref.hint if p.typeref is not None else type(p), bound=Prop
+                    p.typeref.single_typedef if p.typeref is not None else type(p),
+                    bound=Prop,
                 ),
             )
             for p in props.values()

@@ -46,6 +46,7 @@ from py_research.hashing import gen_int_hash
 from py_research.reflect.types import (
     SingleTypeDef,
     TypeAware,
+    get_common_type,
     has_type,
     is_subtype,
     typedef_to_typeset,
@@ -624,6 +625,23 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     def graph(self: Data[Node]) -> nx.Graph:
         """Get the graph of this data."""
         raise NotImplementedError()
+
+    # Type:
+
+    @cached_prop
+    def value_typeform(self) -> SingleTypeDef[ValT] | UnionType:
+        """Target typeform of this prop."""
+        return self.typeargs[ValT]
+
+    @cached_prop
+    def value_type_set(self) -> set[type[ValT]]:
+        """Target types of this prop (>1 in case of union typeform)."""
+        return typedef_to_typeset(self.value_typeform)
+
+    @cached_prop
+    def common_value_type(self) -> type:
+        """Common base type of the target types."""
+        return get_common_type(self.value_typeform)
 
     # Context:
 
