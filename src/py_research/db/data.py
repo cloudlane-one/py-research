@@ -73,7 +73,7 @@ KeyT = TypeVar("KeyT", bound=Hashable, default=Any)
 KeyT2 = TypeVar("KeyT2", bound=Hashable)
 KeyT3 = TypeVar("KeyT3", bound=Hashable)
 
-KeyTt = TypeVarTuple("KeyTt", default=Unpack[tuple[Any, ...]])
+KeyTt = TypeVarTuple("KeyTt")
 KeyTt2 = TypeVarTuple("KeyTt2")
 KeyTt3 = TypeVarTuple("KeyTt3")
 KeyTt4 = TypeVarTuple("KeyTt4")
@@ -405,21 +405,21 @@ class Frame(Generic[ExT, SxT]):
     ) -> dict[str, sqla.Select]: ...
 
     @overload
-    def get(self: Frame[Any, Col]) -> pl.Series | sqla.ColumnElement: ...
+    def get(self: Frame[PL, Col]) -> pl.Series | sqla.ColumnElement: ...
 
     @overload
     def get(
-        self: Frame[Any, Tab],
+        self: Frame[PL, Tab],
     ) -> pl.DataFrame | sqla.Select: ...
 
     @overload
     def get(
-        self: Frame[Any, Tabs],
+        self: Frame[PL, Tabs],
     ) -> dict[str, pl.DataFrame] | dict[str, sqla.Select]: ...
 
     @overload
     def get(
-        self: Frame[Any, Any],
+        self: Frame[PL, Any],
     ) -> (
         pl.Series
         | pl.DataFrame
@@ -609,7 +609,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     @abstractmethod
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL expression or Polars data."""
         raise NotImplementedError()
 
@@ -1183,7 +1183,82 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 4. Context application, new index, kept value + DxT
+    # 4. Context application, no parent index, kept value + DxT
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        key: Data[
+            Keep,
+            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            Keep,
+            ExT2,
+            RwxT2,
+            Ctx[ValT2, Idx[()], SxT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt3],
+        DxT2,
+        ExT2,
+        RwxT2,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[()], SxT2],
+        *CtxTt3,
+    ]: ...
+
+    # 5. Context application, no parent index, kept value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        key: Data[
+            Keep,
+            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            DxT3,
+            ExT2,
+            RwxT2,
+            Ctx[ValT2, Idx[()], SxT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt3],
+        DxT3,
+        ExT2,
+        RwxT2,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[()], SxT2],
+        *CtxTt3,
+    ]: ...
+
+    # 6. Context application, no parent index, new value
+    @overload
+    def __getitem__(
+        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        key: Data[
+            ValT3,
+            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            DxT3,
+            ExT2,
+            RwxT2,
+            Ctx[ValT2, Idx[()], SxT2],
+            *CtxTt3,
+        ],
+    ) -> Data[
+        ValT3,
+        Idx[*KeyTt3],
+        DxT3,
+        ExT2,
+        RwxT2,
+        CtxT,
+        *CtxTt,
+        Ctx[ValT2, Idx[()], SxT2],
+        *CtxTt3,
+    ]: ...
+
+    # 7. Context application, new index, kept value + DxT
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
@@ -1208,7 +1283,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 5. Context application, new index, kept value
+    # 8. Context application, new index, kept value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
@@ -1233,7 +1308,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 6. Context application, new index, new value
+    # 9. Context application, new index, new value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
@@ -1258,49 +1333,49 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 7. Key list / slice filtering, scalar index type
+    # 10. Key list / slice filtering, scalar index type
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], Any, Any, RU],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, DxT, ExT, RU, CtxT, *CtxTt]: ...
 
-    # 8. Key list / slice filtering
+    # 11. Key list / slice filtering
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any, RU],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, DxT, ExT, RU, CtxT, *CtxTt]: ...
 
-    # 9. Key list / slice filtering, scalar index type, ro
+    # 12. Key list / slice filtering, scalar index type, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT2], Any, Any, R],
         key: list[KeyT2] | slice,
     ) -> Data[ValT, IdxT, DxT, ExT, R, CtxT, *CtxTt]: ...
 
-    # 10. Key list / slice filtering, ro
+    # 13. Key list / slice filtering, ro
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt2], Any, Any, R],
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, DxT, ExT, R, CtxT, *CtxTt]: ...
 
-    # 11. Key selection, fully rooted
+    # 14. Key selection, fully rooted
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt3], Any, Any, Any, Root],
         key: tuple[*KeyTt3],
     ) -> ValT: ...
 
-    # 12. Key selection, fully rooted, scalar
+    # 15. Key selection, fully rooted, scalar
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT3], Any, Any, Any, Root],
         key: KeyT3,
     ) -> ValT: ...
 
-    # 13. Key selection
+    # 16. Key selection
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2], SxT2],
@@ -1316,7 +1391,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         Ctx[ValT, Idx[*KeyTt3, *KeyTt2], SxT2],
     ]: ...
 
-    # 14. Key selection, scalar
+    # 17. Key selection, scalar
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT3, *KeyTt2], SxT2],
@@ -1332,7 +1407,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         Ctx[ValT, Idx[KeyT3, *KeyTt2], SxT2],
     ]: ...
 
-    # 15. Base type selection
+    # 18. Base type selection
     @overload
     def __getitem__(
         self: Base[ValT2],
@@ -2079,7 +2154,7 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -2147,7 +2222,7 @@ class Transform(
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -2209,7 +2284,7 @@ class Filter(
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -2251,7 +2326,7 @@ class KeySelect(
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[SQL, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 

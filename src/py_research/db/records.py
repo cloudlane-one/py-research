@@ -29,6 +29,7 @@ from typing import (
     LiteralString,
     Self,
     cast,
+    overload,
 )
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
 import yarl
+from annotated_types import T
 from cloudpathlib import CloudPath
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
@@ -95,41 +97,29 @@ from .utils import (
 )
 
 RecT = TypeVar("RecT", bound="Record", contravariant=True, default=Any)
+RecT2 = TypeVar("RecT2", bound="Record")
+
 RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
 
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], RuTi, SQL, Col, RecT],
-    Data[ValT, Expand[Idx[()]], Col, SQL, RuTi, Interface[RecT, Any, Tab]],
+    Prop[ValT, Idx[()], RuTi, SQL, Col, ValT, RecT],
 ):
     """Single-value attribute or column."""
-
-    data: Data[ValT, Expand[Idx[()]], Col, SQL, RuTi, Interface[RecT, Any, Tab]] = (
-        field(init=False)
-    )
-    context: Interface[RecT] | Data[Any, Any, Any, Any, Any, Interface[RecT]] = (
-        Interface()
-    )
-    getter: Callable[[RecT], ValT | Literal[Not.resolved]] = field(init=False)
-
-    def __post_init__(self) -> None:  # noqa: D105
-        self.data = self
-        self.getter = self._attr_getter
-        self.setter = self._attr_setter
 
     def __set_name__(self, owner: type[RecT], name: str) -> None:  # noqa: D105
         super().__set_name__(owner, name)
         self.context = Interface(owner)
 
-    def _attr_getter(self, instance: RecT) -> ValT | Literal[Not.resolved]:
+    def _getter(self, instance: RecT) -> ValT | Literal[Not.resolved]:
         """Get the value of this attribute on an instance."""
         if self.name not in instance.__dict__:
             return Not.resolved
 
         return instance.__dict__[self.name]
 
-    def _attr_setter(self: Attr[ValT2], instance: RecT, value: ValT2) -> None:
+    def _setter(self: Attr[ValT2], instance: RecT, value: ValT2) -> None:
         """Set the value of this attribute on an instance."""
         instance.__dict__[self.name] = value
 
@@ -146,7 +136,7 @@ class Attr(
 
     def _frame(
         self: Data[Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]],
-    ) -> Frame[SQL, Col]:
+    ) -> Frame[PL, Col]:
         """Get SQL-side reference to this property."""
         parent = self.parent()
         assert parent is not None
@@ -162,13 +152,30 @@ class Attr(
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Attr[ValT, RuTi, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
+
+        @overload
+        def __get__(self: Attr, instance: Any, owner: type | None) -> Any: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Attr, instance: Any, owner: type | None
+        ) -> Any: ...
+
 
 TupT = TypeVar("TupT", bound=tuple[Any, ...], default=Any)
 
 
 @dataclass(kw_only=True, eq=False)
 class AttrTuple(
-    Prop[TupT, Idx[()], R, PL, Col | Tab, RecT],
+    Prop[TupT, Idx[()], R, PL, Col | Tab, TupT, RecT],
 ):
     """Index property for a record type."""
 
@@ -188,7 +195,7 @@ class AttrTuple(
         data = (
             reduce(Data.__matmul__, self.attrs)
             if len(self.attrs) > 1
-            else self.attrs[0].data
+            else self.attrs[0]
         )
         self.data = cast(
             Data[TupT, Expand[Idx[()]], Col | Tab, PL, R, Interface[RecT, Any, Tab]],
@@ -470,7 +477,7 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
 
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
-    ) -> Frame[SQL, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL expression or Polars data of this property."""
         raise NotImplementedError()
 
@@ -990,7 +997,7 @@ class DataBase(
 
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
-    ) -> Frame[SQL, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL expression or Polars data of this property."""
         raise NotImplementedError()
 

@@ -503,7 +503,7 @@ def get_base_type(hint: SingleTypeDef[T] | str, bound: type[T]) -> type[T]:
 class TypeRef[T]:
     """Reference to a type."""
 
-    hint: SingleTypeDef[T] | str
+    hint: SingleTypeDef[T] | str = "Any"
     var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
     ctx_module: ModuleType | None = None
 

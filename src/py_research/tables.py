@@ -449,7 +449,7 @@ class ResultTable:
 
     @staticmethod
     def _prioritize_css(
-        css: dict[str, str] | Callable[[Any], str] | None
+        css: dict[str, str] | Callable[[Any], str] | None,
     ) -> dict[str, str] | Callable[[Any], str] | None:
         return (
             {
@@ -533,12 +533,13 @@ class ResultTable:
                         subset[0],  # type: ignore
                         axis="index",
                     )
+                    continue
                 if style.hide in ["cols", "cells"]:
                     styled = styled.hide(
                         subset[1],  # type: ignore
                         axis="columns",
                     )
-                continue
+                    continue
 
             css = self._prioritize_css(style.css)
 

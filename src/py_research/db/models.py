@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from copy import copy
-from dataclasses import MISSING, Field, dataclass
+from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, cmp_to_key, reduce
 from inspect import get_annotations, getmodule
 from types import ModuleType, NoneType, UnionType
@@ -24,17 +24,17 @@ import polars as pl
 from pydantic import BaseModel, create_model
 from typing_extensions import TypeVar
 
-from py_research.caching import cached_method
+from py_research.caching import cached_method, cached_prop
 from py_research.data import Params, copy_and_override
 from py_research.hashing import gen_int_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
     GenericAlias,
     SingleTypeDef,
-    TypeAware,
     TypeRef,
     get_base_type,
     get_typevar_map,
+    hint_to_typedef,
     is_subtype,
 )
 from py_research.types import DataclassInstance, Not
@@ -44,16 +44,22 @@ from .data import (
     SQL,
     Ctx,
     CtxTt,
+    CtxTt2,
     Data,
     DxT,
+    DxT2,
     Expand,
     ExT,
+    ExT2,
     Frame,
     Idx,
     Interface,
+    KeyTt2,
     R,
     Root,
     RwxT,
+    RwxT2,
+    SxT,
     SxT2,
     Tab,
     U,
@@ -62,14 +68,21 @@ from .data import (
 )
 from .utils import get_pl_schema
 
+PropT = TypeVar("PropT", covariant=True, default=Any)
+PropT2 = TypeVar("PropT2")
+
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
 IdxT = TypeVar("IdxT", bound=Idx, default=Any)
+IdxT2 = TypeVar("IdxT2", bound=Idx)
 
 
-@dataclass
-class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
+@dataclass(kw_only=True)
+class Prop(
+    Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *CtxTt],
+    Generic[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, *CtxTt],
+):
     """Property definition for a model."""
 
     init_after: ClassVar[set[type[Prop]]] = set()
@@ -78,9 +91,9 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
 
     @cache
     @staticmethod
-    def _get_default_prop(
+    def _get_default_class(
         val_type: SingleTypeDef | UnionType, owner: type
-    ) -> Prop | None:
+    ) -> type[Prop] | None:
         """Get the default subclass for this property."""
         subclasses = reversed(get_subclasses(Prop))
 
@@ -96,46 +109,64 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
         if len(matching) == 0:
             return None
 
-        return cast(Callable[[], Prop], matching[0])()
+        return matching[0]
 
-    data: Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt]
-    getter: Callable[[OwnT], ValT | Literal[Not.resolved]]
-    setter: Callable[[OwnT, ValT], None] | None = None
+    context: Interface[OwnT] | Data[Any, Any, Any, Any, Any, Interface[OwnT]] = (
+        Interface()
+    )
 
     alias: str | None = None
-    default: ValT | Literal[Not.defined] = Not.defined
-    default_factory: Callable[[], ValT] | None = None
+    default: PropT | Literal[Not.defined] = Not.defined
+    default_factory: Callable[[], PropT] | None = None
     init: bool = True
     repr: bool = True
     hash: bool = True
     compare: bool = True
 
-    # Name and Ownership:
+    _data: Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *CtxTt] | None = (
+        None
+    )
+    _owner_map: dict[type[OwnT], Data] = field(default_factory=dict)
+
+    def _getter(self, instance: OwnT) -> PropT | Literal[Not.resolved]:
+        """Get the value of this property."""
+        return Not.resolved
+
+    def _setter(self: Prop[PropT2], instance: OwnT, value: PropT2) -> None:
+        """Set the value of this property."""
+        raise NotImplementedError()
+
+    def _index(self) -> Expand[IdxT]:
+        """Get the index of this property."""
+        raise NotImplementedError()
+
+    def _frame(self: Data[Any, Any, SxT2]) -> Frame[PL, SxT2]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    @cached_prop
+    def common_prop_type(self) -> type[PropT]:
+        """Get the common type of this property."""
+        return cast(
+            type[PropT],
+            get_base_type(
+                self.typeref.hint if self.typeref is not None else type(self),
+                bound=Prop,
+            ),
+        )
 
     def __set_name__(self, owner: type[OwnT], name: str) -> None:  # noqa: D105
         if self.alias is None:
             self.alias = name
 
-        if self.typeref is None:
-            typeargs = get_typevar_map(owner) | {OwnT: owner}
+        if self.owner is None:
+            Prop._set_owner(self, owner)
 
-            self.typeref = TypeRef(
-                get_annotations(owner)[name],
-                var_map=typeargs,
-                ctx_module=owner._src_mod or getmodule(owner),
+            self.typeref = copy_and_override(
+                TypeRef,
+                self.typeref or TypeRef(object),
+                hint=get_annotations(owner)[self.name],
             )
-
-            default_prop = self._get_default_prop(typeargs[ValT], owner)
-
-            if default_prop is not None:
-                if self.data is not None:
-                    self.data = copy(default_prop.data)  # type: ignore
-
-                if self.getter is not None:
-                    self.getter = default_prop.getter
-
-                if self.setter is not None:
-                    self.setter = default_prop.setter
 
     @property
     def name(self) -> str:
@@ -143,32 +174,56 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
         assert self.alias is not None
         return self.alias
 
-    @property
-    def owner(self: Prop[Any, Any, Any, Any, Any, OwnT2]) -> type[OwnT2]:
-        """Owner of the property."""
-        return cast(type[OwnT2], self.typeargs[OwnT])
+    def _id(self) -> str:
+        """Name of the property."""
+        return self.name
 
-    def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.typeref, self.alias, self.owner))
+    @property
+    def owner(self: Prop[Any, Any, Any, Any, Any, Any, OwnT2]) -> type[OwnT2] | None:
+        """Owner of the property."""
+        owner = cast(type[OwnT2], self.typeargs[OwnT])
+        return owner if owner is not Any else None
+
+    @staticmethod
+    def _set_owner(
+        data: Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
+        owner: type[OwnT2],
+    ) -> None:
+        """Set the owner of the property."""
+        data.context = Interface(owner)
+        data.typeref = copy_and_override(
+            TypeRef,
+            data.typeref or TypeRef(),
+            var_map=dict(data.typeref.var_map if data.typeref is not None else {})
+            | get_typevar_map(owner)
+            | {OwnT: owner},
+        )
+
+    @staticmethod
+    def _with_new_root_owner(
+        data: Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
+        owner: type[OwnT2],
+    ) -> Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]:
+        """Create a new data object with a new root owner."""
+        if isinstance(data.context, Interface):
+            root = copy_and_override(type(data), data, context=data.context)
+            Prop._set_owner(root, owner)
+            return root
+        else:
+            assert isinstance(data.context, Data)
+            return copy_and_override(
+                type(data), data, context=Prop._with_new_root_owner(data.context, owner)
+            )
 
     # Descriptor read/write:
 
     @overload
     def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Data[
-        ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT, Any, Tab], *CtxTt
-    ]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Interface[OwnT2], *CtxTt]: ...
 
     @overload
-    def __get__(
-        self: Prop[Any, Idx[()]], instance: OwnT2, owner: type[OwnT2]
-    ) -> ValT: ...
-
-    @overload
-    def __get__(
-        self: Prop, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT, Idx[()], Tab], *CtxTt]: ...
+    def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> PropT: ...
 
     @overload
     def __get__(self: Prop, instance: Any, owner: type | None) -> Any: ...
@@ -178,16 +233,16 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
             return self
 
         if instance is None:
-            assert self.data is not None
-            return self.data
+            owned = self._owner_map.get(owner, None)
 
-        assert isinstance(instance, Model)
+            if owned is None:
+                data = self._data or self
+                owned = Prop._with_new_root_owner(data, owner)
+                self._owner_map[owner] = owned
 
-        if self.data is not None and self.data.index() is not None:
-            return cast(OwnT, instance)._data()[self.data]
+            return owned
 
-        assert self.getter is not None
-        res = self.getter(cast(OwnT, instance))
+        res = self._getter(cast(OwnT, instance))
         if res is not Not.resolved:
             return res
 
@@ -199,7 +254,7 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
 
     @overload
     def __set__(  # noqa: D105
-        self: Prop[ValT2, Any, U], instance: OwnT, value: ValT2
+        self: Prop[PropT2, Any, U], instance: OwnT, value: PropT2
     ) -> None: ...
 
     @overload
@@ -211,8 +266,40 @@ class Prop(TypeAware[ValT], Generic[ValT, IdxT, RwxT, ExT, DxT, OwnT, *CtxTt]):
         self: Prop[Any, Any, U], instance: Any, value: Any
     ) -> None:
         if isinstance(instance, Model):
-            assert self.setter is not None
-            self.setter(instance, value)
+            self._setter(instance, value)
+
+    def __hash__(self) -> int:  # noqa: D105
+        return gen_int_hash((self.typeref, self.alias, self.owner))
+
+
+@dataclass
+class Dyn(
+    Prop[PropT, IdxT, R, ExT, SxT, ValT, OwnT, *CtxTt],
+):
+    """Dynamic property reference."""
+
+    ref: Data[ValT, Expand[IdxT], SxT, ExT, R, Interface[OwnT], *CtxTt]
+    converter: Callable[[Iterable[ValT]], PropT] | None = None
+
+    def __post_init__(self):  # noqa: D105
+        self._data = self.ref
+
+    def _getter(self, instance: OwnT) -> PropT:
+        """Get the value of this property."""
+        data = instance._data()[self.ref]
+        values = data.values()
+
+        if self.converter is not None:
+            return self.converter(values)
+
+        if (
+            issubclass(data.common_value_type, self.common_prop_type)
+            and data.index() is None
+        ):
+            return cast(PropT, values[0])
+
+        constructor = cast(Callable[[Any], PropT], self.common_prop_type)
+        return constructor(values[0] if data.index() is None else values)
 
 
 class ModelMeta(type):
@@ -262,6 +349,11 @@ class ModelMeta(type):
         for name, anno in get_annotations(cls).items():
             if name not in cls.__dict__:
                 prop_type = get_base_type(anno, bound=Prop)
+
+                default_type = Prop._get_default_class(hint_to_typedef(anno), cls)
+                if default_type is not None and issubclass(default_type, prop_type):
+                    prop_type = default_type
+
                 prop = prop_type()
 
                 props[name] = prop
@@ -356,7 +448,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[ExT, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
@@ -412,7 +504,7 @@ class Model(DataclassInstance, metaclass=ModelMeta):
             {
                 name: prop.common_value_type
                 for name, prop in cls._props.items()
-                if prop.getter is not None
+                if prop._getter is not None
             }
         )
 
@@ -525,9 +617,34 @@ class Model(DataclassInstance, metaclass=ModelMeta):
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
     @cached_method
-    def _data(self) -> Data[Self, Idx[()], Tab, Any, R, Root]:
+    def _data(self) -> Data[Self, Idx[()], Tab, Any, Any, Root]:
         """Return the singleton class for this record."""
         return Singleton(model=self)
+
+    def __getitem__(
+        self,
+        prop: Prop[
+            PropT2,
+            Idx[*KeyTt2],
+            RwxT2,
+            ExT2,
+            DxT2,
+            ValT2,
+            Self,
+            *CtxTt2,
+        ],
+    ) -> Data[
+        ValT2,
+        Idx[*KeyTt2],
+        DxT2,
+        ExT2,
+        RwxT2,
+        Root,
+        Ctx[Self],
+        *CtxTt2,
+    ]:
+        """Get the data representation of a prop."""
+        return self._data()[prop]
 
 
 ModTi = TypeVar("ModTi", bound=Model, default=Any)
@@ -551,6 +668,6 @@ class Crawl(Data[ModTi, Idx, Tab, SQL, R, Interface[ModTi, Any, Tab]]):
 
     def _frame(
         self: Data[Any, Any, SxT2],
-    ) -> Frame[SQL, SxT2]:
+    ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
