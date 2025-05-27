@@ -46,7 +46,6 @@ from xlsxwriter import Workbook as ExcelWorkbook
 
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
-from py_research.files import HttpFile
 from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import TypeRef, has_type
 from py_research.types import UUID4, Not

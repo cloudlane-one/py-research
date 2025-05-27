@@ -26,6 +26,7 @@ from typing_extensions import TypeVar
 
 from py_research.caching import cached_method, cached_prop
 from py_research.data import Params, copy_and_override
+from py_research.files import Dir
 from py_research.hashing import gen_int_hash
 from py_research.reflect.runtime import get_subclasses
 from py_research.reflect.types import (
@@ -38,6 +39,8 @@ from py_research.reflect.types import (
     hint_to_typedef,
     is_subtype,
 )
+from py_research.storage.common import JSONDict, JSONFile
+from py_research.storage.storables import Storable
 from py_research.types import DataclassInstance, Not
 
 from .data import (
@@ -458,7 +461,11 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
     field_specifiers=(Prop,),
     eq_default=False,
 )
-class Model(DataclassInstance, metaclass=ModelMeta):
+class Model(
+    DataclassInstance,
+    Storable[dict[str, Any] | JSONDict | JSONFile | Dir],
+    metaclass=ModelMeta,
+):
     """Schema for a record in a database."""
 
     _template: ClassVar[bool]

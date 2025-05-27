@@ -48,6 +48,7 @@ dependencies = [
     "sqlparse>=0.5.3",
     "fastexcel>=0.12.1",
     "networkx>=3.4.2",
+    "identify>=2.6.12",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"

@@ -6,40 +6,25 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence, Set
 from dataclasses import InitVar, dataclass
 from types import UnionType
-from typing import (
-    Any,
-    Generic,
-    NewType,
-    Protocol,
-    Self,
-    TypeAliasType,
-    get_args,
-    runtime_checkable,
-)
+from typing import Any, Generic, Protocol, Self, get_args, runtime_checkable
 
 import polars as pl
 from typing_extensions import TypeVar
 
 from py_research.caching import cached_method
-from py_research.reflect.types import (
-    GenericAlias,
-    SingleTypeDef,
-    get_typevar_map,
-    has_type,
-    is_subtype,
-)
+from py_research.reflect.types import SingleTypeDef, get_typevar_map, is_subtype
 
 T = TypeVar("T", contravariant=True)
 T2 = TypeVar("T2")
 
 
 class Realm:
-    """A class representing the realm into / from which conversion / parsing occurs."""
+    """A class representing the realm into / from which storage / loading occurs."""
 
 
 @dataclass
 class ConversionTypes(Generic[T]):
-    """A set of types that can be converted to/from."""
+    """A set of interfaces that can be stored to / loaded from."""
 
     types: InitVar[Sequence[SingleTypeDef[T]]]
 
@@ -48,22 +33,21 @@ class ConversionTypes(Generic[T]):
         self.__types = tuple(types)
 
     def match_targets(
-        self: ConversionTypes[T2], targets: Set[T2 | SingleTypeDef[T2]]
-    ) -> list[T2 | SingleTypeDef[T2]]:
+        self: ConversionTypes[T2], targets: Set[SingleTypeDef[T2]]
+    ) -> list[SingleTypeDef[T2]]:
         """Filter the types in this set to only those that are in the provided set."""
-        return [
-            t2
-            for t in self.__types
-            for t2 in targets
-            if isinstance(t2, GenericAlias | TypeAliasType | type | NewType)
-            and is_subtype(t, t2)
-            or has_type(t2, t)
-        ]
+        return [t2 for t in self.__types for t2 in targets if is_subtype(t, t2)]
+
+
+U = TypeVar("U", bound="Storable")
+
+B = TypeVar("B", contravariant=True, default=None)
+B2 = TypeVar("B2")
 
 
 @runtime_checkable
-class Convertible(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
-    """Protocol for classes that can be converted to arbitrary types/formats."""
+class Storable(Protocol[T, B]):  # pyright: ignore[reportInvalidTypeVarUse]
+    """Protocol for classes that can be stored / loaded."""
 
     @classmethod
     def __conv_types__(cls) -> ConversionTypes[T]:
@@ -71,59 +55,53 @@ class Convertible(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
         ...
 
     @classmethod
-    def __parse_from__(
-        cls,
+    def __load__(
+        cls: type[U],
         source: T,
         realm: Realm,
-        annotation: SingleTypeDef[Convertible[T]] | None = None,
-    ) -> Self:
+        annotation: SingleTypeDef[U] | None = None,
+    ) -> U:
         """Parse from the source type or format."""
         ...
 
-    def __convert_to__(
-        self: Convertible[T2],
-        targets: Set[T2 | SingleTypeDef[T2]],
+    def __store__(
+        self: Storable[T2],
+        target: T2,
         realm: Realm,
-        annotation: SingleTypeDef[Convertible[T2]] | None = None,
-    ) -> T2:
+        annotation: SingleTypeDef[Storable[T2]] | None = None,
+    ) -> None:
         """Convert to the target type or format."""
         ...
 
-
-@runtime_checkable
-class BatchConvertible(  # pyright: ignore[reportInvalidTypeVarUse]
-    Convertible[T], Protocol[T]
-):
-    """Protocol for classes that can be converted to arbitrary types/formats."""
-
     @classmethod
-    def __batch_parse__(
+    def __batch_load__(
         cls,
-        batch: pl.Series,
+        source: B,
         realm: Realm,
-        annotation: SingleTypeDef[Convertible[T]] | None = None,
+        annotation: SingleTypeDef[Self] | None = None,
     ) -> pl.Series:
         """Parse from the source type or format."""
         ...
 
     @classmethod
-    def __batch_convert__(
-        cls,
+    def __batch_store__(
+        cls: type[Storable[Any, B2]],
         batch: pl.Series,
-        targets: Set[T | SingleTypeDef[T]],
+        target: B2,
         realm: Realm,
-        annotation: SingleTypeDef[Convertible[T]] | None = None,
-    ) -> pl.Series:
+        annotation: SingleTypeDef[Storable[Any, B2]] | None = None,
+    ) -> None:
         """Convert to the target type or format."""
         ...
 
 
-U = TypeVar("U")
+V = TypeVar("V")
+V2 = TypeVar("V2")
 
 
 @dataclass
-class Converter(ABC, Generic[U, T]):
-    """A class representing a converter for a specific type."""
+class StorageDriver(ABC, Generic[V, T, B]):
+    """A class representing a storage driver for a specific type."""
 
     @cached_method
     @classmethod
@@ -133,9 +111,9 @@ class Converter(ABC, Generic[U, T]):
 
     @classmethod
     @cached_method
-    def obj_type(cls) -> SingleTypeDef[U]:
+    def obj_type(cls) -> SingleTypeDef[V]:
         """Return the type of object this converter handles."""
-        t = cls.typeargs()[U]
+        t = cls.typeargs()[V]
         assert not isinstance(t, UnionType), "U must not be a Union type"
         return t
 
@@ -151,44 +129,44 @@ class Converter(ABC, Generic[U, T]):
 
     @abstractmethod
     @classmethod
-    def parse(
-        cls,
+    def load(
+        cls: type[StorageDriver[V2, Any]],
         source: T,
         realm: Realm,
-        annotation: SingleTypeDef[U] | None = None,
-    ) -> U:
+        annotation: SingleTypeDef[V2] | None = None,
+    ) -> V2:
         """Parse from the source type or format."""
         ...
 
     @abstractmethod
     @classmethod
-    def convert(
-        cls: type[Converter[Any, T2]],
-        instance: U,
-        targets: Set[T2 | SingleTypeDef[T2]],
+    def store(
+        cls,
+        instance: V,
+        target: T,
         realm: Realm,
-        annotation: SingleTypeDef[U] | None = None,
-    ) -> T2:
+        annotation: SingleTypeDef[V] | None = None,
+    ) -> None:
         """Convert to the target type or format."""
         ...
 
     @classmethod
-    def batch_parse(
+    def batch_load(
         cls,
-        batch: pl.Series,
+        source: B,
         realm: Realm,
-        annotation: SingleTypeDef[U] | None = None,
+        annotation: SingleTypeDef[V] | None = None,
     ) -> pl.Series:
         """Parse a batch of data from the source type or format."""
-        return batch.map_elements(lambda x: cls.parse(x, realm, annotation))
+        raise NotImplementedError()
 
     @classmethod
-    def batch_convert(
-        cls,
+    def batch_store(
+        cls: type[StorageDriver[Any, Any, B2]],
         batch: pl.Series,
-        targets: Set[T | SingleTypeDef[T]],
+        target: B2,
         realm: Realm,
-        annotation: SingleTypeDef[U] | None = None,
-    ) -> pl.Series:
+        annotation: SingleTypeDef[V] | None = None,
+    ) -> None:
         """Convert a batch of data to the target type or format."""
-        return batch.map_elements(lambda x: cls.convert(x, targets, realm, annotation))
+        raise NotImplementedError()
