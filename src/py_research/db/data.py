@@ -51,6 +51,7 @@ from py_research.reflect.types import (
     is_subtype,
     typedef_to_typeset,
 )
+from py_research.storage.storables import Realm
 from py_research.types import Not, Ordinal
 
 
@@ -292,7 +293,7 @@ CtxTt2 = TypeVarTuple("CtxTt2")
 CtxTt3 = TypeVarTuple("CtxTt3")
 
 
-class Root(Ctx[ArgT, Any, Any], Generic[ArgT]):
+class Root(Ctx[ArgT, Any, Any], Realm, Generic[ArgT]):
     """Base for retrieving/storing data."""
 
 

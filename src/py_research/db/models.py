@@ -303,8 +303,7 @@ class Prop(
         except TypeError:
             return StorageTypes([])
 
-    @cached_prop
-    def _val_json_schema(self) -> JsonSchemaValue | None:
+    def _get_val_json_schema(self) -> JsonSchemaValue | None:
         """Get the JSON schema for this property."""
         if self._val_pyd_type_adapter is not None:
             return self._val_pyd_type_adapter.json_schema()
@@ -594,7 +593,7 @@ class Model(
     ) -> core_schema.CoreSchema:
         # TODO: Generate core schema based on pydantic model and storage types of props.
         # Wrap below `__store__` method for serialization: https://docs.pydantic.dev/latest/api/pydantic_core_schema/#pydantic_core.core_schema.simple_ser_schema
-        # Wrap below `__load__` method for deserialization: https://docs.pydantic.dev/latest/api/pydantic_core_schema/#pydantic_core.core_schema.no_info_after_validator_function
+        # Wrap below `__load__` method for deserialization: https://docs.pydantic.dev/latest/api/pydantic_core_schema/#pydantic_core.core_schema.with_info_after_validator_function
         raise NotImplementedError()
 
     @classmethod
@@ -623,6 +622,7 @@ class Model(
         annotation: SingleTypeDef[T] | None = None,
     ) -> T:
         """Parse from the source type or format."""
+        # Upon deferring to pydantic, supply current root (e.g. Realm) as context info.
         ...
 
     def __store__[T](
@@ -632,6 +632,7 @@ class Model(
         annotation: SingleTypeDef[Storable[T]] | None = None,
     ) -> None:
         """Convert to the target type or format."""
+        # Upon deferring to pydantic, supply current root (e.g. Realm) as context info.
         ...
 
     def __init__(self, **kwargs: Any) -> None:

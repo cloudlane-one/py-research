@@ -41,6 +41,9 @@ import sqlalchemy.orm as orm
 import yarl
 from annotated_types import T
 from cloudpathlib import CloudPath
+from pydantic import GetJsonSchemaHandler
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema
 from typing_extensions import TypeVar
 from xlsxwriter import Workbook as ExcelWorkbook
 
@@ -393,6 +396,22 @@ class Record(Model, AutoIndexable[*KeyTt]):
             for prop in cls._get_class_props().values()
             if isinstance(prop, ForeignKey)
         }
+
+    @classmethod
+    def __get_pydantic_core_schema__(  # noqa: D105
+        cls, source: type[Any], handler: Callable[[Any], CoreSchema]
+    ) -> CoreSchema:
+        # TODO: Extend superclass method to handle opportunistic record upload and links
+        # depends on context supplied via info object.
+        raise NotImplementedError()
+
+    @classmethod
+    def __get_pydantic_json_schema__(  # noqa: D105
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # TODO: Extend superclass method to handle opportunistic record upload and links
+        # depends on context supplied via info object.
+        raise NotImplementedError()
 
     _published: bool = False
     _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
