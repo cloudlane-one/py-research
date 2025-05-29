@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import pickle
 import xml.etree.ElementTree as xml  # noqa: N813
-from collections.abc import Iterable, Set
+from collections.abc import Iterable
 from types import UnionType
 from typing import Any, BinaryIO, Literal, TextIO, cast
 
@@ -19,29 +19,11 @@ import yaml
 from typing_extensions import TypeVar
 
 from py_research.files import File
-from py_research.reflect.types import SingleTypeDef, has_type, is_subtype
+from py_research.reflect.types import SingleTypeDef, has_type
 
 from .storables import V2, StorageDriver
 
-drivers: dict[SingleTypeDef | UnionType, type[StorageDriver]] = {}
-
-
-def get_storage_driver[U, T](
-    instance: type[U] | U, targets: Set[SingleTypeDef[T]]
-) -> type[StorageDriver[U, T]] | None:
-    """Get the converter for a given type or instance."""
-    obj_type = instance if isinstance(instance, type) else type(instance)
-
-    matching_conv = [
-        c
-        for t, c in drivers.items()
-        if is_subtype(obj_type, t) and len(c.conv_types().match_targets(targets)) > 0
-    ]
-
-    if len(matching_conv) == 0:
-        return None
-
-    return matching_conv[0]
+common_drivers: dict[SingleTypeDef | UnionType, type[StorageDriver]] = {}
 
 
 # Simple, stringifiable types
@@ -118,7 +100,7 @@ class JSONStore(StorageDriver[JSONDict, JSONFile]):
                 f.write(json.dumps(instance, indent=2))
 
 
-drivers[JSONDict] = JSONStore
+common_drivers[JSONDict] = JSONStore
 
 
 # XML etree
@@ -165,7 +147,7 @@ class XMLStore(StorageDriver[xml.ElementTree, XMLFile]):
             instance.write(f)
 
 
-drivers[xml.ElementTree] = XMLStore
+common_drivers[xml.ElementTree] = XMLStore
 
 # Pydantic models
 
@@ -212,7 +194,7 @@ class PydConv(StorageDriver[pyd.BaseModel, JSONFile]):
                 json.dump(instance.model_dump(), f, indent=2)
 
 
-drivers[pyd.BaseModel] = PydConv
+common_drivers[pyd.BaseModel] = PydConv
 
 # DataFrames
 
@@ -269,7 +251,7 @@ class PdConv(StorageDriver[pd.DataFrame, DfFile]):
                 raise ValueError(f"Unsupported MIME type: {target.mime}")
 
 
-drivers[pd.DataFrame] = PdConv
+common_drivers[pd.DataFrame] = PdConv
 
 # Polars
 
@@ -321,7 +303,7 @@ class PlConv(StorageDriver[pl.DataFrame, DfFile]):
                 raise ValueError(f"Unsupported MIME type: {target.mime}")
 
 
-drivers[pl.DataFrame] = PlConv
+common_drivers[pl.DataFrame] = PlConv
 
 # NumPy arrays
 
@@ -377,7 +359,7 @@ class NpConv(StorageDriver[np.ndarray, NpFile]):
                 raise ValueError(f"Unsupported MIME type: {target.mime}")
 
 
-drivers[np.ndarray] = NpConv
+common_drivers[np.ndarray] = NpConv
 
 # SQL statements
 
@@ -428,7 +410,7 @@ class SQLConv(StorageDriver[sqla.Executable | Iterable[sqla.Executable], SQLFile
                 )
 
 
-drivers[sqla.Executable | Iterable[sqla.Executable]] = SQLConv
+common_drivers[sqla.Executable | Iterable[sqla.Executable]] = SQLConv
 
 # PIL images, if PIL is installed
 
@@ -478,7 +460,7 @@ try:
             with target.open("w") as f:
                 instance.save(f, format=instance.format)
 
-    drivers[Image.Image] = ImageConv
+    common_drivers[Image.Image] = ImageConv
 
 except ImportError:
     # PIL is not installed, so we won't register any converters for images
@@ -523,7 +505,7 @@ try:
             with target.open("w") as f:
                 f.write(str(instance))
 
-    drivers[BeautifulSoup] = HTMLConv
+    common_drivers[BeautifulSoup] = HTMLConv
 
 except ImportError:
     # BeautifulSoup is not installed, so we won't register any converters for HTML
@@ -564,4 +546,4 @@ class PickleConv(StorageDriver[Any, PickleFile]):
             pickle.dump(instance, f)
 
 
-drivers[object] = PickleConv
+common_drivers[object] = PickleConv

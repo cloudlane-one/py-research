@@ -21,7 +21,15 @@ from typing import (
 )
 
 import polars as pl
-from pydantic import BaseModel, create_model
+from pydantic import (
+    BaseModel,
+    GetJsonSchemaHandler,
+    PydanticSchemaGenerationError,
+    TypeAdapter,
+    create_model,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema, core_schema
 from typing_extensions import TypeVar
 
 from py_research.caching import cached_method, cached_prop
@@ -39,8 +47,9 @@ from py_research.reflect.types import (
     hint_to_typedef,
     is_subtype,
 )
+from py_research.storage import get_storage_types
 from py_research.storage.common import JSONDict, JSONFile
-from py_research.storage.storables import Storable
+from py_research.storage.storables import Realm, Storable, StorageTypes
 from py_research.types import DataclassInstance, Not
 
 from .data import (
@@ -274,6 +283,39 @@ class Prop(
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash((self.typeref, self.alias, self.owner))
 
+    @cached_prop
+    def _val_pyd_type_adapter(self) -> TypeAdapter | None:
+        """Get the pydantic type adapter for this property."""
+        try:
+            ta = TypeAdapter(self.typeref.typeform if self.typeref is not None else Any)
+            ta.rebuild(raise_errors=True)
+            return ta
+        except PydanticSchemaGenerationError:
+            return None
+
+    @cached_prop
+    def _val_storage_types(self) -> StorageTypes:
+        """Get the storage types for this property."""
+        try:
+            return get_storage_types(
+                self.typeref.typeform if self.typeref is not None else object
+            )
+        except TypeError:
+            return StorageTypes([])
+
+    @cached_prop
+    def _val_json_schema(self) -> JsonSchemaValue | None:
+        """Get the JSON schema for this property."""
+        if self._val_pyd_type_adapter is not None:
+            return self._val_pyd_type_adapter.json_schema()
+
+        if self._val_storage_types.match_targets({JSONDict, JSONFile}):
+            return {
+                "type": "object",
+            }
+
+        return None
+
 
 @dataclass
 class Dyn(
@@ -463,7 +505,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 )
 class Model(
     DataclassInstance,
-    Storable[dict[str, Any] | JSONDict | JSONFile | Dir],
+    Storable[JSONDict | JSONFile | Dir],
     metaclass=ModelMeta,
 ):
     """Schema for a record in a database."""
@@ -545,6 +587,52 @@ class Model(
             for a in cls._props.values()
             if a.init is not False and a.name is not None
         )
+
+    @classmethod
+    def __get_pydantic_core_schema__(  # noqa: D105
+        cls, source: type[Any], handler: Callable[[Any], CoreSchema]
+    ) -> core_schema.CoreSchema:
+        # TODO: Generate core schema based on pydantic model and storage types of props.
+        # Wrap below `__store__` method for serialization: https://docs.pydantic.dev/latest/api/pydantic_core_schema/#pydantic_core.core_schema.simple_ser_schema
+        # Wrap below `__load__` method for deserialization: https://docs.pydantic.dev/latest/api/pydantic_core_schema/#pydantic_core.core_schema.no_info_after_validator_function
+        raise NotImplementedError()
+
+    @classmethod
+    def __get_pydantic_json_schema__(  # noqa: D105
+        cls, core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # TODO: Generate JSON schema based on json schema and storage types of props.
+        # If all props have a value json schema, just return the composite schema.
+        # If some props have no value json schema, replace them with references to their
+        # storage files.
+        raise NotImplementedError()
+
+    @classmethod
+    def __storage_types__(cls) -> StorageTypes[JSONDict | JSONFile | Dir]:
+        """Return the set of types that this class can convert to/from."""
+        # TODO: Return storage type based on storage types of props.
+        # All JSON -> JSON | JSONFile | Dir
+        # Some Non-JSON -> Dir
+        raise NotImplementedError()
+
+    @classmethod
+    def __load__[T](
+        cls: type[T],
+        source: JSONDict | JSONFile | Dir,
+        realm: Realm,
+        annotation: SingleTypeDef[T] | None = None,
+    ) -> T:
+        """Parse from the source type or format."""
+        ...
+
+    def __store__[T](
+        self: Storable[T],
+        target: T,
+        realm: Realm,
+        annotation: SingleTypeDef[Storable[T]] | None = None,
+    ) -> None:
+        """Convert to the target type or format."""
+        ...
 
     def __init__(self, **kwargs: Any) -> None:
         """Initialize a new record instance."""

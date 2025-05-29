@@ -23,7 +23,7 @@ class Realm:
 
 
 @dataclass
-class ConversionTypes(Generic[T]):
+class StorageTypes(Generic[T]):
     """A set of interfaces that can be stored to / loaded from."""
 
     types: InitVar[Sequence[SingleTypeDef[T]]]
@@ -33,7 +33,7 @@ class ConversionTypes(Generic[T]):
         self.__types = tuple(types)
 
     def match_targets(
-        self: ConversionTypes[T2], targets: Set[SingleTypeDef[T2]]
+        self: StorageTypes[T2], targets: Set[SingleTypeDef[T2]]
     ) -> list[SingleTypeDef[T2]]:
         """Filter the types in this set to only those that are in the provided set."""
         return [t2 for t in self.__types for t2 in targets if is_subtype(t, t2)]
@@ -46,11 +46,11 @@ B2 = TypeVar("B2")
 
 
 @runtime_checkable
-class Storable(Protocol[T, B]):  # pyright: ignore[reportInvalidTypeVarUse]
+class Storable(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
     """Protocol for classes that can be stored / loaded."""
 
     @classmethod
-    def __conv_types__(cls) -> ConversionTypes[T]:
+    def __storage_types__(cls) -> StorageTypes[T]:
         """Return the set of types that this class can convert to/from."""
         ...
 
@@ -73,6 +73,13 @@ class Storable(Protocol[T, B]):  # pyright: ignore[reportInvalidTypeVarUse]
         """Convert to the target type or format."""
         ...
 
+
+@runtime_checkable
+class BatchStorable(
+    Storable[T], Protocol[T, B]
+):  # pyright: ignore[reportInvalidTypeVarUse]
+    """Protocol for classes that can be stored / loaded in batches."""
+
     @classmethod
     def __batch_load__(
         cls,
@@ -85,11 +92,11 @@ class Storable(Protocol[T, B]):  # pyright: ignore[reportInvalidTypeVarUse]
 
     @classmethod
     def __batch_store__(
-        cls: type[Storable[Any, B2]],
+        cls: type[BatchStorable[Any, B2]],
         batch: pl.Series,
         target: B2,
         realm: Realm,
-        annotation: SingleTypeDef[Storable[Any, B2]] | None = None,
+        annotation: SingleTypeDef[BatchStorable[Any, B2]] | None = None,
     ) -> None:
         """Convert to the target type or format."""
         ...
@@ -119,13 +126,13 @@ class StorageDriver(ABC, Generic[V, T, B]):
 
     @classmethod
     @cached_method
-    def conv_types(cls) -> ConversionTypes[T]:
+    def storage_types(cls) -> StorageTypes[T]:
         """Return the set of types that this class can convert to/from."""
         t = cls.typeargs()[T]
 
         targets = get_args(t) if isinstance(t, UnionType) else (t,)
 
-        return ConversionTypes(targets)
+        return StorageTypes(targets)
 
     @abstractmethod
     @classmethod

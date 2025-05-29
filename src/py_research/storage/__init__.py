@@ -1,11 +1,52 @@
 """Arbitrary object conversion."""
 
+from collections.abc import Set
+from types import UnionType
 from typing import Any, cast
 
-from py_research.reflect.types import SingleTypeDef, is_subtype, typedef_to_typeset
+from py_research.reflect.types import (
+    SingleTypeDef,
+    get_common_type,
+    is_subtype,
+    typedef_to_typeset,
+)
 
-from .common import get_storage_driver
-from .storables import Realm, Storable
+from .common import common_drivers
+from .storables import Realm, Storable, StorageDriver, StorageTypes
+
+custom_drivers: dict[SingleTypeDef | UnionType, type[StorageDriver]] = {}
+
+
+def get_storage_driver[U, T](
+    instance: type[U] | U, targets: Set[SingleTypeDef[T]]
+) -> type[StorageDriver[U, T]] | None:
+    """Get the converter for a given type or instance."""
+    obj_type = instance if isinstance(instance, type) else type(instance)
+
+    matching_sto = [
+        c
+        for t, c in (common_drivers | custom_drivers).items()
+        if is_subtype(obj_type, t) and len(c.storage_types().match_targets(targets)) > 0
+    ]
+
+    if len(matching_sto) == 0:
+        return None
+
+    return matching_sto[0]
+
+
+def get_storage_types(src_type: SingleTypeDef | UnionType) -> StorageTypes:
+    """Get the storage types for a given type."""
+    if is_subtype(src_type, Storable):
+        return get_common_type(
+            src_type
+        ).__storage_types__()  # pyright: ignore[reportAbstractUsage]
+
+    driver = get_storage_driver(src_type, {object})
+    if driver is not None:
+        return driver.storage_types()
+
+    raise TypeError(f"No storage types found for {src_type}")
 
 
 def store(obj: Any, target: Any, realm: Realm) -> None:
@@ -26,7 +67,7 @@ def load[T](source: Any, realm: Realm, annotation: SingleTypeDef[T]) -> T:
         conv = [
             t
             for t in typedef_to_typeset(annotation)
-            if issubclass(t, Storable) and t.__conv_types__().match_targets({source})
+            if issubclass(t, Storable) and t.__storage_types__().match_targets({source})
         ]
 
         if len(conv) > 0:
@@ -42,3 +83,10 @@ def load[T](source: Any, realm: Realm, annotation: SingleTypeDef[T]) -> T:
         )
 
     return converter.load(source, realm, annotation)
+
+
+def register_storage_driver(
+    type_: SingleTypeDef | UnionType, driver: type[StorageDriver]
+) -> None:
+    """Register a custom storage driver."""
+    custom_drivers[type_] = driver
