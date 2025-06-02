@@ -15,7 +15,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
 from inspect import getmodule
-from io import BytesIO
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
@@ -29,7 +28,7 @@ from typing import (
     LiteralString,
     Self,
     cast,
-    overload,
+    get_args,
 )
 from uuid import uuid4
 
@@ -38,8 +37,6 @@ import pandas as pd
 import polars as pl
 import sqlalchemy as sqla
 import sqlalchemy.orm as orm
-import yarl
-from annotated_types import T
 from cloudpathlib import CloudPath
 from pydantic import GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -50,7 +47,7 @@ from xlsxwriter import Workbook as ExcelWorkbook
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash, gen_str_hash
-from py_research.reflect.types import TypeRef, has_type
+from py_research.reflect.types import SupportsItems, TypeRef, has_type
 from py_research.types import UUID4, Not
 
 from .data import (
@@ -73,7 +70,6 @@ from .data import (
     KeySelect,
     KeyT,
     KeyTt,
-    ModIdx,
     R,
     Registry,
     Root,
@@ -87,7 +83,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import Model, ModelMeta, Prop
+from .models import IdxT, Model, ModelMeta, Prop, RuT, Var
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -101,18 +97,19 @@ from .utils import (
 RecT = TypeVar("RecT", bound="Record", contravariant=True, default=Any)
 RecT2 = TypeVar("RecT2", bound="Record")
 
-RuTi = TypeVar("RuTi", bound=R | U, default=R | U)
-
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], RuTi, SQL, Col, ValT, RecT],
+    Var[ValT, Idx[()], SQL, Col, ValT, RecT],
+    Generic[ValT, RecT],
 ):
-    """Single-value attribute or column."""
+    """Single-value attribute or column.
 
-    def __set_name__(self, owner: type[RecT], name: str) -> None:  # noqa: D105
-        super().__set_name__(owner, name)
-        self.context = Interface(owner)
+    Note:
+        This always serializes directly into its owner record instance,
+        which may be in form of a SQL column, a Python `__dict__` entry,
+        or a JSON object property.
+    """
 
     def _getter(self, instance: RecT) -> ValT | Literal[Not.resolved]:
         """Get the value of this attribute on an instance."""
@@ -127,14 +124,14 @@ class Attr(
 
     def _id(self) -> str:
         """Identity of the attribute."""
-        # TODO: Implement this method for the Singleton class.
+        # TODO: Implement this method for the Attr class.
         raise NotImplementedError()
 
     def _index(
         self,
     ) -> Expand[Idx[()]]:
         """Get the index of this data."""
-        return ModIdx(reduction=Idx[()], expansion=Idx(tuple()))
+        raise NotImplementedError()
 
     def _frame(
         self: Data[Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]],
@@ -147,29 +144,12 @@ class Attr(
         return Frame(parent_df[self._id()])
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Data[Any, Any, Any, Any, RuTi],
+        self: Prop[Any, Any, RuT],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RuTi]] = {U},
+        mode: Set[type[RuT]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
-
-    if TYPE_CHECKING:
-
-        @overload
-        def __get__(
-            self, instance: None, owner: type[RecT2]
-        ) -> Attr[ValT, RuTi, RecT2]: ...
-
-        @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
-
-        @overload
-        def __get__(self: Attr, instance: Any, owner: type | None) -> Any: ...
-
-        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
-            self: Attr, instance: Any, owner: type | None
-        ) -> Any: ...
 
 
 TupT = TypeVar("TupT", bound=tuple[Any, ...], default=Any)
@@ -181,30 +161,24 @@ class AttrTuple(
 ):
     """Index property for a record type."""
 
-    data: Data[TupT, Expand[Idx[()]], Col | Tab, PL, R, Interface[RecT, Any, Tab]] = (
-        field(init=False)
-    )
-    getter: Callable[[RecT], TupT | Literal[Not.resolved]] = field(init=False)
-
-    attrs: tuple[Attr[Any, Any, RecT], ...]
+    attrs: tuple[Attr[Any, RecT], ...]
 
     def __post_init__(self) -> None:  # noqa: D105
         """Get the value of this attribute."""
-        self.context = Interface()
-        self.getter = self._attr_tuple_getter
+        if len(self.attrs) > 0:
+            data = (
+                reduce(Data.__matmul__, self.attrs)
+                if len(self.attrs) > 1
+                else self.attrs[0]
+            )
+            self.data = cast(
+                Data[
+                    TupT, Expand[Idx[()]], Col | Tab, PL, R, Interface[RecT, Any, Tab]
+                ],
+                data,
+            )
 
-        assert len(self.attrs) > 0
-        data = (
-            reduce(Data.__matmul__, self.attrs)
-            if len(self.attrs) > 1
-            else self.attrs[0]
-        )
-        self.data = cast(
-            Data[TupT, Expand[Idx[()]], Col | Tab, PL, R, Interface[RecT, Any, Tab]],
-            data,
-        )
-
-    def _attr_tuple_getter(self, instance: RecT) -> TupT | Literal[Not.resolved]:
+    def _getter(self, instance: RecT) -> TupT | Literal[Not.resolved]:
         """Get the value of this attribute tuple."""
         val = tuple(attr.__get__(instance, type(instance)) for attr in self.attrs)
         return cast(TupT, val[0] if len(val) == 1 else val)
@@ -241,49 +215,7 @@ class Key(AttrTuple[tuple[*KeyTt]]):
                 ),
             )
             setattr(owner, f"{name}_attr", self.attrs[0])
-
-
-TgtT = TypeVar("TgtT", bound="Record", covariant=True, default=Any)
-
-
-@dataclass(eq=False)
-class ForeignKey(AttrTuple[TupT, RecT], Generic[TgtT, TupT, RecT]):
-    """Index property for a record type."""
-
-    attrs: tuple[Attr[Any, Any, RecT], ...] = field(init=False)
-
-    attr_map: dict[Attr[Any, Any, RecT], Attr[Any, Any, TgtT]] = field(
-        default_factory=dict
-    )
-
-    def __post_init__(self) -> None:  # noqa: D105
-        self.attrs = tuple(self.attr_map.keys())
-
-    def __set_name__(self, owner: type[RecT], name: str) -> None:  # noqa: D105
-        super().__set_name__(owner, name)
-
-        if self.attr_map is None:
-            pk_attrs = self.target._primary_key().attrs
-
-            col_map = {
-                Attr(
-                    alias=f"{self.name}_{pk_attr.name}_fk",
-                    typeref=TypeRef(Attr[pk_attr.common_value_type]),
-                    context=Interface(owner),
-                ): pk_attr
-                for pk_attr in pk_attrs
-            }
-
-            self.columns = tuple(col_map.keys())
-            for col in col_map.keys():
-                setattr(owner, col.name, col)
-
-    @property
-    def target(self) -> type[TgtT]:
-        """Return the target type for this foreign key."""
-        target_type = self.typeargs[TgtT]
-        assert isinstance(target_type, type)
-        return cast(type[TgtT], target_type)
+            self.__post_init__()
 
 
 def records_to_df(
@@ -331,7 +263,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
             if superclass in cls.__bases__ and issubclass(superclass, Record):
                 super_pk = superclass._primary_key()
                 col_map = {
-                    Attr[Hashable, Any, Self](
+                    Attr[Hashable, Self](
                         alias=pk_attr.name,
                         typeref=pk_attr.typeref,
                         context=Interface(cls),
@@ -346,9 +278,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
                 )
                 setattr(cls, pk.name, pk)
 
-                fk = ForeignKey[
-                    superclass, cast(type[tuple], super_pk.typeargs[TupT]), cls
-                ](attr_map=col_map)
+                fk = Link[superclass, cls](on=col_map)
                 setattr(cls, fk.name, fk)
 
     @classmethod
@@ -389,12 +319,12 @@ class Record(Model, AutoIndexable[*KeyTt]):
         return cls.__dict__["_pk"]
 
     @classmethod
-    def _foreign_keys(cls) -> dict[str, ForeignKey]:
+    def _links(cls) -> dict[str, Link]:
         """Columns of this record type's table."""
         return {
             prop.name: prop
             for prop in cls._get_class_props().values()
-            if isinstance(prop, ForeignKey)
+            if isinstance(prop, Link)
         }
 
     @classmethod
@@ -403,6 +333,11 @@ class Record(Model, AutoIndexable[*KeyTt]):
     ) -> CoreSchema:
         # TODO: Extend superclass method to handle opportunistic record upload and links
         # depends on context supplied via info object.
+        # Same Base: Use a simple reference mechanism by storing the record's ID.
+        # Different Base: Also reference by id + copy record to other base if not there.
+        # Other Root with public source and online target: Public URL instead of raw ID.
+        # Other Root with public source and local-only tgt: Full JSON + source URL
+        # Other Root with private source: Full JSON
         raise NotImplementedError()
 
     @classmethod
@@ -781,34 +716,86 @@ class Entity(Record[UUID4]):
     _pk: Key[UUID4] = Key(default_factory=lambda: (UUID4(uuid4()),))
 
 
-type SymbolicAttr = Data[Any, Any, Any, Any, Any, Interface]
+type SingleJoinMap = (Prop | SupportsItems[Prop, Prop] | Set[Prop])
 
-type SingleFkMap = (SymbolicAttr | dict[SymbolicAttr, SymbolicAttr] | set[SymbolicAttr])
-type MultiFkMap = dict[type[Record], SingleFkMap]
-
-LnT = TypeVar("LnT", bound=Record | None, default=Any)
+LnT = TypeVar(
+    "LnT",
+    bound=Record | Mapping[Hashable, Record] | Iterable[Record] | None,
+    default=Any,
+)
 
 
 @dataclass(kw_only=True, eq=False)
 class Link(
-    Attr[LnT, RuTi, RecT],
+    Var[LnT, Idx[()], SQL, Tab, LnT, RecT],
+    Generic[LnT, RecT],
 ):
     """Link to a single record."""
 
-    fks: SingleFkMap | MultiFkMap | None = None
+    on: (
+        SingleJoinMap
+        | SupportsItems[type[Record], SingleJoinMap]
+        | (
+            Prop[RecT, Idx[()], Any, Any, Any, RecT, Any]
+            | Set[Prop[RecT, Idx[()], Any, Any, Any, RecT, Any]]
+        )
+        | None
+    ) = None
+
+    @cached_prop
+    def join_maps(self) -> SupportsItems[type[Record], SupportsItems[Prop, Prop]]:
+        """Return the foreign key for this link."""
+        if self.on is None:
+            return {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{pk.name}",
+                        typeref=pk.typeref,
+                    ): pk
+                    for pk in rec_type._primary_key().attrs
+                }
+                for rec_type in self.value_type_set
+                if issubclass(rec_type, Record)
+            }
+
+        if has_type(self.on, SingleJoinMap):
+            rec_type = self.common_value_type
+            assert issubclass(rec_type, Record)
+            self.on = {rec_type: self.on}
+
+        assert has_type(self.on, Mapping[type[Record], SingleJoinMap])
+
+        return (
+            {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{fk.name}",
+                        typeref=fk.typeref,
+                    ): fk
+                }
+                for rec_type, fk in self.on.items()
+                if isinstance(fk, Prop)
+            }
+            | {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{fk.name}",
+                        typeref=fk.typeref,
+                    ): fk
+                    for fk in fks
+                }
+                for rec_type, fks in self.on.items()
+                if has_type(fks, Set[Prop])
+            }
+            | {
+                rec_type: fk_map
+                for rec_type, fk_map in self.on.items()
+                if has_type(fk_map, Mapping[Prop, Prop])
+            }
+        )
 
 
-class Item(Record[KeyT], Generic[ValT, RecT, KeyT]):
-    """Dynamically defined scalar record type."""
-
-    _template = True
-    _array: ClassVar[Array]
-
-    _from: Link[RecT] = Link()
-    _idx: Attr[KeyT] = Attr()
-    _val: Attr[ValT]
-
-    _pk: Key[*tuple[Any, ...], KeyT] = Key(attrs=(_from, _idx))
+TgtT = TypeVar("TgtT", bound="Record", covariant=True, default=Any)
 
 
 class Edge(Record[str, str], Generic[RecT, TgtT]):
@@ -821,8 +808,18 @@ class Edge(Record[str, str], Generic[RecT, TgtT]):
 
     _pk: Key[str, str] = Key(
         attrs=(
-            _from,
-            _to,
+            *(
+                a
+                for fk_map in _from.join_maps.values()
+                for a in fk_map.keys()
+                if isinstance(a, Attr)
+            ),
+            *(
+                a
+                for fk_map in _to.join_maps.values()
+                for a in fk_map.keys()
+                if isinstance(a, Attr)
+            ),
         )
     )
 
@@ -836,70 +833,96 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
     _to: Link[RecT] = Link()
     _rel_idx: Attr[KeyT] = Attr()
 
-    _pk: Key[str, str, KeyT] = Key(attrs=(_from, _to, _rel_idx))
-
-
-IdxT = TypeVar("IdxT", bound=Idx, default=Any)
-
-
-@dataclass(kw_only=True, eq=False)
-class BackLink(
-    Prop[TgtT, IdxT, RuTi, SQL, Col, RecT],
-    Data[TgtT, Expand[IdxT], Col, SQL, RuTi, Interface[RecT, Any, Tab]],
-):
-    """Backlink record set."""
-
-    to: (
-        Data[RecT, Idx[()], Col, Any, Any, Interface[TgtT]]
-        | set[Data[RecT, Idx[()], Col, Any, Any, Interface[TgtT]]]
+    _pk: Key[str, str, KeyT] = Key(
+        attrs=(
+            *(
+                a
+                for fk_map in _from.join_maps.values()
+                for a in fk_map.keys()
+                if isinstance(a, Attr)
+            ),
+            *(
+                a
+                for fk_map in _to.join_maps.values()
+                for a in fk_map.keys()
+                if isinstance(a, Attr)
+            ),
+            _rel_idx,
+        )
     )
 
 
-# _item_classes: dict[str, type[Item]] = {}
+EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
 
 
-# @dataclass(eq=False)
-# class Array(
-#     Data[
-#         ValT,
-#         ArrayIdx[Any, *KeyTt],
-#         CrudT,
-#         BaseT,
-#         Ctx["Item[ValT, KeyT, OwnT]", Idx[*KeyTt], CrudT, BaseT, AnyCtx[OwnT]],
-#     ],
-#     Generic[ValT, KeyT, CrudT, OwnT, BaseT],
-# ):
-#     """Set / array of scalar values."""
+@dataclass(kw_only=True, eq=False)
+class Rel(Var[LnT, IdxT, SQL, Col, TgtT, RecT], Generic[LnT, EdgeT, IdxT, TgtT, RecT]):
+    """Backlink record set."""
 
-#     @cached_prop
-#     def _key_type(self) -> type[KeyT]:
-#         typedef = get_typevar_map(self._resolved_typehint)[KeyT]
-#         return typedef_to_typeset(typedef).pop()
+    backlink: (
+        Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]
+        | set[Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]]
+    )
+    link: (
+        Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]
+        | set[Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]]
+    )
 
-#     @cached_prop
-#     def relation_type(self) -> type[Item[ValT, KeyT, OwnT]]:
-#         """Return the dynamic relation record type."""
-#         assert self._ctx_table is not None
-#         assert issubclass(self._ctx_table.common_type, Record)
-#         base_array_fqn = copy_and_override(Array, self, _ctx=self._ctx_table).fqn
 
-#         rec = _item_classes.get(
-#             base_array_fqn,
-#             dynamic_record_type(
-#                 Item[self.target_typeform, self._key_type, self._ctx_table.common_type],
-#                 f"{self._ctx_table.common_type.__name__}.{self.name}",
-#                 src_module=self._ctx_table.common_type._src_mod
-#                 or getmodule(self._ctx_table.common_type),
-#                 extra_attrs={
-#                     "_array": copy_and_override(
-#                         Array, self, _base=symbol_base, _ctx=self._ctx_table
-#                     )
-#                 },
-#             ),
-#         )
-#         _item_classes[base_array_fqn] = rec
+class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
+    """Dynamically defined scalar record type."""
 
-#         return rec
+    _template = True
+    _array: ClassVar[Array]
+
+    _from: Link[RecT] = Link()
+    _idx: Attr[KeyT] = Attr()
+    _val: Attr[ValT]
+
+    _pk: Key[*tuple[Any, ...], KeyT] = Key(
+        attrs=(
+            *(
+                a
+                for fk_map in _from.join_maps.values()
+                for a in fk_map.keys()
+                if isinstance(a, Attr)
+            ),
+            _idx,
+        )
+    )
+
+
+_item_classes: dict[str, type[Item]] = {}
+
+
+@dataclass(eq=False)
+class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
+    """Set / array of scalar values."""
+
+    @cached_prop
+    def _key_type(self) -> type:
+        idx_type = self.typeargs[KeyT]
+        key_tuple = get_args(idx_type)
+        return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
+
+    @cached_prop
+    def relation_type(self) -> type[Item[ValT, KeyT, RecT]]:
+        """Return the dynamic relation record type."""
+        assert self.owner is not None
+        base_array_fqn = self.fqn
+
+        rec = _item_classes.get(
+            base_array_fqn,
+            dynamic_record_type(
+                Item[self.common_value_type, self._key_type, self.owner],
+                f"{self.owner.__name__}.{self.name}",
+                src_module=self.owner._src_mod or getmodule(self.owner),
+                extra_attrs={"_array": self},
+            ),
+        )
+        _item_classes[base_array_fqn] = rec
+
+        return rec
 
 
 class Schema:
@@ -934,7 +957,7 @@ class DataBase(
 
     backend: BackT = None  # pyright: ignore[reportAssignmentType]
     """Unique name to identify this database's backend by."""
-    url: sqla.URL | CloudPath | HttpFile | Path | None = None
+    url: sqla.URL | CloudPath | Path | None = None
     """Connection URL or path."""
 
     schema: (
@@ -1056,17 +1079,7 @@ class DataBase(
                     if self.url.drivername == "sqlite"
                     else "sql-connection"
                 )
-            case HttpFile():
-                url = yarl.URL(self.url.url)
-                typ = (
-                    ("excel-file" if "xls" in Path(url.path).suffix else "sqlite-file")
-                    if url.scheme in ("http", "https")
-                    else None
-                )
-                if typ is None:
-                    raise ValueError(f"Unsupported URL scheme: {url.scheme}")
-                return typ
-            case None:
+            case _:
                 return "in-memory"
 
     @cached_prop
@@ -1292,19 +1305,27 @@ class DataBase(
         )
 
     @cached_method
-    def _map_fks(
-        self, rec_type: type[Record]
-    ) -> dict[ForeignKey, sqla.ForeignKeyConstraint]:
-        fks: dict[ForeignKey, sqla.ForeignKeyConstraint] = {}
+    def _map_fks(self, rec_type: type[Record]) -> dict[Link, sqla.ForeignKeyConstraint]:
+        fks: dict[Link, sqla.ForeignKeyConstraint] = {}
 
-        for fk in rec_type._foreign_keys().values():
-            target_type = cast(type[Record], fk.target)
+        for link in rec_type._links().values():
+            target_type = cast(type[Record], link.common_value_type)
             target_table = self._get_base_table(target_type)
 
-            fks[fk] = sqla.ForeignKeyConstraint(
-                [col.name for col in fk.attr_map.keys()],
-                [target_table.c[col.name] for col in fk.attr_map.values()],
-                name=f"{self._get_base_table_name(rec_type)}_fk_{fk.name}_{target_type._fqn}",
+            fks[link] = sqla.ForeignKeyConstraint(
+                [
+                    col.name
+                    for fk_map in link.join_maps.values()
+                    for col in fk_map.keys()
+                    if isinstance(col, Attr)
+                ],
+                [
+                    target_table.c[col.name]
+                    for fk_map in link.join_maps.values()
+                    for col in fk_map.values()
+                    if isinstance(col, Attr)
+                ],
+                name=f"{self._get_base_table_name(rec_type)}_fk_{link.name}_{target_type._fqn}",
             )
 
         return fks
@@ -1325,8 +1346,8 @@ class DataBase(
 
     def _load_base_table_from_excel(self, table: sqla.Table) -> None:
         """Load all tables from Excel."""
-        assert isinstance(self.url, Path | CloudPath | HttpFile)
-        path = self.url.get() if isinstance(self.url, HttpFile) else self.url
+        assert isinstance(self.url, Path | CloudPath)
+        path = self.url
 
         if isinstance(path, Path) and not path.exists():
             return
@@ -1364,8 +1385,8 @@ class DataBase(
 
     def _save_to_excel(self) -> None:
         """Save all (or selected) tables to Excel."""
-        assert isinstance(self.url, Path | CloudPath | HttpFile)
-        file = self.url.get() if isinstance(self.url, HttpFile) else self.url
+        assert isinstance(self.url, Path | CloudPath)
+        file = self.url
 
         with ExcelWorkbook(file) as wb:
             for table in self._metadata.tables.values():
@@ -1373,10 +1394,6 @@ class DataBase(
                     table.select(),
                     self.engine.connect(),
                 ).write_excel(wb, worksheet=table.name)
-
-        if isinstance(self.url, HttpFile):
-            assert isinstance(file, BytesIO)
-            self.url.set(file)
 
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash(

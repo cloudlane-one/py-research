@@ -62,6 +62,10 @@ type SingleTypeDef[T] = GenericAlias[T] | TypeAliasType | type[T] | NewType
 class SupportsItems(Protocol[T_cov, U_cov]):
     """Protocol for objects that support item access."""
 
+    def keys(self) -> Iterable[T_cov]: ...  # noqa: D102
+
+    def values(self) -> Iterable[U_cov]: ...  # noqa: D102
+
     def items(self) -> Iterable[tuple[T_cov, U_cov]]: ...  # noqa: D102
 
 
@@ -487,7 +491,7 @@ def _map_str_annotation_base[U](anno: str, base: type[U]) -> type[U]:
 
 
 def get_base_type(hint: SingleTypeDef[T] | str, bound: type[T]) -> type[T]:
-    """Resolve the prop typehint."""
+    """Resolve base type of the typehint."""
     if has_type(hint, SingleTypeDef):
         base = get_origin(hint)
         if base is None or not issubclass(base, bound):

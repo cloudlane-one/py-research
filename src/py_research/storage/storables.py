@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence, Set
 from dataclasses import InitVar, dataclass
 from types import UnionType
-from typing import Any, Generic, Protocol, Self, get_args, runtime_checkable
+from typing import Any, Generic, Protocol, get_args, runtime_checkable
 
 import polars as pl
 from typing_extensions import TypeVar
@@ -51,7 +51,7 @@ class Storable(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
 
     @classmethod
     def __storage_types__(cls) -> StorageTypes[T]:
-        """Return the set of types that this class can convert to/from."""
+        """Return the set of types that this class can store to/from."""
         ...
 
     @classmethod
@@ -74,32 +74,37 @@ class Storable(Protocol[T]):  # pyright: ignore[reportInvalidTypeVarUse]
         ...
 
 
-@runtime_checkable
-class BatchStorable(
-    Storable[T], Protocol[T, B]
-):  # pyright: ignore[reportInvalidTypeVarUse]
-    """Protocol for classes that can be stored / loaded in batches."""
+# @runtime_checkable
+# class BatchStorable(
+#     Storable[T], Protocol[T, B]
+# ):  # pyright: ignore[reportInvalidTypeVarUse]
+#     """Protocol for classes that can be stored / loaded in batches."""
 
-    @classmethod
-    def __batch_load__(
-        cls,
-        source: B,
-        realm: Realm,
-        annotation: SingleTypeDef[Self] | None = None,
-    ) -> pl.Series:
-        """Parse from the source type or format."""
-        ...
+#     @classmethod
+#     def __batch_storage_types__(cls) -> StorageTypes[T]:
+#         """Return the set of types that this class can batch store to/from."""
+#         ...
 
-    @classmethod
-    def __batch_store__(
-        cls: type[BatchStorable[Any, B2]],
-        batch: pl.Series,
-        target: B2,
-        realm: Realm,
-        annotation: SingleTypeDef[BatchStorable[Any, B2]] | None = None,
-    ) -> None:
-        """Convert to the target type or format."""
-        ...
+#     @classmethod
+#     def __batch_load__(
+#         cls,
+#         source: B,
+#         realm: Realm,
+#         annotation: SingleTypeDef[Self] | None = None,
+#     ) -> pl.Series:
+#         """Parse from the source type or format."""
+#         ...
+
+#     @classmethod
+#     def __batch_store__(
+#         cls: type[BatchStorable[Any, B2]],
+#         batch: pl.Series,
+#         target: B2,
+#         realm: Realm,
+#         annotation: SingleTypeDef[BatchStorable[Any, B2]] | None = None,
+#     ) -> None:
+#         """Convert to the target type or format."""
+#         ...
 
 
 V = TypeVar("V")

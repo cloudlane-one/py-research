@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import copy
 from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, cmp_to_key, reduce
@@ -53,8 +53,11 @@ from py_research.storage.storables import Realm, Storable, StorageTypes
 from py_research.types import DataclassInstance, Not
 
 from .data import (
+    CRUD,
     PL,
     SQL,
+    AutoIdx,
+    AutoIndexable,
     Ctx,
     CtxTt,
     CtxTt2,
@@ -65,8 +68,11 @@ from .data import (
     ExT,
     ExT2,
     Frame,
+    FullIdx,
+    HashIdx,
     Idx,
     Interface,
+    KeyT2,
     KeyTt2,
     R,
     Root,
@@ -87,8 +93,11 @@ PropT2 = TypeVar("PropT2")
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
-IdxT = TypeVar("IdxT", bound=Idx, default=Any)
-IdxT2 = TypeVar("IdxT2", bound=Idx)
+IdxT = TypeVar("IdxT", bound=FullIdx, default=Any, covariant=True)
+IdxT2 = TypeVar("IdxT2", bound=FullIdx)
+
+AutoT = TypeVar("AutoT", bound=AutoIndexable)
+RuT = TypeVar("RuT", bound=R | U)
 
 
 @dataclass(kw_only=True)
@@ -108,7 +117,7 @@ class Prop(
         val_type: SingleTypeDef | UnionType, owner: type
     ) -> type[Prop] | None:
         """Get the default subclass for this property."""
-        subclasses = reversed(get_subclasses(Prop))
+        subclasses = reversed(get_subclasses(Var))
 
         matching = [
             s
@@ -198,15 +207,15 @@ class Prop(
 
     @staticmethod
     def _set_owner(
-        data: Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
+        prop,
         owner: type[OwnT2],
     ) -> None:
         """Set the owner of the property."""
-        data.context = Interface(owner)
-        data.typeref = copy_and_override(
+        prop.context = Interface(owner)
+        prop.typeref = copy_and_override(
             TypeRef,
-            data.typeref or TypeRef(),
-            var_map=dict(data.typeref.var_map if data.typeref is not None else {})
+            prop.typeref or TypeRef(),
+            var_map=dict(prop.typeref.var_map if prop.typeref is not None else {})
             | get_typevar_map(owner)
             | {OwnT: owner},
         )
@@ -231,8 +240,40 @@ class Prop(
 
     @overload
     def __get__(
+        self: Prop[Mapping[tuple[*KeyTt2], ValT2]],
+        instance: None,
+        owner: type[OwnT2],
+    ) -> Prop[PropT, Idx[*KeyTt2], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
+        self: Prop[Mapping[KeyT2, ValT2]], instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, Idx[KeyT2], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
+        self: Prop[Sequence[ValT2]], instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, Idx[int], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
+        self: Prop[Iterable[AutoT]], instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, AutoIdx[AutoT], RwxT, ExT, DxT, AutoT, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
+        self: Prop[Iterable[ValT2]], instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, HashIdx, RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
+        self: Prop[Any, Any, RuT], instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, Idx[()], RuT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
+
+    @overload
+    def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Interface[OwnT2], *CtxTt]: ...
+    ) -> Prop[PropT, Idx[()], RwxT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
 
     @overload
     def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> PropT: ...
@@ -265,14 +306,10 @@ class Prop(
         return self.default_factory()
 
     @overload
-    def __set__(  # noqa: D105
-        self: Prop[PropT2, Any, U], instance: OwnT, value: PropT2
-    ) -> None: ...
+    def __set__(self: Prop[PropT2, Any, U], instance: OwnT, value: PropT2) -> None: ...
 
     @overload
-    def __set__(  # noqa: D105
-        self: Prop[Any, Any, U], instance: Any, value: Any
-    ) -> None: ...
+    def __set__(self: Prop[Any, Any, U], instance: Any, value: Any) -> None: ...
 
     def __set__(  # noqa: D105
         self: Prop[Any, Any, U], instance: Any, value: Any
@@ -314,6 +351,13 @@ class Prop(
             }
 
         return None
+
+
+class Var(
+    Prop[PropT, IdxT, CRUD, ExT, DxT, ValT, OwnT, *CtxTt],
+    Generic[PropT, IdxT, ExT, DxT, ValT, OwnT, *CtxTt],
+):
+    """Variable property reference."""
 
 
 @dataclass
@@ -392,11 +436,14 @@ class ModelMeta(type):
 
         for name, anno in get_annotations(cls).items():
             if name not in cls.__dict__:
-                prop_type = get_base_type(anno, bound=Prop)
+                typedef = hint_to_typedef(anno)
+                assert not isinstance(typedef, UnionType)
 
-                default_type = Prop._get_default_class(hint_to_typedef(anno), cls)
-                if default_type is not None and issubclass(default_type, prop_type):
-                    prop_type = default_type
+                prop_type = get_base_type(typedef, bound=Prop)
+
+                default_type = prop_type._get_default_class(typedef, cls)
+                if default_type is not None and is_subtype(default_type, typedef):
+                    prop_type = cast(type, default_type)
 
                 prop = prop_type()
 

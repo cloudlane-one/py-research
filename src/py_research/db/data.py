@@ -157,8 +157,11 @@ class SelfIdx(Generic[*KeyTt]):
     """Index by self."""
 
 
+HashKeyTt = TypeVarTuple("HashKeyTt", default=Unpack[tuple[int]])
+
+
 @final
-class HashIdx(Generic[*KeyTt]):
+class HashIdx(Generic[*HashKeyTt]):
     """Index by hash of self."""
 
 
@@ -196,7 +199,7 @@ SubIdxT = TypeVar(
 )
 AddIdxT = TypeVar(
     "AddIdxT",
-    bound=Idx,
+    bound=FullIdx,
     default=Idx[()],
     covariant=True,
 )
@@ -212,7 +215,7 @@ class ModIdx(Generic[SubIdxT, AddIdxT]):
 
 type KeepIdx = ModIdx[Idx[()], Idx[()]]
 type Reduce[IdxT: Idx] = ModIdx[IdxT, Idx[()]]
-type Expand[IdxT: Idx] = ModIdx[Idx[()], IdxT]
+type Expand[IdxT: FullIdx] = ModIdx[Idx[()], IdxT]
 
 
 type AnyIdx[*K] = FullIdx[*K] | ModIdx[Any, Any]
@@ -1133,7 +1136,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*KeyTt4], Idx[*KeyTt3]],
+            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
             Keep,
             ExT2,
             RwxT2,
@@ -1158,7 +1161,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*KeyTt4], Idx[*KeyTt3]],
+            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
@@ -1183,7 +1186,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
         key: Data[
             ValT3,
-            ModIdx[Idx[*KeyTt4], Idx[*KeyTt3]],
+            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
@@ -1208,7 +1211,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
             Keep,
             ExT2,
             RwxT2,
@@ -1233,7 +1236,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
@@ -1258,7 +1261,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
         key: Data[
             ValT3,
-            ModIdx[Idx[*tuple[Any, ...]], Idx[*KeyTt3]],
+            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
