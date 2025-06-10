@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import copy
 from dataclasses import MISSING, Field, dataclass, field
-from functools import cache, cmp_to_key, reduce
+from functools import cache, reduce
 from inspect import get_annotations, getmodule
 from types import ModuleType, NoneType, UnionType
 from typing import (
@@ -93,7 +93,7 @@ PropT2 = TypeVar("PropT2")
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
-IdxT = TypeVar("IdxT", bound=FullIdx, default=Any, covariant=True)
+IdxT = TypeVar("IdxT", bound=FullIdx, default=Any)
 IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)
@@ -107,7 +107,6 @@ class Prop(
 ):
     """Property definition for a model."""
 
-    init_after: ClassVar[set[type[Prop]]] = set()
     value_hook: ClassVar[SingleTypeDef | UnionType | None] = None
     owner_hook: ClassVar[SingleTypeDef | UnionType | None] = None
 
@@ -145,9 +144,6 @@ class Prop(
     hash: bool = True
     compare: bool = True
 
-    _data: Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *CtxTt] | None = (
-        None
-    )
     _owner_map: dict[type[OwnT], Data] = field(default_factory=dict)
 
     def _getter(self, instance: OwnT) -> PropT | Literal[Not.resolved]:
@@ -157,6 +153,10 @@ class Prop(
     def _setter(self: Prop[PropT2], instance: OwnT, value: PropT2) -> None:
         """Set the value of this property."""
         raise NotImplementedError()
+
+    @property
+    def init_level(self) -> int:
+        return 0
 
     def _index(self) -> Expand[IdxT]:
         """Get the index of this property."""
@@ -279,7 +279,7 @@ class Prop(
     def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> PropT: ...
 
     @overload
-    def __get__(self: Prop, instance: Any, owner: type | None) -> Any: ...
+    def __get__(self, instance: Any, owner: type | None) -> Self: ...
 
     def __get__(self: Prop, instance: Any, owner: type | None) -> Any:  # noqa: D105
         if owner is None or not issubclass(owner, Model):
@@ -289,8 +289,7 @@ class Prop(
             owned = self._owner_map.get(owner, None)
 
             if owned is None:
-                data = self._data or self
-                owned = Prop._with_new_root_owner(data, owner)
+                owned = Prop._with_new_root_owner(self, owner)
                 self._owner_map[owner] = owned
 
             return owned
@@ -690,34 +689,14 @@ class Model(
 
         cls = type(self)
         props = cls._props
-        prop_types = {
-            cast(
-                type[Prop],
-                get_base_type(
-                    p.typeref.single_typedef if p.typeref is not None else type(p),
-                    bound=Prop,
-                ),
-            )
-            for p in props.values()
-        }
 
-        init_sequence = list(p for p in prop_types if p is not NoneType)
         init_sequence = sorted(
-            init_sequence,
-            key=cmp_to_key(
-                lambda x, y: (
-                    -1
-                    if any(issubclass(x, p) for p in y.init_after)
-                    else 1 if any(issubclass(y, p) for p in x.init_after) else 0
-                )
-            ),
+            props.values(),
+            key=lambda p: p.init_level,
         )
 
-        for prop_type in init_sequence:
-            props = {k: v for k, v in props.items() if isinstance(v, prop_type)}
-            for prop_name in props:
-                if prop_name in kwargs:
-                    setattr(self, prop_name, kwargs[prop_name])
+        for prop in init_sequence:
+            setattr(self, prop.name, kwargs[prop.name])
 
         self.__post_init__()
 

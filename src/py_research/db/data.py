@@ -140,7 +140,7 @@ class SQL(PL):
     """SQLA engine, supporting polars fallback."""
 
 
-ExT = TypeVar("ExT", bound=PL, default=PL, covariant=True)
+ExT = TypeVar("ExT", bound=PL, default=Any, covariant=True)
 ExT2 = TypeVar("ExT2", bound=PL)
 
 
@@ -194,31 +194,35 @@ FullIdxT = TypeVar(
 
 SubIdxT = TypeVar(
     "SubIdxT",
-    bound=Idx,
-    default=Idx[()],
+    bound=FullIdx,
+    default=FullIdx[*tuple[Any, ...]],
 )
 AddIdxT = TypeVar(
     "AddIdxT",
     bound=FullIdx,
-    default=Idx[()],
+    default=FullIdx[*tuple[Any, ...]],
     covariant=True,
 )
 
 
 @dataclass
-class ModIdx(Generic[SubIdxT, AddIdxT]):
+class Expand(Generic[AddIdxT]):
     """Pass-through index."""
 
-    reduction: SingleTypeDef[SubIdxT]
     expansion: AddIdxT
 
 
-type KeepIdx = ModIdx[Idx[()], Idx[()]]
-type Reduce[IdxT: Idx] = ModIdx[IdxT, Idx[()]]
-type Expand[IdxT: FullIdx] = ModIdx[Idx[()], IdxT]
+type KeepIdx = Expand[Idx[()]]
 
 
-type AnyIdx[*K] = FullIdx[*K] | ModIdx[Any, Any]
+@dataclass
+class Reduce(Generic[SubIdxT]):
+    """Pass-through index."""
+
+    reduction: SingleTypeDef[SubIdxT]
+
+
+type AnyIdx[*K] = FullIdx[*K] | Expand | Reduce
 
 IdxT = TypeVar(
     "IdxT",
@@ -279,7 +283,7 @@ class FromChild:
 
 
 ArgT = TypeVar("ArgT", contravariant=True, default=Any)
-ArgIdxT = TypeVar("ArgIdxT", bound=Idx | FromChild, contravariant=True, default=Any)
+ArgIdxT = TypeVar("ArgIdxT", bound=FullIdx | FromChild, contravariant=True, default=Any)
 ArgDxT = TypeVar("ArgDxT", bound=Shape | FromChild, contravariant=True, default=Any)
 
 
@@ -643,7 +647,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         return typedef_to_typeset(self.value_typeform)
 
     @cached_prop
-    def common_value_type(self) -> type:
+    def common_value_type(self) -> type[ValT]:
         """Common base type of the target types."""
         return get_common_type(self.value_typeform)
 
@@ -815,15 +819,19 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
                     AutoIdx[AutoIndexable], index
                 ).value_type._index_components()
                 full_idx = tuple(self[c] for c in components)
-            case ModIdx():
+            case Expand():
+                parent = self.parent()
+                assert parent is not None
+                parent_idx = parent._idx_components()
+
+                return parent_idx + cast(Idx, index.expansion).components
+            case Reduce():
                 parent = self.parent()
                 assert parent is not None
                 parent_idx = parent._idx_components()
 
                 reduce_args = get_args(index.reduction)
-                reduced_idx = parent_idx[: -len(reduce_args)]
-
-                full_idx = reduced_idx + cast(Idx, index.expansion).components
+                return parent_idx[: -len(reduce_args)]
             case _:
                 raise ValueError(f"Unsupported index type: {type(index)}")
 
@@ -1130,17 +1138,17 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
 
     # Application:
 
-    # 1. Context application, altered index, kept value + DxT
+    # 1. Context application, expanded index, kept value + DxT
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
+            Expand[FullIdx[*KeyTt3]],
             Keep,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1151,21 +1159,21 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 2. Context application, altered index, kept value
+    # 2. Context application, expanded index, kept value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
+            Expand[FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1176,21 +1184,21 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 3. Context application, altered index, new value
+    # 3. Context application, expanded index, new value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[*KeyTt2, *KeyTt4], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2], DxT2, ExT2, RwxT2],
         key: Data[
             ValT3,
-            ModIdx[Idx[*KeyTt4], FullIdx[*KeyTt3]],
+            Expand[FullIdx[*KeyTt3]],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
@@ -1201,82 +1209,82 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[*KeyTt2, *KeyTt4], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2], SxT2],
         *CtxTt3,
     ]: ...
 
-    # 4. Context application, no parent index, kept value + DxT
+    # 4. Context application, reduced index, kept value + DxT
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2, KeyT3], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
+            Reduce[FullIdx[KeyT3]],
             Keep,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[()], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
         ValT2,
-        Idx[*KeyTt3],
+        Idx[*KeyTt2],
         DxT2,
         ExT2,
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[()], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
         *CtxTt3,
     ]: ...
 
     # 5. Context application, no parent index, kept value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2, KeyT3], DxT2, ExT2, RwxT2],
         key: Data[
             Keep,
-            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
+            Reduce[FullIdx[KeyT3]],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[()], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
         ValT2,
-        Idx[*KeyTt3],
+        Idx[*KeyTt2],
         DxT3,
         ExT2,
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[()], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
         *CtxTt3,
     ]: ...
 
     # 6. Context application, no parent index, new value
     @overload
     def __getitem__(
-        self: Data[ValT2, AnyIdx[()], DxT2, ExT2, RwxT2],
+        self: Data[ValT2, AnyIdx[*KeyTt2, KeyT3], DxT2, ExT2, RwxT2],
         key: Data[
             ValT3,
-            ModIdx[Idx[*tuple[Any, ...]], FullIdx[*KeyTt3]],
+            Reduce[FullIdx[KeyT3]],
             DxT3,
             ExT2,
             RwxT2,
-            Ctx[ValT2, Idx[()], SxT2],
+            Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
             *CtxTt3,
         ],
     ) -> Data[
         ValT3,
-        Idx[*KeyTt3],
+        Idx[*KeyTt2],
         DxT3,
         ExT2,
         RwxT2,
         CtxT,
         *CtxTt,
-        Ctx[ValT2, Idx[()], SxT2],
+        Ctx[ValT2, Idx[*KeyTt2, KeyT3], SxT2],
         *CtxTt3,
     ]: ...
 
@@ -1383,21 +1391,28 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
     ) -> Data[ValT, IdxT, DxT, ExT, R, CtxT, *CtxTt]: ...
 
-    # 14. Key selection, fully rooted
+    # 14. Base type selection
+    @overload
+    def __getitem__(
+        self: Base[ValT2],
+        key: type[ValT2],
+    ) -> Data[ValT2, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    # 15. Key selection, fully rooted
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt3], Any, Any, Any, Root],
         key: tuple[*KeyTt3],
     ) -> ValT: ...
 
-    # 15. Key selection, fully rooted, scalar
+    # 16. Key selection, fully rooted, scalar
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT3], Any, Any, Any, Root],
         key: KeyT3,
     ) -> ValT: ...
 
-    # 16. Key selection
+    # 17. Key selection
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[*KeyTt3, *KeyTt2], SxT2],
@@ -1413,7 +1428,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         Ctx[ValT, Idx[*KeyTt3, *KeyTt2], SxT2],
     ]: ...
 
-    # 17. Key selection, scalar
+    # 18. Key selection, scalar
     @overload
     def __getitem__(
         self: Data[Any, AnyIdx[KeyT3, *KeyTt2], SxT2],
@@ -1428,13 +1443,6 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt,
         Ctx[ValT, Idx[KeyT3, *KeyTt2], SxT2],
     ]: ...
-
-    # 18. Base type selection
-    @overload
-    def __getitem__(
-        self: Base[ValT2],
-        key: type[ValT2],
-    ) -> Data[ValT2, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
 
     def __getitem__(
         self: Data | Base,
@@ -1800,7 +1808,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         other: Data[ValT3, Any, DxT2, ExT2, Any, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
-        ModIdx,
+        Any,
         DxT2,
         ExT2,
         R,
@@ -1818,7 +1826,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         return cast(
             Data[
                 ValT2 | ValT3,
-                ModIdx,
+                Any,
                 DxT2,
                 ExT2,
                 R,
@@ -1833,7 +1841,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         other: Data[ValT3, Any, DxT2, ExT2, Any, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
-        ModIdx,
+        Any,
         DxT2,
         ExT2,
         R,
@@ -1845,7 +1853,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         return cast(
             Data[
                 ValT2 | ValT3,
-                ModIdx,
+                Any,
                 DxT2,
                 ExT2,
                 R,
@@ -1866,7 +1874,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         other: Data[ValT3, Any, DxT2, ExT2, Any, CtxT2],
     ) -> Data[
         ValT2 | ValT3,
-        ModIdx,
+        Any,
         DxT2,
         ExT2,
         R,
@@ -1882,7 +1890,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         return cast(
             Data[
                 ValT2 | ValT3,
-                ModIdx,
+                Any,
                 DxT2,
                 ExT2,
                 R,
@@ -1938,6 +1946,18 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     def __ior__(
         self: Data[Any, Any, Tabs, Any, C | U, Base],
         input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Any, SQL, C | U, Base],
+        input_data: InputData[ValT, Not, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+
+    @overload
+    def __ior__(
+        self: Data[Any, Any, Any, Any, C | U, Base],
+        input_data: InputData[ValT, Not, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
 
     def __ior__(
@@ -2181,29 +2201,32 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         raise NotImplementedError()
 
 
+ModIdxT = TypeVar("ModIdxT", bound=Expand | Reduce, default=Any)
+
+
 class Transform(
     Data[
         ValT,
-        ModIdx[SubIdxT, AddIdxT],
+        ModIdxT,
         DxT,
         ExT,
         R,
         Interface[ArgT, Any, ArgDxT],
     ],
-    Generic[ArgT, ArgDxT, ValT, SubIdxT, AddIdxT, DxT, ExT],
+    Generic[ArgT, ArgDxT, ValT, ModIdxT, DxT, ExT],
 ):
     """Apply a mapping function to a dataset."""
 
     @overload
     def __init__(
-        self: Transform[ValT2, SxT2, ValT3, Idx[()], Idx[()], SxT3, ExT2],
+        self: Transform[ValT2, SxT2, ValT3, Expand[Idx[()]], SxT3, ExT2],
         func: Callable[[ValT2], ValT3],
         frame_func: Callable[[Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
     ): ...
 
     @overload
     def __init__(
-        self: Transform[ValT2, SxT2, ValT3, Idx[*KeyTt2], Idx[()], SxT3, ExT2],
+        self: Transform[ValT2, SxT2, ValT3, Reduce[FullIdx[KeyT2]], SxT3, ExT2],
         func: Callable[[Iterable[ValT2]], ValT3],
         frame_func: Callable[[Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
         contract: SingleTypeDef[Idx[*KeyTt2]],
@@ -2212,7 +2235,7 @@ class Transform(
     @overload
     def __init__(
         self: Transform[
-            Iterable[ValT2], Shape[SxT3], ValT3, Idx[()], Idx[()], SxT3, ExT2
+            Iterable[ValT2], Shape[SxT3], ValT3, Expand[Idx[()]], SxT3, ExT2
         ],
         func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
         frame_func: Callable[[Frame[ExT2, Shape[SxT3]]], Frame[ExT2, SxT3]],
@@ -2221,7 +2244,7 @@ class Transform(
 
     @overload
     def __init__(
-        self: Transform[Iterable[ValT2], SxT2, ValT3, Idx[()], Idx[()], SxT3, ExT2],
+        self: Transform[Iterable[ValT2], SxT2, ValT3, Expand[Idx[()]], SxT3, ExT2],
         func: Callable[[Iterable[ValT2]], ValT3] | Callable[[ValT2, ValT2], ValT3],
         frame_func: Callable[[Frame[ExT2, SxT2], Frame[ExT2, SxT2]], Frame[ExT2, SxT3]],
         contract: Literal["value"],
@@ -2238,7 +2261,7 @@ class Transform(
 
     def _index(
         self,
-    ) -> ModIdx[SubIdxT, AddIdxT]:
+    ) -> ModIdxT:
         """Get the index of this data."""
         raise NotImplementedError()
 

@@ -14,11 +14,9 @@ from collections.abc import (
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
-from inspect import getmodule
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
-from types import ModuleType, new_class
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -29,8 +27,8 @@ from typing import (
     Self,
     cast,
     get_args,
+    overload,
 )
-from uuid import uuid4
 
 import networkx as nx
 import pandas as pd
@@ -47,7 +45,7 @@ from xlsxwriter import Workbook as ExcelWorkbook
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash, gen_str_hash
-from py_research.reflect.types import SupportsItems, TypeRef, has_type
+from py_research.reflect.types import SupportsItems, TypeRef, get_common_type, has_type
 from py_research.types import UUID4, Not
 
 from .data import (
@@ -68,7 +66,6 @@ from .data import (
     InputFrame,
     Interface,
     KeySelect,
-    KeyT,
     KeyTt,
     R,
     Registry,
@@ -83,7 +80,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import IdxT, Model, ModelMeta, Prop, RuT, Var
+from .models import Model, Prop, RuT, Var
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -122,11 +119,6 @@ class Attr(
         """Set the value of this attribute on an instance."""
         instance.__dict__[self.name] = value
 
-    def _id(self) -> str:
-        """Identity of the attribute."""
-        # TODO: Implement this method for the Attr class.
-        raise NotImplementedError()
-
     def _index(
         self,
     ) -> Expand[Idx[()]]:
@@ -134,7 +126,9 @@ class Attr(
         raise NotImplementedError()
 
     def _frame(
-        self: Data[Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]],
+        self: Data[
+            Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]
+        ],  # needs such specific typing to get getitem to work.
     ) -> Frame[PL, Col]:
         """Get SQL-side reference to this property."""
         parent = self.parent()
@@ -151,71 +145,308 @@ class Attr(
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
+    if TYPE_CHECKING:
 
-TupT = TypeVar("TupT", bound=tuple[Any, ...], default=Any)
+        @overload
+        def __get__(self, instance: None, owner: type[RecT2]) -> Attr[ValT, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...
 
 
-@dataclass(kw_only=True, eq=False)
-class AttrTuple(
-    Prop[TupT, Idx[()], R, PL, Col | Tab, TupT, RecT],
-):
-    """Index property for a record type."""
-
-    attrs: tuple[Attr[Any, RecT], ...]
-
-    def __post_init__(self) -> None:  # noqa: D105
-        """Get the value of this attribute."""
-        if len(self.attrs) > 0:
-            data = (
-                reduce(Data.__matmul__, self.attrs)
-                if len(self.attrs) > 1
-                else self.attrs[0]
-            )
-            self.data = cast(
-                Data[
-                    TupT, Expand[Idx[()]], Col | Tab, PL, R, Interface[RecT, Any, Tab]
-                ],
-                data,
-            )
-
-    def _getter(self, instance: RecT) -> TupT | Literal[Not.resolved]:
-        """Get the value of this attribute tuple."""
-        val = tuple(attr.__get__(instance, type(instance)) for attr in self.attrs)
-        return cast(TupT, val[0] if len(val) == 1 else val)
-
-    def gen_value_map(self, val: Any) -> dict[str, Hashable]:
-        """Generate a key-value map for this key."""
-        idx_names = [attr.name for attr in self.attrs]
-
-        if len(idx_names) == 1:
-            return {idx_names[0]: val}
-
-        assert isinstance(val, tuple) and len(val) == len(idx_names)
-        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val)}
-
-    def __hash__(self) -> int:  # noqa: D105
-        return gen_int_hash((self.name, self.context, self.attrs))
+TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class Key(AttrTuple[tuple[*KeyTt]]):
+class AttrTuple(Var[TupT, Idx[()], SQL, Tab, TupT, RecT]):
     """Index property for a record type."""
 
-    attrs: tuple[Attr, ...] = ()
+    init: bool = False
 
-    def __set_name__(self, owner: type[Record], name: str) -> None:  # noqa: D105
-        super().__set_name__(owner, name)
+    components: list[Attr] = field(default_factory=list)
 
-        if len(self.attrs) == 0:
-            self.attrs = (
+    def _index(
+        self,
+    ) -> Expand[Idx[()]]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, Tab],
+    ) -> Frame[PL, Tab]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self: Prop[Any, Any, RuT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[RuT]] = {U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
+        raise NotImplementedError()
+
+    def gen_component_map(self, val: TupT) -> dict[str, Hashable]:
+        """Generate a key-value map for this key."""
+        idx_names = [attr.name for attr in self.components]
+
+        assert len(val) == len(idx_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val)}
+
+    def _getter(self, instance: RecT) -> TupT | Literal[Not.resolved]:
+        """Get the value of this attribute tuple."""
+        val = tuple(attr.__get__(instance, type(instance)) for attr in self.components)
+        return cast(TupT, val[0] if len(val) == 1 else val)
+
+    def __hash__(self) -> int:  # noqa: D105
+        return gen_int_hash((self.name, self.context, self.components))
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(self, instance: None, owner: type[RecT2]) -> Key[TupT, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> TupT: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...
+
+
+@dataclass(eq=False)
+class Key(AttrTuple[tuple[*KeyTt], Any]):
+    """Index property for a record type."""
+
+    init: bool = False
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Return the attributes of this key."""
+        if len(self.components) == 0:
+            self.components = [
                 Attr(
                     alias=self.name,
                     typeref=TypeRef(Attr[Hashable]),
                     context=Interface(owner),
                 ),
-            )
-            setattr(owner, f"{name}_attr", self.attrs[0])
-            self.__post_init__()
+            ]
+            setattr(owner, f"{self.name}_attr", self.components[0])
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Key[tuple[*KeyTt], RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> tuple[*KeyTt]: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...
+
+
+type SingleJoinMap[Rec: Record, Rec2: Record] = (
+    Prop[Any, Any, Any, Any, Any, Any, Rec]
+    | SupportsItems[Prop[Any, Any, Any, Any, Any, Any, Rec], Attr[Any, Rec2]]
+    | tuple[Prop[Any, Any, Any, Any, Any, Any, Rec], ...]
+)
+
+
+LnT = TypeVar(
+    "LnT",
+    bound="Record | Mapping[Hashable, Record] | Iterable[Record] | None",
+    default=Any,
+)
+
+LnIdxT = TypeVar(
+    "LnIdxT",
+    bound=Idx[()] | AutoIdx,
+    default=Idx[()] | AutoIdx,
+)
+
+
+class Link(Var[LnT, LnIdxT, SQL, Tab, LnT, RecT]):
+    """Link to a single record."""
+
+    @overload
+    def __init__[Rec: Record, Rec2: Record](
+        self: Link[Rec2, AutoIdx[Rec2], Rec],
+        on: Link[Rec, Idx[()], Rec2] | Set[Link[Rec, Idx[()], Rec2]],
+    ) -> None: ...
+
+    @overload
+    def __init__[Rec: Record, Rec2: Record](
+        self: Link[Rec2, Idx[()], Rec],
+        on: (
+            SingleJoinMap[Rec, Rec2]
+            | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
+        ),
+    ) -> None: ...
+
+    @overload
+    def __init__[Rec: Record, Rec2: Record](
+        self,
+        on: None = ...,
+    ) -> None: ...
+
+    def __init__(  # noqa: D107
+        self,
+        on: (
+            SingleJoinMap
+            | SupportsItems[type[Record], SingleJoinMap]
+            | (Link[RecT, Any] | Set[Link[RecT, Any]])
+            | None
+        ) = None,
+    ) -> None:
+        self.on = on
+
+    def _index(
+        self,
+    ) -> Expand[LnIdxT]:
+        """Get the index of this data."""
+        raise NotImplementedError()
+
+    def _frame(
+        self: Data[Any, Any, Tab],
+    ) -> Frame[PL, Tab]:
+        """Get SQL-side reference to this property."""
+        raise NotImplementedError()
+
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self: Prop[Any, Any, RuT],
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[RuT]] = {U},
+    ) -> Sequence[sqla.Executable]:
+        """Get mutation statements to set this property SQL-side."""
+        raise NotImplementedError()
+
+    @cached_prop
+    def join_maps(self) -> Mapping[type[Record], SupportsItems[Prop, Attr]]:
+        """Return the foreign key for this link."""
+        if self.on is None:
+            return {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{pk.name}",
+                        typeref=pk.typeref,
+                    ): pk
+                    for pk in rec_type._primary_key().components
+                }
+                for rec_type in self.value_type_set
+                if issubclass(rec_type, Record)
+            }
+
+        if has_type(self.on, SingleJoinMap):
+            rec_type = self.common_value_type
+            assert issubclass(rec_type, Record)
+            self.on = {rec_type: self.on}
+
+        assert has_type(self.on, Mapping[type[Record], SingleJoinMap])
+
+        return (
+            {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{fk.name}",
+                        typeref=fk.typeref,
+                    ): fk
+                }
+                for rec_type, fk in self.on.items()
+                if isinstance(fk, Attr)
+            }
+            | {
+                rec_type: {
+                    Attr(
+                        alias=f"{rec_type._fqn}.{fk.name}",
+                        typeref=fk.typeref,
+                    ): fk
+                    for fk in fks
+                }
+                for rec_type, fks in self.on.items()
+                if has_type(fks, tuple[Attr, ...])
+            }
+            | {
+                rec_type: fk_map
+                for rec_type, fk_map in self.on.items()
+                if has_type(fk_map, Mapping[Prop, Attr])
+            }
+        )
+
+    def get_join_map(self, rec_type: type[LnT | RecT]) -> SupportsItems[Prop, Prop]:
+        """Get the join map for a specific record type."""
+        matching = [
+            join_map
+            for join_type, join_map in self.join_maps.items()
+            if issubclass(rec_type, join_type)
+        ]
+        return (
+            reduce(lambda x, y: x | dict(y.items()), matching, {})
+            if len(matching) > 0
+            else {}
+        )
+
+    def source_prop_map(self, src_rec: RecT) -> dict[str, Any]:
+        """Extract the props on the source record required for this link, if any."""
+        join_map = self.get_join_map(type(src_rec))
+        idx_names = [attr.name for attr in join_map.keys()]
+
+        val_idx = src_rec._pk
+
+        assert len(val_idx) == len(idx_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val_idx)}
+
+    def target_prop_map(self, tgt_rec: LnT) -> dict[str, Any]:
+        """Extract the props on the target record required for this link, if any."""
+        assert isinstance(tgt_rec, Record)
+
+        join_map = self.get_join_map(type(tgt_rec))
+        idx_names = [attr.name for attr in join_map.keys()]
+
+        val_idx = tgt_rec._pk
+
+        assert len(val_idx) == len(idx_names)
+        return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val_idx)}
+
+    @property
+    def init_level(self) -> int:
+        """Get the init level of this link depending on foreign key locations."""
+        src_jm = list(self.get_join_map(get_common_type(self.typeargs[RecT])).items())
+        tgt_jm = list(self.get_join_map(get_common_type(self.typeargs[LnT])).items())
+
+        return (
+            0 if len(src_jm) > 0 and len(tgt_jm) > 0 else -1 if len(src_jm) > 0 else 1
+        )
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Link[LnT, LnIdxT, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...
 
 
 def records_to_df(
@@ -268,18 +499,18 @@ class Record(Model, AutoIndexable[*KeyTt]):
                         typeref=pk_attr.typeref,
                         context=Interface(cls),
                     ): pk_attr
-                    for pk_attr in super_pk.attrs
+                    for pk_attr in super_pk.components
                 }
                 for col in col_map.keys():
                     setattr(cls, col.name, col)
 
-                pk = Key[cast(type[tuple], super_pk.typeargs[TupT]), cls](
-                    attrs=tuple(col_map.keys())
+                pk = Key[cls, *get_args(super_pk.typeargs[ValT])](
+                    components=list(col_map.keys())
                 )
                 setattr(cls, pk.name, pk)
 
-                fk = Link[superclass, cls](on=col_map)
-                setattr(cls, fk.name, fk)
+                ln = Link[superclass, Idx[()], cls](on=col_map)
+                setattr(cls, ln.name, ln)
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -351,7 +582,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
     _published: bool = False
     _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
 
-    _pk: Key[*KeyTt]
+    _pk: Key[*KeyTt] = Key()
 
     @cached_prop
     def _table(self) -> Table[Self, Any]:
@@ -638,291 +869,6 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
             )
 
         return table
-
-
-class DynRecordMeta(ModelMeta):
-    """Metaclass for dynamically defined record types."""
-
-    def __getitem__(self, name: str) -> Attr:
-        """Get dynamic attribute by dynamic name."""
-        return Attr(alias=name, context=Interface(self))
-
-    def __getattr__(self, name: str) -> Attr:
-        """Get dynamic attribute by name."""
-        if not TYPE_CHECKING and name.startswith("__"):
-            return super().__getattribute__(name)
-        return Attr(alias=name, context=Interface(self))
-
-
-class DynRecord(Record, metaclass=DynRecordMeta):
-    """Dynamically defined record type."""
-
-    _template = True
-
-
-x = DynRecord
-
-
-def dynamic_record_type[T: Record](
-    base: type[T] | tuple[type[T], ...],
-    name: str,
-    props: Iterable[Prop] = [],
-    src_module: ModuleType | None = None,
-    extra_attrs: dict[str, Any] = {},
-) -> type[T]:
-    """Create a dynamically defined record type."""
-    base = base if isinstance(base, tuple) else (base,)
-    return cast(
-        type[T],
-        new_class(
-            name,
-            base,
-            None,
-            lambda ns: ns.update(
-                {
-                    **{p.name: p for p in props},
-                    "__annotations__": {
-                        p.name: p.typeref.single_typedef
-                        for p in props
-                        if p.typeref is not None
-                    },
-                    "_src_mod": src_module or base[0]._src_mod or getmodule(base[0]),
-                    **extra_attrs,
-                }
-            ),
-        ),
-    )
-
-
-class HashRec(Record[str]):
-    """Record type with a default hashed primary key."""
-
-    _template = True
-
-    def __post_init__(self) -> None:  # noqa: D105
-        setattr(
-            self,
-            self._primary_key().attrs[0].name,
-            gen_str_hash(
-                {a.name: getattr(self, a.name) for a in type(self)._attrs().values()}
-            ),
-        )
-
-
-class Entity(Record[UUID4]):
-    """Record type with a default UUID4 primary key."""
-
-    _template = True
-    _pk: Key[UUID4] = Key(default_factory=lambda: (UUID4(uuid4()),))
-
-
-type SingleJoinMap = (Prop | SupportsItems[Prop, Prop] | Set[Prop])
-
-LnT = TypeVar(
-    "LnT",
-    bound=Record | Mapping[Hashable, Record] | Iterable[Record] | None,
-    default=Any,
-)
-
-
-@dataclass(kw_only=True, eq=False)
-class Link(
-    Var[LnT, Idx[()], SQL, Tab, LnT, RecT],
-    Generic[LnT, RecT],
-):
-    """Link to a single record."""
-
-    on: (
-        SingleJoinMap
-        | SupportsItems[type[Record], SingleJoinMap]
-        | (
-            Prop[RecT, Idx[()], Any, Any, Any, RecT, Any]
-            | Set[Prop[RecT, Idx[()], Any, Any, Any, RecT, Any]]
-        )
-        | None
-    ) = None
-
-    @cached_prop
-    def join_maps(self) -> SupportsItems[type[Record], SupportsItems[Prop, Prop]]:
-        """Return the foreign key for this link."""
-        if self.on is None:
-            return {
-                rec_type: {
-                    Attr(
-                        alias=f"{rec_type._fqn}.{pk.name}",
-                        typeref=pk.typeref,
-                    ): pk
-                    for pk in rec_type._primary_key().attrs
-                }
-                for rec_type in self.value_type_set
-                if issubclass(rec_type, Record)
-            }
-
-        if has_type(self.on, SingleJoinMap):
-            rec_type = self.common_value_type
-            assert issubclass(rec_type, Record)
-            self.on = {rec_type: self.on}
-
-        assert has_type(self.on, Mapping[type[Record], SingleJoinMap])
-
-        return (
-            {
-                rec_type: {
-                    Attr(
-                        alias=f"{rec_type._fqn}.{fk.name}",
-                        typeref=fk.typeref,
-                    ): fk
-                }
-                for rec_type, fk in self.on.items()
-                if isinstance(fk, Prop)
-            }
-            | {
-                rec_type: {
-                    Attr(
-                        alias=f"{rec_type._fqn}.{fk.name}",
-                        typeref=fk.typeref,
-                    ): fk
-                    for fk in fks
-                }
-                for rec_type, fks in self.on.items()
-                if has_type(fks, Set[Prop])
-            }
-            | {
-                rec_type: fk_map
-                for rec_type, fk_map in self.on.items()
-                if has_type(fk_map, Mapping[Prop, Prop])
-            }
-        )
-
-
-TgtT = TypeVar("TgtT", bound="Record", covariant=True, default=Any)
-
-
-class Edge(Record[str, str], Generic[RecT, TgtT]):
-    """Automatically defined relation record type."""
-
-    _template = True
-
-    _from: Link[RecT] = Link()
-    _to: Link[RecT] = Link()
-
-    _pk: Key[str, str] = Key(
-        attrs=(
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-            *(
-                a
-                for fk_map in _to.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-        )
-    )
-
-
-class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
-    """Automatically defined relation record type with index substitution."""
-
-    _template = True
-
-    _from: Link[RecT] = Link()
-    _to: Link[RecT] = Link()
-    _rel_idx: Attr[KeyT] = Attr()
-
-    _pk: Key[str, str, KeyT] = Key(
-        attrs=(
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-            *(
-                a
-                for fk_map in _to.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-            _rel_idx,
-        )
-    )
-
-
-EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
-
-
-@dataclass(kw_only=True, eq=False)
-class Rel(Var[LnT, IdxT, SQL, Col, TgtT, RecT], Generic[LnT, EdgeT, IdxT, TgtT, RecT]):
-    """Backlink record set."""
-
-    backlink: (
-        Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]
-        | set[Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]]
-    )
-    link: (
-        Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]
-        | set[Prop[RecT, Idx[()], Any, Any, Any, RecT, TgtT]]
-    )
-
-
-class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
-    """Dynamically defined scalar record type."""
-
-    _template = True
-    _array: ClassVar[Array]
-
-    _from: Link[RecT] = Link()
-    _idx: Attr[KeyT] = Attr()
-    _val: Attr[ValT]
-
-    _pk: Key[*tuple[Any, ...], KeyT] = Key(
-        attrs=(
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-            _idx,
-        )
-    )
-
-
-_item_classes: dict[str, type[Item]] = {}
-
-
-@dataclass(eq=False)
-class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
-    """Set / array of scalar values."""
-
-    @cached_prop
-    def _key_type(self) -> type:
-        idx_type = self.typeargs[KeyT]
-        key_tuple = get_args(idx_type)
-        return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
-
-    @cached_prop
-    def relation_type(self) -> type[Item[ValT, KeyT, RecT]]:
-        """Return the dynamic relation record type."""
-        assert self.owner is not None
-        base_array_fqn = self.fqn
-
-        rec = _item_classes.get(
-            base_array_fqn,
-            dynamic_record_type(
-                Item[self.common_value_type, self._key_type, self.owner],
-                f"{self.owner.__name__}.{self.name}",
-                src_module=self.owner._src_mod or getmodule(self.owner),
-                extra_attrs={"_array": self},
-            ),
-        )
-        _item_classes[base_array_fqn] = rec
-
-        return rec
 
 
 class Schema:
@@ -1290,7 +1236,7 @@ class DataBase(
         return {
             k: sqla.Index(
                 f"{self._get_base_table_name(rec_type)}_key_{k.name}",
-                *(col.name for col in k.attrs),
+                *(col.name for col in k.components),
                 unique=True,
             )
             for k in rec_type._keys().values()
@@ -1301,7 +1247,7 @@ class DataBase(
         """Columns of this record type's table."""
         pk = rec_type._primary_key()
         return sqla.PrimaryKeyConstraint(
-            *[col.name for col in pk.attrs],
+            *[col.name for col in pk.components],
         )
 
     @cached_method

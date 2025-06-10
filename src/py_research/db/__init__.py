@@ -16,8 +16,8 @@ from .sources import ArrayMap as ArrayMap
 from .sources import DataSource as DataSource
 from .sources import Hash as Hash
 from .sources import IdxMap as IdxMap
+from .sources import RecordMap as RecordMap
+from .sources import RelMap as RelMap
 from .sources import SelIndex as SelIndex
 from .sources import SubMap as SubMap
-from .sources import SubTableMap as SubTableMap
-from .sources import TableMap as TableMap
 from .sources import Transform as Transform
