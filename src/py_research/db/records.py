@@ -80,7 +80,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import Model, Prop, RuT, Var
+from .models import Model, Prop, RuT
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -97,8 +97,8 @@ RecT2 = TypeVar("RecT2", bound="Record")
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Var[ValT, Idx[()], SQL, Col, ValT, RecT],
-    Generic[ValT, RecT],
+    Prop[ValT, Idx[()], RuT, SQL, Col, ValT, RecT, RuT],
+    Generic[ValT, RuT, RecT],
 ):
     """Single-value attribute or column.
 
@@ -148,7 +148,9 @@ class Attr(
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, instance: None, owner: type[RecT2]) -> Attr[ValT, RecT2]: ...
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Attr[ValT, RuT, RecT2]: ...
 
         @overload
         def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
@@ -165,7 +167,7 @@ TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class AttrTuple(Var[TupT, Idx[()], SQL, Tab, TupT, RecT]):
+class AttrTuple(Prop[TupT, Idx[()], RuT, SQL, Tab, TupT, RecT, RuT]):
     """Index property for a record type."""
 
     init: bool = False
@@ -261,7 +263,7 @@ class Key(AttrTuple[tuple[*KeyTt], Any]):
 
 type SingleJoinMap[Rec: Record, Rec2: Record] = (
     Prop[Any, Any, Any, Any, Any, Any, Rec]
-    | SupportsItems[Prop[Any, Any, Any, Any, Any, Any, Rec], Attr[Any, Rec2]]
+    | SupportsItems[Prop[Any, Any, Any, Any, Any, Any, Rec], Attr[Any, Any, Rec2]]
     | tuple[Prop[Any, Any, Any, Any, Any, Any, Rec], ...]
 )
 
@@ -279,18 +281,23 @@ LnIdxT = TypeVar(
 )
 
 
-class Link(Var[LnT, LnIdxT, SQL, Tab, LnT, RecT]):
+class Link(
+    Prop[LnT, LnIdxT, RwxT, SQL, Tab, LnT, RecT, RuT],
+    Generic[LnT, LnIdxT, RuT, RwxT, RecT],
+):
     """Link to a single record."""
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, AutoIdx[Rec2], Rec],
-        on: Link[Rec, Idx[()], Rec2] | Set[Link[Rec, Idx[()], Rec2]],
+        self: Link[Rec2, AutoIdx[Rec2], Any, Any, Rec],
+        on: (
+            Link[Rec, Idx[()], Any, Any, Rec2] | Set[Link[Rec, Idx[()], Any, Any, Rec2]]
+        ),
     ) -> None: ...
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, Idx[()], Rec],
+        self: Link[Rec2, Idx[()], Any, Any, Rec],
         on: (
             SingleJoinMap[Rec, Rec2]
             | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
@@ -436,7 +443,7 @@ class Link(Var[LnT, LnIdxT, SQL, Tab, LnT, RecT]):
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Link[LnT, LnIdxT, RecT2]: ...
+        ) -> Link[LnT, LnIdxT, RuT, RwxT, RecT2]: ...
 
         @overload
         def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
@@ -494,7 +501,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
             if superclass in cls.__bases__ and issubclass(superclass, Record):
                 super_pk = superclass._primary_key()
                 col_map = {
-                    Attr[Hashable, Self](
+                    Attr[Hashable, Any, Self](
                         alias=pk_attr.name,
                         typeref=pk_attr.typeref,
                         context=Interface(cls),
@@ -509,7 +516,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
                 )
                 setattr(cls, pk.name, pk)
 
-                ln = Link[superclass, Idx[()], cls](on=col_map)
+                ln = Link[superclass, Idx[()], Any, Any, cls](on=col_map)
                 setattr(cls, ln.name, ln)
 
     @classmethod

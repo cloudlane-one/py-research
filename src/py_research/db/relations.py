@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from inspect import getmodule
 from types import ModuleType, new_class
@@ -17,8 +17,23 @@ from py_research.hashing import gen_str_hash
 from py_research.reflect.types import get_common_type
 from py_research.types import UUID4
 
-from .data import SQL, Col, Ctx, Interface, KeyT, Tab, ValT
-from .models import IdxT, ModelMeta, Prop, Var
+from .data import (
+    SQL,
+    Col,
+    Ctx,
+    CtxTt,
+    Data,
+    Expand,
+    ExT,
+    Interface,
+    KeyT,
+    R,
+    RwxT,
+    SxT,
+    Tab,
+    ValT,
+)
+from .models import IdxT, ModelMeta, OwnT, Prop, PropT
 
 
 class DynRecordMeta(ModelMeta):
@@ -73,6 +88,36 @@ def dynamic_record_type[T: Record](
             ),
         ),
     )
+
+
+@dataclass
+class Dyn(
+    Prop[PropT, IdxT, RwxT, ExT, SxT, ValT, OwnT, R, *CtxTt],
+):
+    """Dynamic property reference."""
+
+    ref: Data[ValT, Expand[IdxT], SxT, ExT, RwxT, Interface[OwnT], *CtxTt]
+    converter: Callable[[Iterable[ValT]], PropT] | None = None
+
+    def __post_init__(self):  # noqa: D105
+        self._data = self.ref
+
+    def _getter(self, instance: OwnT) -> PropT:
+        """Get the value of this property."""
+        data = instance._data()[self.ref]
+        values = data.values()
+
+        if self.converter is not None:
+            return self.converter(values)
+
+        if (
+            issubclass(data.common_value_type, self.common_prop_type)
+            and data.index() is None
+        ):
+            return cast(PropT, values[0])
+
+        constructor = cast(Callable[[Any], PropT], self.common_prop_type)
+        return constructor(values[0] if data.index() is None else values)
 
 
 class HashRec(Record[str]):

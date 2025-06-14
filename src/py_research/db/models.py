@@ -7,7 +7,7 @@ from copy import copy
 from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, reduce
 from inspect import get_annotations, getmodule
-from types import ModuleType, NoneType, UnionType
+from types import ModuleType, UnionType
 from typing import (
     Any,
     ClassVar,
@@ -53,7 +53,6 @@ from py_research.storage.storables import Realm, Storable, StorageTypes
 from py_research.types import DataclassInstance, Not
 
 from .data import (
-    CRUD,
     PL,
     SQL,
     AutoIdx,
@@ -74,11 +73,11 @@ from .data import (
     Interface,
     KeyT2,
     KeyTt2,
+    Node,
     R,
     Root,
     RwxT,
     RwxT2,
-    SxT,
     SxT2,
     Tab,
     U,
@@ -97,13 +96,20 @@ IdxT = TypeVar("IdxT", bound=FullIdx, default=Any)
 IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)
-RuT = TypeVar("RuT", bound=R | U)
+RuT = TypeVar("RuT", bound=R | U, default=Any)
+
+
+@dataclass(frozen=True)
+class Init(Generic[ValT]):
+    """Wrapper object around init values."""
+
+    value: ValT
 
 
 @dataclass(kw_only=True)
 class Prop(
     Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *CtxTt],
-    Generic[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, *CtxTt],
+    Generic[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, RuT, *CtxTt],
 ):
     """Property definition for a model."""
 
@@ -116,7 +122,7 @@ class Prop(
         val_type: SingleTypeDef | UnionType, owner: type
     ) -> type[Prop] | None:
         """Get the default subclass for this property."""
-        subclasses = reversed(get_subclasses(Var))
+        subclasses = reversed(get_subclasses(Prop))
 
         matching = [
             s
@@ -144,7 +150,9 @@ class Prop(
     hash: bool = True
     compare: bool = True
 
-    _owner_map: dict[type[OwnT], Data] = field(default_factory=dict)
+    _owner_map: dict[
+        type[OwnT], Prop[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, *CtxTt]
+    ] = field(default_factory=dict)
 
     def _getter(self, instance: OwnT) -> PropT | Literal[Not.resolved]:
         """Get the value of this property."""
@@ -156,6 +164,7 @@ class Prop(
 
     @property
     def init_level(self) -> int:
+        """Get the initialization level of this property."""
         return 0
 
     def _index(self) -> Expand[IdxT]:
@@ -207,8 +216,8 @@ class Prop(
 
     @staticmethod
     def _set_owner(
-        prop,
-        owner: type[OwnT2],
+        prop: Data,
+        owner: type[Model],
     ) -> None:
         """Set the owner of the property."""
         prop.context = Interface(owner)
@@ -220,11 +229,25 @@ class Prop(
             | {OwnT: owner},
         )
 
+    @overload
+    @staticmethod
+    def _with_new_root_owner(
+        data: Prop[PropT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, Any, *CtxTt2],
+        owner: type[OwnT2],
+    ) -> Prop[PropT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, OwnT2, *CtxTt2]: ...
+
+    @overload
     @staticmethod
     def _with_new_root_owner(
         data: Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
         owner: type[OwnT2],
-    ) -> Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]:
+    ) -> Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]: ...
+
+    @staticmethod
+    def _with_new_root_owner(
+        data: Data,
+        owner: type[OwnT2],
+    ) -> Data:
         """Create a new data object with a new root owner."""
         if isinstance(data.context, Interface):
             root = copy_and_override(type(data), data, context=data.context)
@@ -235,6 +258,22 @@ class Prop(
             return copy_and_override(
                 type(data), data, context=Prop._with_new_root_owner(data.context, owner)
             )
+
+    def _get_with_owner(
+        self, owner: type[OwnT2]
+    ) -> Data[PropT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT2], *CtxTt]:
+        """Get the property from the owner map."""
+        matching = [p for o, p in self._owner_map.items() if issubclass(owner, o)]
+
+        if len(matching) == 0:
+            prop = Prop._with_new_root_owner(self, owner)
+            self._owner_map[cast(type[OwnT], owner)] = prop
+            matching = [prop]
+
+        return cast(
+            Data[PropT, Expand[IdxT], DxT, ExT, RwxT, Interface[Any], *CtxTt],
+            matching[0],
+        )
 
     # Descriptor read/write:
 
@@ -267,8 +306,8 @@ class Prop(
 
     @overload
     def __get__(
-        self: Prop[Any, Any, RuT], instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, Idx[()], RuT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
+        self: Prop, instance: None, owner: type[OwnT2]
+    ) -> Prop[PropT, Idx[()], RwxT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
 
     @overload
     def __get__(
@@ -285,14 +324,8 @@ class Prop(
         if owner is None or not issubclass(owner, Model):
             return self
 
-        if instance is None:
-            owned = self._owner_map.get(owner, None)
-
-            if owned is None:
-                owned = Prop._with_new_root_owner(self, owner)
-                self._owner_map[owner] = owned
-
-            return owned
+        if instance is None and owner is not self.owner:
+            return self._get_with_owner(owner)
 
         res = self._getter(cast(OwnT, instance))
         if res is not Not.resolved:
@@ -305,14 +338,23 @@ class Prop(
         return self.default_factory()
 
     @overload
-    def __set__(self: Prop[PropT2, Any, U], instance: OwnT, value: PropT2) -> None: ...
+    def __set__(
+        self: Prop[PropT2, Any, Any, Any, Any, Any, Any, R],
+        instance: OwnT,
+        value: Init[PropT2],
+    ) -> None: ...
 
     @overload
-    def __set__(self: Prop[Any, Any, U], instance: Any, value: Any) -> None: ...
+    def __set__(
+        self: Prop[PropT2, Any, Any, Any, Any, Any, Any, U],
+        instance: OwnT,
+        value: PropT2,
+    ) -> None: ...
 
-    def __set__(  # noqa: D105
-        self: Prop[Any, Any, U], instance: Any, value: Any
-    ) -> None:
+    @overload
+    def __set__(self: Prop, instance: Any, value: Any) -> None: ...
+
+    def __set__(self: Prop, instance: Any, value: Any) -> None:  # noqa: D105
         if isinstance(instance, Model):
             self._setter(instance, value)
 
@@ -350,43 +392,6 @@ class Prop(
             }
 
         return None
-
-
-class Var(
-    Prop[PropT, IdxT, CRUD, ExT, DxT, ValT, OwnT, *CtxTt],
-    Generic[PropT, IdxT, ExT, DxT, ValT, OwnT, *CtxTt],
-):
-    """Variable property reference."""
-
-
-@dataclass
-class Dyn(
-    Prop[PropT, IdxT, R, ExT, SxT, ValT, OwnT, *CtxTt],
-):
-    """Dynamic property reference."""
-
-    ref: Data[ValT, Expand[IdxT], SxT, ExT, R, Interface[OwnT], *CtxTt]
-    converter: Callable[[Iterable[ValT]], PropT] | None = None
-
-    def __post_init__(self):  # noqa: D105
-        self._data = self.ref
-
-    def _getter(self, instance: OwnT) -> PropT:
-        """Get the value of this property."""
-        data = instance._data()[self.ref]
-        values = data.values()
-
-        if self.converter is not None:
-            return self.converter(values)
-
-        if (
-            issubclass(data.common_value_type, self.common_prop_type)
-            and data.index() is None
-        ):
-            return cast(PropT, values[0])
-
-        constructor = cast(Callable[[Any], PropT], self.common_prop_type)
-        return constructor(values[0] if data.index() is None else values)
 
 
 class ModelMeta(type):
@@ -551,6 +556,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 class Model(
     DataclassInstance,
     Storable[JSONDict | JSONFile | Dir],
+    Node,
     metaclass=ModelMeta,
 ):
     """Schema for a record in a database."""
