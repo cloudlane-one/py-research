@@ -7,14 +7,15 @@ from typing import Literal
 
 from py_research.db import (
     Array,
-    BackLink,
+    Attr,
     Edge,
     Entity,
+    Idx,
+    Key,
     Link,
     Record,
+    Rel,
     Schema,
-    Table,
-    Var,
 )
 
 
@@ -25,15 +26,17 @@ class TestSchema(Schema):
 class SearchResult(Edge["Search", "Project"]):
     """Link search to a result."""
 
-    score: Var[float]
+    score: Attr[float]
 
 
 class Search(Record[str], TestSchema):
     """Defined search against the API."""
 
-    term: Var[str] = Var(primary_key=True)
-    result_count: Var[int]
-    results: Table[Project, SearchResult] = Table(default=True)
+    term: Attr[str] = Attr()
+    result_count: Attr[int]
+    results: Rel[Project, SearchResult]
+
+    _pk = Key[str](components=[term])
 
 
 type Assignment = Edge["User", "Task"]
@@ -42,18 +45,18 @@ type Assignment = Edge["User", "Task"]
 class Task(Entity):
     """Link search to a result."""
 
-    name: Var[str]
+    name: Attr[str]
     project: Link[Project]
-    assignees: Table[User, Assignment]
-    status: Var[Literal["todo", "done"]]
+    assignees: Rel[User, Assignment]
+    status: Attr[Literal["todo", "done"]]
 
 
 class User(Entity):
     """A generic user."""
 
-    name: Var[str]
-    age: Var[int]
-    tasks: Table[Task, Assignment]
+    name: Attr[str]
+    age: Attr[int]
+    tasks: Rel[Task, Assignment]
 
     @property
     def all_done(self) -> bool:
@@ -64,27 +67,29 @@ class User(Entity):
 class Membership(Edge["User", "Project"]):
     """Link user to a project."""
 
-    role: Var[str] = Var(default="member")
+    role: Attr[str] = Attr(default="member")
 
 
 class Project(Record[int]):
     """A generic project record."""
 
-    number: Var[int] = Var(primary_key=True)
-    name: Var[str]
-    start: Var[date]
-    end: Var[date]
-    status: Var[Literal["planned", "started", "done"]]
+    number: Attr[int] = Attr()
+    name: Attr[str]
+    start: Attr[date]
+    end: Attr[date]
+    status: Attr[Literal["planned", "started", "done"]]
     org: Link[Organization]
-    tasks: BackLink[Task] = BackLink(to=Task.project)
-    members: Table[User, Membership]
+    tasks: Link[Task] = Link(on=Task.project)
+    members: Rel[User, Membership]
+
+    _pk = Key[int](components=[number])
 
 
 class Organization(Entity):
     """A generic organization record."""
 
-    name: Var[str]
-    address: Var[str]
-    city: Var[str]
-    projects: BackLink[Project] = BackLink(to=Project.org, default=True)
-    countries: Array[str, int]
+    name: Attr[str]
+    address: Attr[str]
+    city: Attr[str]
+    projects: Link[Project] = Link(on=Project.org)
+    countries: Array[str, Idx[int]]
