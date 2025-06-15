@@ -19,7 +19,7 @@ from py_research.db import (
     RecMap,
     Record,
     RefMap,
-    SubMap,
+    SubMapper,
     Table,
     Var,
 )
@@ -142,7 +142,7 @@ def data_source() -> DataSource:
                     ),
                 },
                 pull={
-                    Project.org: SubMap(
+                    Project.org: SubMapper(
                         push={
                             "organization_name": Organization.name,
                             "organization_address": Organization.address,

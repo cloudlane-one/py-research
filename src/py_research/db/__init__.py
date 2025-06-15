@@ -15,9 +15,9 @@ from .records import Var as Var
 from .sources import ArrayMap as ArrayMap
 from .sources import DataSource as DataSource
 from .sources import Hash as Hash
-from .sources import IdxMap as IdxMap
-from .sources import RecordMap as RecordMap
-from .sources import RelMap as RelMap
-from .sources import SelIndex as SelIndex
-from .sources import SubMap as SubMap
+from .sources import MapIdx as MapIdx
+from .sources import RecMap as RecMap
+from .sources import RelMapper as RelMapper
+from .sources import SelIdx as SelIdx
+from .sources import SubMapper as SubMapper
 from .sources import Transform as Transform

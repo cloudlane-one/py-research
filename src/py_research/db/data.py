@@ -340,9 +340,9 @@ type InputFrame = (
     | sqla.ColumnElement
 )
 
-type InputData[V, S, I] = Data[V] | V | Iterable[V] | Mapping[
-    Hashable, V
-] | S | Mapping[str, I]
+type InputData[V, S, I] = Data[V] | V | Iterable[V] | Mapping[Any, V] | S | Mapping[
+    str, I
+]
 
 Params = ParamSpec("Params")
 

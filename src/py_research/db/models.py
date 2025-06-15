@@ -91,6 +91,7 @@ IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)
 CruT = TypeVar("CruT", bound=C | R | U, default=Any)
+CruT2 = TypeVar("CruT2", bound=C | R | U)
 
 
 @dataclass(frozen=True)
@@ -107,24 +108,30 @@ class Prop(
 ):
     """Property definition for a model."""
 
-    value_hook: ClassVar[SingleTypeDef | UnionType | None] = None
-    index_hook: ClassVar[SingleTypeDef | UnionType | None] = None
-    owner_hook: ClassVar[SingleTypeDef | UnionType | None] = None
+    @classmethod
+    def _type_matcher(
+        cls,
+        val_type: SingleTypeDef | UnionType,
+        index_type: SingleTypeDef | UnionType,
+        owner_type: type[Model],
+    ) -> bool:
+        return False
 
     @cache
     @staticmethod
-    def _get_default_class(
-        val_type: SingleTypeDef | UnionType, owner: type
-    ) -> type[Prop] | None:
+    def _get_default_class(typedef: SingleTypeDef, owner: type) -> type[Prop] | None:
         """Get the default subclass for this property."""
+        typevars = get_typevar_map(typedef)
         subclasses = reversed(get_subclasses(Prop))
 
         matching = [
             s
             for s in subclasses
-            if (s.value_hook is None or is_subtype(val_type, s.value_hook))
-            and (s.index_hook is None or is_subtype(val_type, s.index_hook))
-            and (s.owner_hook is None or is_subtype(owner, s.owner_hook))
+            if s._type_matcher(
+                val_type=typevars[ValT],
+                index_type=typevars[IdxT],
+                owner_type=owner,
+            )
         ]
 
         if len(matching) == 0:
@@ -144,7 +151,7 @@ class Prop(
     hash: bool = True
     compare: bool = True
 
-    _owner_map: dict[type[OwnT], Prop[ValT, IdxT, RwxT, ExT, DxT, ValT, OwnT]] = field(
+    _owner_map: dict[type[OwnT], Prop[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT]] = field(
         default_factory=dict
     )
 
@@ -226,9 +233,9 @@ class Prop(
     @overload
     @staticmethod
     def _with_new_root_owner(
-        data: Prop[ValT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, Any],
+        data: Prop[ValT2, IdxT2, CruT2, Any, DxT2, ExT2, RwxT2],
         owner: type[OwnT2],
-    ) -> Prop[ValT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, OwnT2]: ...
+    ) -> Prop[ValT2, IdxT2, CruT2, OwnT2, DxT2, ExT2, RwxT2]: ...
 
     @overload
     @staticmethod
@@ -308,14 +315,14 @@ class Prop(
 
     @overload
     def __set__(
-        self: Prop[ValT2, Any, Any, Any, Any, Any, Any, C],
+        self: Prop[ValT2, Any, Any, Any, Any, Any, C],
         instance: OwnT,
         value: Init[ValT2],
     ) -> None: ...
 
     @overload
     def __set__(
-        self: Prop[ValT2, Any, Any, Any, Any, Any, Any, U],
+        self: Prop[ValT2, Any, Any, Any, Any, Any, U],
         instance: OwnT,
         value: ValT2,
     ) -> None: ...
@@ -723,10 +730,9 @@ class Model(
         self,
         prop: Prop[
             ValT2,
+            Idx[*KeyTt2],
             Any,
             Self,
-            ValT2,
-            Idx[*KeyTt2],
             DxT2,
             ExT2,
             RwxT2,

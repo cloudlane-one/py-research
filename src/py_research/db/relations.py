@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from inspect import getmodule
+from types import UnionType
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -22,7 +23,7 @@ from typing_extensions import TypeVar
 
 from py_research.caching import cached_prop
 from py_research.hashing import gen_str_hash
-from py_research.reflect.types import get_common_type
+from py_research.reflect.types import SingleTypeDef, get_common_type, is_subtype
 from py_research.types import UUID4
 
 from .data import (
@@ -41,7 +42,7 @@ from .data import (
     Tab,
     ValT,
 )
-from .models import CruT, IdxT, OwnT, Prop
+from .models import CruT, IdxT, Model, OwnT, Prop
 from .records import (
     Attr,
     DataBase,
@@ -174,6 +175,19 @@ class Rel(
 ):
     """Backlink record set."""
 
+    @classmethod
+    def _type_matcher(
+        cls,
+        val_type: SingleTypeDef | UnionType,
+        index_type: SingleTypeDef | UnionType,
+        owner_type: type[Model],
+    ) -> bool:
+        return (
+            is_subtype(val_type, Record)
+            and not is_subtype(index_type, Idx[()])
+            and issubclass(owner_type, Record)
+        )
+
     @property
     @override
     def init_level(self) -> int:
@@ -240,6 +254,19 @@ class Array(
     Generic[ValT, IdxT, CruT, RwxT, RecT],
 ):
     """Set / array of scalar values."""
+
+    @classmethod
+    def _type_matcher(
+        cls,
+        val_type: SingleTypeDef | UnionType,
+        index_type: SingleTypeDef | UnionType,
+        owner_type: type[Model],
+    ) -> bool:
+        return (
+            not is_subtype(val_type, Record)
+            and not is_subtype(index_type, Idx[()])
+            and issubclass(owner_type, Record)
+        )
 
     @property
     @override

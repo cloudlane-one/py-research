@@ -18,7 +18,7 @@ from inspect import getmodule
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
-from types import ModuleType, new_class
+from types import ModuleType, UnionType, new_class
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -47,7 +47,14 @@ from xlsxwriter import Workbook as ExcelWorkbook
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash, gen_str_hash
-from py_research.reflect.types import SupportsItems, TypeRef, get_common_type, has_type
+from py_research.reflect.types import (
+    SingleTypeDef,
+    SupportsItems,
+    TypeRef,
+    get_common_type,
+    has_type,
+    is_subtype,
+)
 from py_research.types import UUID4, Not
 
 from .data import (
@@ -109,6 +116,17 @@ class Attr(
         which may be in form of a SQL column, a Python `__dict__` entry,
         or a JSON object property.
     """
+
+    @classmethod
+    def _type_matcher(
+        cls,
+        val_type: SingleTypeDef | UnionType,
+        index_type: SingleTypeDef | UnionType,
+        owner_type: type[Model],
+    ) -> bool:
+        return not is_subtype(val_type, Record) and (
+            is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
+        )
 
     def _getter(self, instance: RecT) -> ValT | Literal[Not.resolved]:
         """Get the value of this attribute on an instance."""
@@ -288,6 +306,17 @@ class Link(
     Generic[LnT, LnIdxT, CruT, RwxT, RecT],
 ):
     """Link to a single record."""
+
+    @classmethod
+    def _type_matcher(
+        cls,
+        val_type: SingleTypeDef | UnionType,
+        index_type: SingleTypeDef | UnionType,
+        owner_type: type[Model],
+    ) -> bool:
+        return is_subtype(val_type, Record) and (
+            is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
+        )
 
     @overload
     def __init__[Rec: Record, Rec2: Record](

@@ -548,6 +548,11 @@ class TypeRef[T]:
             else self.common_type
         )
 
+    @cached_prop
+    def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
+        """Type arguments of this prop."""
+        return get_typevar_map(self.single_typedef)
+
 
 def get_common_type[T](
     typedef: SingleTypeDef[T] | UnionType,
