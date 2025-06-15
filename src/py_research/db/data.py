@@ -2080,69 +2080,13 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
 
         return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
 
-    @overload
     def __setitem__(
-        self: Data[Any, Any, Col, SQL, C | U | D, Base],
-        key: slice,
-        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    @overload
-    def __setitem__(
-        self: Data[Any, Any, Col, Any, C | U | D, Base],
-        key: slice,
-        input_data: InputData[ValT, pl.Series | pd.Series, Not],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    @overload
-    def __setitem__(
-        self: Data[Any, Any, Tab, SQL, C | U | D, Base],
-        key: slice,
-        input_data: InputData[
-            ValT,
-            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
-            pl.Series | pd.Series | sqla.ColumnElement,
-        ],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    @overload
-    def __setitem__(
-        self: Data[Any, Any, Tab, Any, C | U | D, Base],
-        key: slice,
-        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    @overload
-    def __setitem__(
-        self: Data[Any, Any, Tabs, SQL, C | U | D, Base],
-        key: slice,
-        input_data: InputData[
-            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
-        ],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    @overload
-    def __setitem__(
-        self: Data[Any, Any, Tabs, Any, C | U | D, Base],
-        key: slice,
-        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
-
-    def __setitem__(
-        self: Data[Any, Any, DxT2, Any, C | U | D, Base],
-        key: slice,
-        input_data: InputData[ValT, Any, Any],
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
+        self,
+        key: Any,
+        input_data: Any,
+    ) -> None:
         """Union two databases, right overriding left."""
-        assert key == slice(None, None, None)
-
-        if input_data is not self:
-            mutations = self._mutation(input_data, mode={C, U, D})
-
-            for mutation in mutations:
-                self.root().connection.execute(mutation)
-
-        return cast(Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], self)
+        pass
 
 
 RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)

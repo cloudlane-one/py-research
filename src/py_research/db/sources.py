@@ -640,7 +640,7 @@ async def _load_records(
         records[(rec_idx, parent_idx, path_idx)] = rec
 
     # Upload main records into the database.
-    table.__ior__({idx: rec for (idx, _, _), rec in records.items()})
+    table |= {idx: rec for (idx, _, _), rec in records.items()}
 
     if len(rest_records) > 0:
         # Collect remaining data for later loading.

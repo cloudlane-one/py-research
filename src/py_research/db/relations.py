@@ -5,14 +5,22 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from inspect import getmodule
-from types import ModuleType, new_class
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast, get_args, override
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    ClassVar,
+    Generic,
+    Self,
+    cast,
+    get_args,
+    overload,
+    override,
+)
 from uuid import uuid4
 
 from typing_extensions import TypeVar
 
 from py_research.caching import cached_prop
-from py_research.db.records import Attr, Key, Link, LnT, Record, RecT
 from py_research.hashing import gen_str_hash
 from py_research.reflect.types import get_common_type
 from py_research.types import UUID4
@@ -21,10 +29,10 @@ from .data import (
     SQL,
     Col,
     Ctx,
-    CtxTt,
     Data,
     Expand,
     ExT,
+    Idx,
     Interface,
     KeyT,
     R,
@@ -33,78 +41,35 @@ from .data import (
     Tab,
     ValT,
 )
-from .models import IdxT, ModelMeta, OwnT, Prop, PropT
-
-
-class DynRecordMeta(ModelMeta):
-    """Metaclass for dynamically defined record types."""
-
-    def __getitem__(self, name: str) -> Attr:
-        """Get dynamic attribute by dynamic name."""
-        return Attr(alias=name, context=Interface(self))
-
-    def __getattr__(self, name: str) -> Attr:
-        """Get dynamic attribute by name."""
-        if not TYPE_CHECKING and name.startswith("__"):
-            return super().__getattribute__(name)
-        return Attr(alias=name, context=Interface(self))
-
-
-class DynRecord(Record, metaclass=DynRecordMeta):
-    """Dynamically defined record type."""
-
-    _template = True
-
-
-x = DynRecord
-
-
-def dynamic_record_type[T: Record](
-    base: type[T] | tuple[type[T], ...],
-    name: str,
-    props: Iterable[Prop] = [],
-    src_module: ModuleType | None = None,
-    extra_attrs: dict[str, Any] = {},
-) -> type[T]:
-    """Create a dynamically defined record type."""
-    base = base if isinstance(base, tuple) else (base,)
-    return cast(
-        type[T],
-        new_class(
-            name,
-            base,
-            None,
-            lambda ns: ns.update(
-                {
-                    **{p.name: p for p in props},
-                    "__annotations__": {
-                        p.name: p.typeref.single_typedef
-                        for p in props
-                        if p.typeref is not None
-                    },
-                    "_src_mod": src_module or base[0]._src_mod or getmodule(base[0]),
-                    **extra_attrs,
-                }
-            ),
-        ),
-    )
+from .models import CruT, IdxT, OwnT, Prop
+from .records import (
+    Attr,
+    DataBase,
+    Key,
+    Link,
+    LnT,
+    Record,
+    RecT,
+    RecT2,
+    dynamic_record_type,
+)
 
 
 @dataclass
-class Dyn(
-    Prop[PropT, IdxT, RwxT, ExT, SxT, ValT, OwnT, R, *CtxTt],
+class Ref(
+    Prop[ValT, IdxT, R, OwnT, SxT, ExT, RwxT],
 ):
     """Dynamic property reference."""
 
-    ref: Data[ValT, Expand[IdxT], SxT, ExT, RwxT, Interface[OwnT], *CtxTt]
-    converter: Callable[[Iterable[ValT]], PropT] | None = None
+    data: Data[ValT, Expand[IdxT], SxT, ExT, RwxT, Interface[OwnT]]
+    converter: Callable[[Iterable[ValT]], ValT] | None = None
 
     def __post_init__(self):  # noqa: D105
-        self._data = self.ref
+        self._data = self.data
 
-    def _getter(self, instance: OwnT) -> PropT:
+    def _getter(self, instance: OwnT) -> ValT:
         """Get the value of this property."""
-        data = instance._data()[self.ref]
+        data = instance._data()[self.data]
         values = data.values()
 
         if self.converter is not None:
@@ -114,9 +79,9 @@ class Dyn(
             issubclass(data.common_value_type, self.common_prop_type)
             and data.index() is None
         ):
-            return cast(PropT, values[0])
+            return cast(ValT, values[0])
 
-        constructor = cast(Callable[[Any], PropT], self.common_prop_type)
+        constructor = cast(Callable[[Any], ValT], self.common_prop_type)
         return constructor(values[0] if data.index() is None else values)
 
 
@@ -204,8 +169,8 @@ EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
 
 @dataclass(kw_only=True, eq=False)
 class Rel(
-    Var[LnT, IdxT, SQL, Tab, TgtT, RecT, Ctx[EdgeT, IdxT, Tab]],
-    Generic[LnT, EdgeT, IdxT, TgtT, RecT],
+    Prop[LnT, IdxT, CruT, RecT, Tab, SQL, RwxT],
+    Generic[LnT, EdgeT, IdxT, CruT, RwxT, TgtT, RecT],
 ):
     """Backlink record set."""
 
@@ -219,6 +184,28 @@ class Rel(
     ) -> type[EdgeT]:
         """Return the type of the edge record."""
         return get_common_type(self.typeargs[EdgeT])
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Rel[LnT, EdgeT, IdxT, CruT, RwxT, TgtT, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
+
+        @overload
+        def __get__(
+            self, instance: RecT2, owner: type[RecT2]
+        ) -> Data[ValT, IdxT, Tab, ExT, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...
 
 
 class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
@@ -248,7 +235,10 @@ _item_classes: dict[str, type[Item]] = {}
 
 
 @dataclass(eq=False)
-class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
+class Array(
+    Prop[ValT, IdxT, CruT, RecT, Col, SQL, RwxT],
+    Generic[ValT, IdxT, CruT, RwxT, RecT],
+):
     """Set / array of scalar values."""
 
     @property
@@ -257,7 +247,8 @@ class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
         return 1
 
     @cached_prop
-    def _key_type(self) -> type:
+    def key_type(self) -> type:
+        """Return the dynamic key type for this array."""
         idx_type = self.typeargs[KeyT]
         key_tuple = get_args(idx_type)
         return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
@@ -271,7 +262,7 @@ class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
         rec = _item_classes.get(
             base_array_fqn,
             dynamic_record_type(
-                Item[self.common_value_type, self._key_type, self.owner],
+                Item[self.common_value_type, self.key_type, self.owner],
                 f"{self.owner.__name__}.{self.name}",
                 src_module=self.owner._src_mod or getmodule(self.owner),
                 extra_attrs={"_array": self},
@@ -280,3 +271,25 @@ class Array(Var[ValT, IdxT, SQL, Col, ValT, RecT], Generic[ValT, IdxT, RecT]):
         _item_classes[base_array_fqn] = rec
 
         return rec
+
+    if TYPE_CHECKING:
+
+        @overload
+        def __get__(
+            self, instance: None, owner: type[RecT2]
+        ) -> Array[ValT, IdxT, CruT, RwxT, RecT2]: ...
+
+        @overload
+        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
+
+        @overload
+        def __get__(
+            self, instance: RecT2, owner: type[RecT2]
+        ) -> Data[ValT, IdxT, Tab, ExT, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+
+        @overload
+        def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
+            self: Prop, instance: Any, owner: type | None
+        ) -> Any: ...

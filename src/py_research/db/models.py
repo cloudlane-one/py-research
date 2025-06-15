@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping
 from copy import copy
 from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, reduce
@@ -55,10 +55,9 @@ from py_research.types import DataclassInstance, Not
 from .data import (
     PL,
     SQL,
-    AutoIdx,
     AutoIndexable,
+    C,
     Ctx,
-    CtxTt,
     CtxTt2,
     Data,
     DxT,
@@ -68,10 +67,8 @@ from .data import (
     ExT2,
     Frame,
     FullIdx,
-    HashIdx,
     Idx,
     Interface,
-    KeyT2,
     KeyTt2,
     Node,
     R,
@@ -86,9 +83,6 @@ from .data import (
 )
 from .utils import get_pl_schema
 
-PropT = TypeVar("PropT", covariant=True, default=Any)
-PropT2 = TypeVar("PropT2")
-
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
@@ -96,7 +90,7 @@ IdxT = TypeVar("IdxT", bound=FullIdx, default=Any)
 IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)
-RuT = TypeVar("RuT", bound=R | U, default=Any)
+CruT = TypeVar("CruT", bound=C | R | U, default=Any)
 
 
 @dataclass(frozen=True)
@@ -108,12 +102,13 @@ class Init(Generic[ValT]):
 
 @dataclass(kw_only=True)
 class Prop(
-    Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *CtxTt],
-    Generic[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, RuT, *CtxTt],
+    Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *tuple[()]],
+    Generic[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT],
 ):
     """Property definition for a model."""
 
     value_hook: ClassVar[SingleTypeDef | UnionType | None] = None
+    index_hook: ClassVar[SingleTypeDef | UnionType | None] = None
     owner_hook: ClassVar[SingleTypeDef | UnionType | None] = None
 
     @cache
@@ -127,10 +122,9 @@ class Prop(
         matching = [
             s
             for s in subclasses
-            if s.value_hook is not None
-            and is_subtype(val_type, s.value_hook)
-            and s.owner_hook is not None
-            and is_subtype(owner, s.owner_hook)
+            if (s.value_hook is None or is_subtype(val_type, s.value_hook))
+            and (s.index_hook is None or is_subtype(val_type, s.index_hook))
+            and (s.owner_hook is None or is_subtype(owner, s.owner_hook))
         ]
 
         if len(matching) == 0:
@@ -143,22 +137,22 @@ class Prop(
     )
 
     alias: str | None = None
-    default: PropT | Literal[Not.defined] = Not.defined
-    default_factory: Callable[[], PropT] | None = None
+    default: ValT | Literal[Not.defined] = Not.defined
+    default_factory: Callable[[], ValT] | None = None
     init: bool = True
     repr: bool = True
     hash: bool = True
     compare: bool = True
 
-    _owner_map: dict[
-        type[OwnT], Prop[PropT, IdxT, RwxT, ExT, DxT, ValT, OwnT, *CtxTt]
-    ] = field(default_factory=dict)
+    _owner_map: dict[type[OwnT], Prop[ValT, IdxT, RwxT, ExT, DxT, ValT, OwnT]] = field(
+        default_factory=dict
+    )
 
-    def _getter(self, instance: OwnT) -> PropT | Literal[Not.resolved]:
+    def _getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
         """Get the value of this property."""
         return Not.resolved
 
-    def _setter(self: Prop[PropT2], instance: OwnT, value: PropT2) -> None:
+    def _setter(self: Prop[ValT2], instance: OwnT, value: ValT2) -> None:
         """Set the value of this property."""
         raise NotImplementedError()
 
@@ -176,10 +170,10 @@ class Prop(
         raise NotImplementedError()
 
     @cached_prop
-    def common_prop_type(self) -> type[PropT]:
+    def common_prop_type(self) -> type[ValT]:
         """Get the common type of this property."""
         return cast(
-            type[PropT],
+            type[ValT],
             get_common_type(
                 self.typeref.typeform if self.typeref is not None else type(self)
             ),
@@ -209,7 +203,7 @@ class Prop(
         return self.name
 
     @property
-    def owner(self: Prop[Any, Any, Any, Any, Any, Any, OwnT2]) -> type[OwnT2] | None:
+    def owner(self: Prop[Any, Any, Any, OwnT2]) -> type[OwnT2] | None:
         """Owner of the property."""
         owner = cast(type[OwnT2], self.typeargs[OwnT])
         return owner if owner is not Any else None
@@ -232,16 +226,16 @@ class Prop(
     @overload
     @staticmethod
     def _with_new_root_owner(
-        data: Prop[PropT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, Any, *CtxTt2],
+        data: Prop[ValT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, Any],
         owner: type[OwnT2],
-    ) -> Prop[PropT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, OwnT2, *CtxTt2]: ...
+    ) -> Prop[ValT2, IdxT2, RwxT2, ExT2, DxT2, ValT2, OwnT2]: ...
 
     @overload
     @staticmethod
     def _with_new_root_owner(
-        data: Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
+        data: Data[ValT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
         owner: type[OwnT2],
-    ) -> Data[PropT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]: ...
+    ) -> Data[ValT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]: ...
 
     @staticmethod
     def _with_new_root_owner(
@@ -261,7 +255,7 @@ class Prop(
 
     def _get_with_owner(
         self, owner: type[OwnT2]
-    ) -> Data[PropT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT2], *CtxTt]:
+    ) -> Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT2]]:
         """Get the property from the owner map."""
         matching = [p for o, p in self._owner_map.items() if issubclass(owner, o)]
 
@@ -271,7 +265,7 @@ class Prop(
             matching = [prop]
 
         return cast(
-            Data[PropT, Expand[IdxT], DxT, ExT, RwxT, Interface[Any], *CtxTt],
+            Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[Any]],
             matching[0],
         )
 
@@ -279,43 +273,18 @@ class Prop(
 
     @overload
     def __get__(
-        self: Prop[Mapping[tuple[*KeyTt2], ValT2]],
-        instance: None,
-        owner: type[OwnT2],
-    ) -> Prop[PropT, Idx[*KeyTt2], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
-        self: Prop[Mapping[KeyT2, ValT2]], instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, Idx[KeyT2], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
-        self: Prop[Sequence[ValT2]], instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, Idx[int], RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
-        self: Prop[Iterable[AutoT]], instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, AutoIdx[AutoT], RwxT, ExT, DxT, AutoT, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
-        self: Prop[Iterable[ValT2]], instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, HashIdx, RwxT, ExT, DxT, ValT2, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
-        self: Prop, instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, Idx[()], RwxT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
-
-    @overload
-    def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Prop[PropT, Idx[()], RwxT, ExT, DxT, ValT, OwnT2, *CtxTt]: ...
+    ) -> Prop[ValT, IdxT, CruT, OwnT2, DxT, ExT, RwxT]: ...
 
     @overload
-    def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> PropT: ...
+    def __get__(
+        self: Prop[Any, FullIdx[()]], instance: OwnT2, owner: type[OwnT2]
+    ) -> ValT: ...
+
+    @overload
+    def __get__(
+        self, instance: OwnT2, owner: type[OwnT2]
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT2, Idx[()]], Tab]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -339,16 +308,16 @@ class Prop(
 
     @overload
     def __set__(
-        self: Prop[PropT2, Any, Any, Any, Any, Any, Any, R],
+        self: Prop[ValT2, Any, Any, Any, Any, Any, Any, C],
         instance: OwnT,
-        value: Init[PropT2],
+        value: Init[ValT2],
     ) -> None: ...
 
     @overload
     def __set__(
-        self: Prop[PropT2, Any, Any, Any, Any, Any, Any, U],
+        self: Prop[ValT2, Any, Any, Any, Any, Any, Any, U],
         instance: OwnT,
-        value: PropT2,
+        value: ValT2,
     ) -> None: ...
 
     @overload
@@ -753,14 +722,14 @@ class Model(
     def __getitem__(
         self,
         prop: Prop[
-            PropT2,
-            Idx[*KeyTt2],
-            RwxT2,
-            ExT2,
-            DxT2,
             ValT2,
+            Any,
             Self,
-            *CtxTt2,
+            ValT2,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            RwxT2,
         ],
     ) -> Data[
         ValT2,
@@ -770,7 +739,6 @@ class Model(
         RwxT2,
         Root,
         Ctx[Self],
-        *CtxTt2,
     ]:
         """Get the data representation of a prop."""
         return self._data()[prop]

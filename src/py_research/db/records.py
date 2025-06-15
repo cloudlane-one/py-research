@@ -14,9 +14,11 @@ from collections.abc import (
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from functools import cmp_to_key, reduce
+from inspect import getmodule
 from pathlib import Path
 from secrets import token_hex
 from sqlite3 import PARSE_DECLTYPES
+from types import ModuleType, new_class
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -80,7 +82,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import Model, Prop, RuT
+from .models import CruT, IdxT2, Model, ModelMeta, Prop
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -97,8 +99,8 @@ RecT2 = TypeVar("RecT2", bound="Record")
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], RuT, SQL, Col, ValT, RecT, RuT],
-    Generic[ValT, RuT, RecT],
+    Prop[ValT, Idx[()], CruT, RecT, Col, SQL, CruT],
+    Generic[ValT, CruT, RecT],
 ):
     """Single-value attribute or column.
 
@@ -138,9 +140,9 @@ class Attr(
         return Frame(parent_df[self._id()])
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Prop[Any, Any, RuT],
+        self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RuT]] = {U},
+        mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
@@ -150,7 +152,7 @@ class Attr(
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Attr[ValT, RuT, RecT2]: ...
+        ) -> Attr[ValT, CruT, RecT2]: ...
 
         @overload
         def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
@@ -167,7 +169,7 @@ TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class AttrTuple(Prop[TupT, Idx[()], RuT, SQL, Tab, TupT, RecT, RuT]):
+class AttrTuple(Prop[TupT, Idx[()], CruT, RecT, Tab, SQL, CruT]):
     """Index property for a record type."""
 
     init: bool = False
@@ -187,9 +189,9 @@ class AttrTuple(Prop[TupT, Idx[()], RuT, SQL, Tab, TupT, RecT, RuT]):
         raise NotImplementedError()
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Prop[Any, Any, RuT],
+        self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RuT]] = {U},
+        mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
@@ -262,9 +264,9 @@ class Key(AttrTuple[tuple[*KeyTt], Any]):
 
 
 type SingleJoinMap[Rec: Record, Rec2: Record] = (
-    Prop[Any, Any, Any, Any, Any, Any, Rec]
-    | SupportsItems[Prop[Any, Any, Any, Any, Any, Any, Rec], Attr[Any, Any, Rec2]]
-    | tuple[Prop[Any, Any, Any, Any, Any, Any, Rec], ...]
+    Prop[Any, Any, Any, Rec]
+    | SupportsItems[Prop[Any, Any, Any, Rec], Attr[Any, Any, Rec2]]
+    | tuple[Prop[Any, Any, Any, Rec], ...]
 )
 
 
@@ -282,8 +284,8 @@ LnIdxT = TypeVar(
 
 
 class Link(
-    Prop[LnT, LnIdxT, RwxT, SQL, Tab, LnT, RecT, RuT],
-    Generic[LnT, LnIdxT, RuT, RwxT, RecT],
+    Prop[LnT, LnIdxT, CruT, RecT, Tab, SQL, RwxT],
+    Generic[LnT, LnIdxT, CruT, RwxT, RecT],
 ):
     """Link to a single record."""
 
@@ -334,9 +336,9 @@ class Link(
         raise NotImplementedError()
 
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self: Prop[Any, Any, RuT],
+        self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RuT]] = {U},
+        mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
         """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
@@ -443,7 +445,7 @@ class Link(
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Link[LnT, LnIdxT, RuT, RwxT, RecT2]: ...
+        ) -> Link[LnT, LnIdxT, CruT, RwxT, RecT2]: ...
 
         @overload
         def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
@@ -615,9 +617,11 @@ class Record(Model, AutoIndexable[*KeyTt]):
         if row is not None:
             self.__dict__.update(row._asdict())
 
-    def _save_dict(self) -> None:
+    def sync(self) -> None:
+        """Sync the record with the database."""
         data = self._data()
         data <<= self
+        self._load_dict()
 
     def __hash__(self) -> int:
         """Identify the record by database and id."""
@@ -626,6 +630,153 @@ class Record(Model, AutoIndexable[*KeyTt]):
     def __eq__(self, value: Hashable) -> bool:
         """Check if the record is equal to another record."""
         return hash(self) == hash(value)
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Col,
+            SQL,
+            Any,
+        ],
+        value: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not] | ValT2,
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Col,
+            Any,
+            Any,
+        ],
+        value: InputData[ValT, pl.Series | pd.Series, Not] | ValT2,
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Tab,
+            SQL,
+            Any,
+        ],
+        value: (
+            InputData[
+                ValT,
+                pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+                pl.Series | pd.Series | sqla.ColumnElement,
+            ]
+            | ValT2
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Tab,
+            Any,
+            Any,
+        ],
+        value: (
+            InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series] | ValT2
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Tabs,
+            SQL,
+            Any,
+        ],
+        value: (
+            InputData[
+                ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+            ]
+            | ValT2
+        ),
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Tabs,
+            Any,
+            Any,
+        ],
+        value: InputData[ValT, Not, pl.DataFrame | pd.DataFrame] | ValT2,
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Any,
+            SQL,
+            Any,
+        ],
+        value: InputData[ValT, Not, Any] | ValT2,
+    ) -> None: ...
+
+    @overload
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            IdxT2,
+            Any,
+            Self,
+            Any,
+            Any,
+            Any,
+        ],
+        value: InputData[ValT, Not, Any] | ValT2,
+    ) -> None: ...
+
+    def __setitem__(
+        self,
+        prop: Prop[
+            ValT2,
+            Any,
+            Any,
+            Self,
+        ],
+        value: Any,
+    ) -> None:
+        """Get the data representation of a prop."""
+        self._data()[prop] <<= value
 
 
 register_sqlite_adapters()
@@ -1367,3 +1518,57 @@ class DataBase(
         .. _Gephi: https://gephi.org/
         """
         raise NotImplementedError("Graph export is not implemented yet.")
+
+
+class DynRecordMeta(ModelMeta):
+    """Metaclass for dynamically defined record types."""
+
+    def __getitem__(self, name: str) -> Attr:
+        """Get dynamic attribute by dynamic name."""
+        return Attr(alias=name, context=Interface(self))
+
+    def __getattr__(self, name: str) -> Attr:
+        """Get dynamic attribute by name."""
+        if not TYPE_CHECKING and name.startswith("__"):
+            return super().__getattribute__(name)
+        return Attr(alias=name, context=Interface(self))
+
+
+class DynRecord(Record, metaclass=DynRecordMeta):
+    """Dynamically defined record type."""
+
+    _template = True
+
+
+x = DynRecord
+
+
+def dynamic_record_type[T: Record](
+    base: type[T] | tuple[type[T], ...],
+    name: str,
+    props: Iterable[Prop] = [],
+    src_module: ModuleType | None = None,
+    extra_attrs: dict[str, Any] = {},
+) -> type[T]:
+    """Create a dynamically defined record type."""
+    base = base if isinstance(base, tuple) else (base,)
+    return cast(
+        type[T],
+        new_class(
+            name,
+            base,
+            None,
+            lambda ns: ns.update(
+                {
+                    **{p.name: p for p in props},
+                    "__annotations__": {
+                        p.name: p.typeref.single_typedef
+                        for p in props
+                        if p.typeref is not None
+                    },
+                    "_src_mod": src_module or base[0]._src_mod or getmodule(base[0]),
+                    **extra_attrs,
+                }
+            ),
+        ),
+    )
