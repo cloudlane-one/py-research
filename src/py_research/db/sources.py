@@ -272,7 +272,7 @@ class SelIdx(DataSelect):
 type InData = dict[tuple[tuple, DirectPath], TreeNode]
 type LazyData = list[
     tuple[
-        SubMapPush[Record, Record],
+        Push[Record, Record],
         InData,
     ]
     | tuple[
@@ -287,7 +287,7 @@ type RestData = list[tuple[RecMap[Record], InData]]
 class DataMap[Ldd, Tgt]:
     """Configuration for how to map (nested) dictionary items to relational tables."""
 
-    loader: Callable[[TreeNode], Ldd | Coroutine[Any, Any, Ldd]] | None = None
+    loader: Callable[[Any], Ldd | Coroutine[Any, Any, Ldd]] | None = None
     """Loader function to load data for this record from a source."""
 
     async_loader: bool = True
@@ -380,9 +380,9 @@ class Index:
 
 type _PushMapping[Rec: Record] = SupportsItems[NodeSelect, bool | PushMap[Rec]]
 
-type PushMap[Rec: Record] = _PushMapping[Rec] | Prop[Any, Any, Any, Rec] | SubMapPush[
+type PushMap[Rec: Record] = _PushMapping[Rec] | Prop[Any, Any, Any, Rec] | Push[
     Any, Rec
-] | Index | Iterable[Prop[Any, Any, Any, Rec] | SubMapPush[Any, Rec] | Index]
+] | Index | Iterable[Prop[Any, Any, Any, Rec] | Push[Any, Rec] | Index]
 """Mapping of hierarchical attributes to record props or other records."""
 
 
@@ -401,7 +401,7 @@ type RecMatchExpr = list[Hashable] | Filter[SQL]
 
 
 @dataclass(kw_only=True, eq=False)
-class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
+class RecMap[Rec: Record](DataMap[Any, Rec]):
     """Configuration for how to map dictionary items to records."""
 
     push: PushMap[Rec] | None = None
@@ -418,9 +418,9 @@ class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
         match push_map:
             case Mapping() if has_type(push_map, _PushMapping):  # type: ignore
                 return push_map
-            case Prop() | SubMapPush() | str():
+            case Prop() | Push() | str():
                 return {All: push_map}
-            case Iterable() if has_type(push_map, Iterable[Prop | SubMapPush]):
+            case Iterable() if has_type(push_map, Iterable[Prop | Push]):
                 return {
                     k.name if isinstance(k, Prop) else k.target.name: True
                     for k in push_map
@@ -447,13 +447,13 @@ class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
             **{
                 (
                     target.target
-                    if isinstance(target, SubMapPush) and target.target is not None
+                    if isinstance(target, Push) and target.target is not None
                     else getattr(rec, _get_selector_name(sel))
                 ): (
                     copy_and_override(
-                        SubMapPull, target, sel=sel, _target_type=target.target_type
+                        Pull, target, sel=sel, _target_type=target.target_type
                     )
-                    if isinstance(target, SubMapPush)
+                    if isinstance(target, Push)
                     else DataSelect.parse(sel)
                 )
                 for sel, targets in mapping.items()
@@ -517,9 +517,9 @@ class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
             **{
                 tgt: (
                     copy_and_override(
-                        SubMapPull, sel, sel=sel.sel, _target_type=tgt.common_value_type
+                        Pull, sel, sel=sel.sel, _target_type=tgt.common_value_type
                     )
-                    if isinstance(sel, SubMapPull)
+                    if isinstance(sel, Pull)
                     else DataSelect.parse(sel)
                 )
                 for tgt, sel in (self.pull or {}).items()
@@ -534,18 +534,18 @@ class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
         return {
             cast(Prop[Any, Any, Any, Rec], rel): sel
             for rel, sel in self.full_map.items()
-            if not isinstance(sel, SubMapPull)
+            if not isinstance(sel, Pull)
         }
 
     @cached_property
     def sub_maps(
         self,
-    ) -> dict[Prop, SubMapPull]:
+    ) -> dict[Prop, Pull]:
         """Get all relation mappings."""
         return {
             cast(Prop[Any, Any, Any, Rec], rel): sel
             for rel, sel in self.full_map.items()
-            if isinstance(sel, SubMapPull)
+            if isinstance(sel, Pull)
         }
 
     async def _load_record(
@@ -708,7 +708,7 @@ class RecMap[Rec: Record](DataMap[TreeNode, Rec]):
 
 
 @dataclass(kw_only=True, eq=False)
-class SubMapPush[Val, Rec: Record](DataMap[Val, Rec]):
+class Push[Val, Rec: Record](DataMap[Any, Val]):
     """Select and map nested data."""
 
     target: Prop[Val, Any, Any, Rec]
@@ -720,29 +720,30 @@ class SubMapPush[Val, Rec: Record](DataMap[Val, Rec]):
 
 
 @dataclass(kw_only=True, eq=False)
-class SubMapPull[Val, Rec: Record](DataMap[Val, Rec], DataSelect):
+class Pull[Val](DataMap[Any, Val], DataSelect):
     """Select and map nested data."""
 
-    _target_type: type[Rec] | None = None
+    _target_type: type[Val] | None = None
 
     @property
-    def target_type(self) -> type[Rec]:
+    def target_type(self) -> type[Val]:
         """Get the target type."""
         assert self._target_type is not None, "Target type is not set."
         return self._target_type
 
 
 @dataclass(kw_only=True, eq=False)
-class RelMapPush[Rec: Record, Rec2: Record](  # type: ignore
-    SubMapPush[Rec, Rec2], RecMap[Rec]
-):
+class RelPush[Rec: Record, Rec2: Record](Push[Rec, Rec2], RecMap[Rec]):
     """Select and map nested data to records."""
 
+    edge_map: RecMap | None = None
 
-class RelMapPull[Rec: Record, Rec2: Record](  # type: ignore
-    SubMapPull[Rec, Rec2], RecMap[Rec]
-):
+
+@dataclass(kw_only=True, eq=False)
+class RelPull[Rec: Record](Pull[Rec], RecMap[Rec]):
     """Select and map nested data to records."""
+
+    edge_map: RecMap | None = None
 
 
 @dataclass(kw_only=True, eq=False)

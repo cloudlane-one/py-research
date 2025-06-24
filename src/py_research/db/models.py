@@ -86,7 +86,7 @@ from .utils import get_pl_schema
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
-IdxT = TypeVar("IdxT", bound=FullIdx, default=Any)
+IdxT = TypeVar("IdxT", bound=FullIdx, default=Any, covariant=True)
 IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)

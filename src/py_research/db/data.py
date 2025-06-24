@@ -174,7 +174,16 @@ class AutoIndexable(Protocol[*KeyTt]):
         ...
 
 
-AutoIdxT = TypeVar("AutoIdxT", bound=AutoIndexable, covariant=True)
+AutoIdxT = TypeVar(
+    "AutoIdxT",
+    bound=AutoIndexable,
+    covariant=True,
+    default=AutoIndexable[*tuple[Any, *tuple[Any, ...]]],
+)
+AutoIdxT2 = TypeVar(
+    "AutoIdxT2",
+    bound=AutoIndexable,
+)
 
 
 @final
@@ -1394,9 +1403,9 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     # 14. Base type selection
     @overload
     def __getitem__(
-        self: Base[ValT2],
-        key: type[ValT2],
-    ) -> Data[ValT2, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]: ...
+        self: Base,
+        key: type[AutoIdxT2],
+    ) -> Data[AutoIdxT2, AutoIdx[AutoIdxT2], DxT, ExT, RwxT, CtxT, *CtxTt]: ...
 
     # 15. Key selection, fully rooted
     @overload
@@ -2085,8 +2094,16 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         key: Any,
         input_data: Any,
     ) -> None:
-        """Union two databases, right overriding left."""
+        """Generic setitem."""
         pass
+
+    def __delitem__(self, key: Any) -> None:
+        """Generic delitem."""
+        pass
+
+    def describe(self) -> str:
+        """Describe the data."""
+        raise NotImplementedError()
 
 
 RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)

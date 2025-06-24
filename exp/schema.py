@@ -8,6 +8,7 @@ from typing import Literal
 from py_research.db import (
     Array,
     Attr,
+    AutoIdx,
     Edge,
     Entity,
     Idx,
@@ -36,7 +37,7 @@ class Search(Record[str], TestSchema):
     result_count: Attr[int]
     results: Rel[Project, SearchResult]
 
-    _pk = Key[str](components=[term])
+    _pk = Key(term)
 
 
 type Assignment = Edge["User", "Task"]
@@ -79,10 +80,15 @@ class Project(Record[int]):
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
     org: Link[Organization]
-    tasks: Link[Task] = Link(on=Task.project)
+    tasks: Link[Task, AutoIdx] = Link(on=Task.project)
     members: Rel[User, Membership]
 
-    _pk = Key[int](components=[number])
+    _pk = Key(number)
+
+    @property
+    def all_done(self) -> bool:
+        """Return True if all tasks are done."""
+        return all(task.status == "done" for task in self.tasks)
 
 
 class Organization(Entity):
@@ -91,5 +97,5 @@ class Organization(Entity):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: Link[Project] = Link(on=Project.org)
+    projects: Link[Project, AutoIdx] = Link(on=Project.org)
     countries: Array[str, Idx[int]]

@@ -60,6 +60,8 @@ from py_research.types import UUID4, Not
 from .data import (
     PL,
     SQL,
+    Align,
+    AnyIdx,
     AutoIdx,
     AutoIndexable,
     Base,
@@ -70,12 +72,15 @@ from .data import (
     Data,
     Expand,
     Frame,
+    FullIdx,
     Idx,
     InputData,
     InputFrame,
     Interface,
     KeySelect,
+    KeyT2,
     KeyTt,
+    KeyTt2,
     R,
     Registry,
     Root,
@@ -187,12 +192,77 @@ TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class AttrTuple(Prop[TupT, Idx[()], CruT, RecT, Tab, SQL, CruT]):
+class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
     """Index property for a record type."""
 
     init: bool = False
 
-    components: list[Attr] = field(default_factory=list)
+    @overload
+    def __init__(  # noqa: D107
+        self: Key[tuple[*KeyTt2], RecT2],
+        attrs: Data[tuple[*KeyTt2], AnyIdx[()], Tab, SQL, Any, Interface[RecT2]],
+        alias: str | None = ...,
+        default: tuple[*KeyTt2] | Literal[Not.defined] = ...,
+        default_factory: Callable[[], tuple[*KeyTt2]] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
+    ) -> None: ...
+
+    @overload
+    def __init__(  # noqa: D107
+        self: Key[tuple[KeyT2], RecT2],
+        attrs: Data[KeyT2, AnyIdx[()], Any, SQL, Any, Interface[RecT2]],
+        alias: str | None = ...,
+        default: KeyT2 | Literal[Not.defined] = ...,
+        default_factory: Callable[[], KeyT2] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
+    ) -> None: ...
+
+    @overload
+    def __init__(  # noqa: D107
+        self,
+        attrs: None = ...,
+        alias: str | None = ...,
+        default: Any | Literal[Not.defined] = ...,
+        default_factory: Callable[[], Any] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
+    ) -> None: ...
+
+    def __init__(  # noqa: D107
+        self,
+        attrs: Data[Any, AnyIdx[()], Tab, SQL, Any, Interface] | None = None,
+        alias: str | None = None,
+        default: Any | Literal[Not.defined] = Not.defined,
+        default_factory: Callable[[], Any] | None = None,
+        init: bool = False,
+        repr: bool = True,
+        hash: bool = True,
+        compare: bool = True,
+    ) -> None:
+        if attrs is None:
+            self.attrs = ()
+
+        assert isinstance(attrs, Align)
+        assert has_type(attrs.data, tuple[Attr, ...])
+        self.attrs = attrs.data
+
+        super().__init__(
+            alias=alias,
+            default=default,
+            default_factory=default_factory,
+            init=init,
+            repr=repr,
+            hash=hash,
+            compare=compare,
+        )
 
     def _index(
         self,
@@ -229,6 +299,24 @@ class AttrTuple(Prop[TupT, Idx[()], CruT, RecT, Tab, SQL, CruT]):
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash((self.name, self.context, self.components))
 
+    def __set_name__(self, owner: type, name: str) -> None:
+        """Return the attributes of this key."""
+        if len(self.components) == 0:
+            self.attrs = (
+                Attr(
+                    alias=self.name,
+                    typeref=TypeRef(Attr[Hashable]),
+                    context=Interface(owner),
+                ),
+            )
+            setattr(owner, f"{self.name}_attr", self.attrs[0])
+
+    @property
+    def components(self) -> tuple[Attr[Any, Any, RecT], ...]:
+        """Get the components of this key."""
+        assert len(self.attrs) > 0, "Key must have at least one component."
+        return self.attrs
+
     if TYPE_CHECKING:
 
         @overload
@@ -236,42 +324,6 @@ class AttrTuple(Prop[TupT, Idx[()], CruT, RecT, Tab, SQL, CruT]):
 
         @overload
         def __get__(self, instance: RecT2, owner: type[RecT2]) -> TupT: ...
-
-        @overload
-        def __get__(self, instance: Any, owner: type | None) -> Self: ...
-
-        def __get__(  # noqa: D105 # pyright: ignore[reportIncompatibleMethodOverride]
-            self: Prop, instance: Any, owner: type | None
-        ) -> Any: ...
-
-
-@dataclass(eq=False)
-class Key(AttrTuple[tuple[*KeyTt], Any]):
-    """Index property for a record type."""
-
-    init: bool = False
-
-    def __set_name__(self, owner: type, name: str) -> None:
-        """Return the attributes of this key."""
-        if len(self.components) == 0:
-            self.components = [
-                Attr(
-                    alias=self.name,
-                    typeref=TypeRef(Attr[Hashable]),
-                    context=Interface(owner),
-                ),
-            ]
-            setattr(owner, f"{self.name}_attr", self.components[0])
-
-    if TYPE_CHECKING:
-
-        @overload
-        def __get__(
-            self, instance: None, owner: type[RecT2]
-        ) -> Key[tuple[*KeyTt], RecT2]: ...
-
-        @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> tuple[*KeyTt]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -294,11 +346,7 @@ LnT = TypeVar(
     default=Any,
 )
 
-LnIdxT = TypeVar(
-    "LnIdxT",
-    bound=Idx[()] | AutoIdx,
-    default=Idx[()] | AutoIdx,
-)
+LnIdxT = TypeVar("LnIdxT", bound=FullIdx, default=Idx[()], covariant=True)
 
 
 class Link(
@@ -322,8 +370,16 @@ class Link(
     def __init__[Rec: Record, Rec2: Record](
         self: Link[Rec2, AutoIdx[Rec2], Any, Any, Rec],
         on: (
-            Link[Rec, Idx[()], Any, Any, Rec2] | Set[Link[Rec, Idx[()], Any, Any, Rec2]]
+            Link[Rec, FullIdx[()], Any, Any, Rec2]
+            | Set[Link[Rec, Idx[()], Any, Any, Rec2]]
         ),
+        alias: str | None = ...,
+        default: Rec2 | Literal[Not.defined] = ...,
+        default_factory: Callable[[], Rec2] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
     ) -> None: ...
 
     @overload
@@ -333,12 +389,26 @@ class Link(
             SingleJoinMap[Rec, Rec2]
             | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
         ),
+        alias: str | None = ...,
+        default: Rec2 | Literal[Not.defined] = ...,
+        default_factory: Callable[[], Rec2] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
     ) -> None: ...
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
         self,
         on: None = ...,
+        alias: str | None = ...,
+        default: Rec2 | Literal[Not.defined] = ...,
+        default_factory: Callable[[], Rec2] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
     ) -> None: ...
 
     def __init__(  # noqa: D107
@@ -346,11 +416,27 @@ class Link(
         on: (
             SingleJoinMap
             | SupportsItems[type[Record], SingleJoinMap]
-            | (Link[RecT, Any] | Set[Link[RecT, Any]])
+            | (Link[Record, Any] | Set[Link[Record, Any]])
             | None
         ) = None,
+        alias: str | None = None,
+        default: LnT | Literal[Not.defined] = Not.defined,
+        default_factory: Callable[[], LnT] | None = None,
+        init: bool = True,
+        repr: bool = True,
+        hash: bool = True,
+        compare: bool = True,
     ) -> None:
         self.on = on
+        super().__init__(
+            alias=alias,
+            default=default,
+            default_factory=default_factory,
+            init=init,
+            repr=repr,
+            hash=hash,
+            compare=compare,
+        )
 
     def _index(
         self,
@@ -477,7 +563,14 @@ class Link(
         ) -> Link[LnT, LnIdxT, CruT, RwxT, RecT2]: ...
 
         @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
+        def __get__(
+            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+        ) -> LnT: ...
+
+        @overload
+        def __get__(
+            self, instance: RecT2, owner: type[RecT2]
+        ) -> Data[LnT, LnIdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -542,8 +635,11 @@ class Record(Model, AutoIndexable[*KeyTt]):
                 for col in col_map.keys():
                     setattr(cls, col.name, col)
 
-                pk = Key[cls, *get_args(super_pk.typeargs[ValT])](
-                    components=list(col_map.keys())
+                pk = Key[tuple[*get_args(super_pk.typeargs[ValT])], cls](
+                    cast(
+                        Data[tuple, Any, Tab, SQL],
+                        reduce(Data.__matmul__, col_map.keys()),
+                    )
                 )
                 setattr(cls, pk.name, pk)
 
@@ -620,7 +716,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
     _published: bool = False
     _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
 
-    _pk: Key[*KeyTt] = Key()
+    _pk: Key[tuple[*KeyTt]] = Key()
 
     @cached_prop
     def _table(self) -> Table[Self, Any]:
@@ -1075,14 +1171,15 @@ class Require:
     present: bool = True
 
 
+DbT = TypeVar("DbT", bound=Record, default=Any, contravariant=True)
 BackT = TypeVar("BackT", bound=LiteralString | None, default=None)
 
 
 @dataclass(eq=False)
 class DataBase(
     Data[Record, Idx[*tuple[Any, ...]], Tabs, SQL, RwxT, Base[Record, RwxT]],
-    Base[Record, RwxT],
-    Generic[BackT, RwxT],
+    Base[DbT, RwxT],
+    Generic[BackT, RwxT, DbT],
 ):
     """Database connection."""
 

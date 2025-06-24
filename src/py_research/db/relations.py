@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from functools import reduce
 from inspect import getmodule
 from types import UnionType
 from typing import (
@@ -33,6 +34,7 @@ from .data import (
     Data,
     Expand,
     ExT,
+    FullIdx,
     Idx,
     Interface,
     KeyT,
@@ -105,7 +107,7 @@ class Entity(Record[UUID4]):
     """Record type with a default UUID4 primary key."""
 
     _template = True
-    _pk: Key[UUID4] = Key(default_factory=lambda: (UUID4(uuid4()),))
+    _pk = Key[tuple[UUID4]](default_factory=lambda: (UUID4(uuid4()),))
 
 
 TgtT = TypeVar("TgtT", bound="Record", covariant=True, default=Any)
@@ -119,21 +121,27 @@ class Edge(Record[str, str], Generic[RecT, TgtT]):
     _from: Link[RecT] = Link()
     _to: Link[RecT] = Link()
 
-    _pk: Key[str, str] = Key(
-        components=[
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
+    _pk = Key[tuple[str, str]](
+        cast(
+            Data[tuple, Any, Tab, SQL],
+            reduce(
+                Data.__matmul__,
+                [
+                    *(
+                        a
+                        for fk_map in _from.join_maps.values()
+                        for a in fk_map.keys()
+                        if isinstance(a, Attr)
+                    ),
+                    *(
+                        a
+                        for fk_map in _to.join_maps.values()
+                        for a in fk_map.keys()
+                        if isinstance(a, Attr)
+                    ),
+                ],
             ),
-            *(
-                a
-                for fk_map in _to.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-        ]
+        )
     )
 
 
@@ -146,32 +154,39 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
     _to: Link[RecT] = Link()
     _rel_idx: Attr[KeyT] = Attr()
 
-    _pk: Key[str, str, KeyT] = Key(
-        components=[
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
+    _pk = Key[tuple[str, str, KeyT]](
+        cast(
+            Data[tuple, Any, Tab, SQL],
+            reduce(
+                Data.__matmul__,
+                [
+                    *(
+                        a
+                        for fk_map in _from.join_maps.values()
+                        for a in fk_map.keys()
+                        if isinstance(a, Attr)
+                    ),
+                    *(
+                        a
+                        for fk_map in _to.join_maps.values()
+                        for a in fk_map.keys()
+                        if isinstance(a, Attr)
+                    ),
+                    _rel_idx,
+                ],
             ),
-            *(
-                a
-                for fk_map in _to.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
-            ),
-            _rel_idx,
-        ]
+        )
     )
 
 
+RelIdxT = TypeVar("RelIdxT", bound=FullIdx, default=FullIdx[Any, *tuple[Any, ...]])
 EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
 
 
 @dataclass(kw_only=True, eq=False)
 class Rel(
-    Prop[LnT, IdxT, CruT, RecT, Tab, SQL, RwxT],
-    Generic[LnT, EdgeT, IdxT, CruT, RwxT, TgtT, RecT],
+    Prop[LnT, RelIdxT, CruT, RecT, Tab, SQL, RwxT],
+    Generic[LnT, EdgeT, RelIdxT, CruT, RwxT, RecT],
 ):
     """Backlink record set."""
 
@@ -204,15 +219,17 @@ class Rel(
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Rel[LnT, EdgeT, IdxT, CruT, RwxT, TgtT, RecT2]: ...
+        ) -> Rel[LnT, EdgeT, IdxT, CruT, RwxT, RecT2]: ...
 
         @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> LnT: ...
+        def __get__(
+            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+        ) -> LnT: ...
 
         @overload
         def __get__(
             self, instance: RecT2, owner: type[RecT2]
-        ) -> Data[ValT, IdxT, Tab, ExT, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+        ) -> Data[LnT, RelIdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -232,16 +249,22 @@ class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
     _idx: Attr[KeyT] = Attr()
     _val: Attr[ValT]
 
-    _pk: Key[*tuple[Any, ...], KeyT] = Key(
-        components=[
-            *(
-                a
-                for fk_map in _from.join_maps.values()
-                for a in fk_map.keys()
-                if isinstance(a, Attr)
+    _pk = Key[tuple[*tuple[Any, ...], KeyT]](
+        cast(
+            Data[tuple, Any, Tab, SQL],
+            reduce(
+                Data.__matmul__,
+                [
+                    *(
+                        a
+                        for fk_map in _from.join_maps.values()
+                        for a in fk_map.keys()
+                        if isinstance(a, Attr)
+                    ),
+                    _idx,
+                ],
             ),
-            _idx,
-        ]
+        )
     )
 
 
@@ -307,12 +330,14 @@ class Array(
         ) -> Array[ValT, IdxT, CruT, RwxT, RecT2]: ...
 
         @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
+        def __get__(
+            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+        ) -> ValT: ...
 
         @overload
         def __get__(
             self, instance: RecT2, owner: type[RecT2]
-        ) -> Data[ValT, IdxT, Tab, ExT, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+        ) -> Data[ValT, IdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
