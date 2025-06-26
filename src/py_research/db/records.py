@@ -47,15 +47,8 @@ from xlsxwriter import Workbook as ExcelWorkbook
 from py_research.caching import cached_method, cached_prop
 from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash, gen_str_hash
-from py_research.reflect.types import (
-    SingleTypeDef,
-    SupportsItems,
-    TypeRef,
-    get_common_type,
-    has_type,
-    is_subtype,
-)
-from py_research.types import UUID4, Not
+from py_research.reflect.types import SingleTypeDef, TypeRef, has_type, is_subtype
+from py_research.types import UUID4, Not, SupportsItems
 
 from .data import (
     PL,
@@ -94,7 +87,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import CruT, IdxT2, Model, ModelMeta, Prop
+from .models import CruT, IdxT2, Model, ModelMeta, OwnT, OwnT2, Prop
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -111,8 +104,8 @@ RecT2 = TypeVar("RecT2", bound="Record")
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], CruT, RecT, Col, SQL, CruT],
-    Generic[ValT, CruT, RecT],
+    Prop[ValT, Idx[()], CruT, OwnT, Col, SQL, CruT],
+    Generic[ValT, CruT, OwnT],
 ):
     """Single-value attribute or column.
 
@@ -133,14 +126,14 @@ class Attr(
             is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
         )
 
-    def _getter(self, instance: RecT) -> ValT | Literal[Not.resolved]:
+    def _getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
         """Get the value of this attribute on an instance."""
         if self.name not in instance.__dict__:
             return Not.resolved
 
         return instance.__dict__[self.name]
 
-    def _setter(self: Attr[ValT2], instance: RecT, value: ValT2) -> None:
+    def _setter(self: Attr[ValT2], instance: OwnT, value: ValT2) -> None:
         """Set the value of this attribute on an instance."""
         instance.__dict__[self.name] = value
 
@@ -174,11 +167,11 @@ class Attr(
 
         @overload
         def __get__(
-            self, instance: None, owner: type[RecT2]
-        ) -> Attr[ValT, CruT, RecT2]: ...
+            self, instance: None, owner: type[OwnT2]
+        ) -> Attr[ValT, CruT, OwnT2]: ...
 
         @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> ValT: ...
+        def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> ValT: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -192,15 +185,15 @@ TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
+class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     """Index property for a record type."""
 
     init: bool = False
 
     @overload
     def __init__(  # noqa: D107
-        self: Key[tuple[*KeyTt2], RecT2],
-        attrs: Data[tuple[*KeyTt2], AnyIdx[()], Tab, SQL, Any, Interface[RecT2]],
+        self: Key[tuple[*KeyTt2], OwnT2],
+        attrs: Data[tuple[*KeyTt2], AnyIdx[()], Tab, SQL, Any, Interface[OwnT2]],
         alias: str | None = ...,
         default: tuple[*KeyTt2] | Literal[Not.defined] = ...,
         default_factory: Callable[[], tuple[*KeyTt2]] | None = ...,
@@ -208,12 +201,13 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     @overload
     def __init__(  # noqa: D107
-        self: Key[tuple[KeyT2], RecT2],
-        attrs: Data[KeyT2, AnyIdx[()], Any, SQL, Any, Interface[RecT2]],
+        self: Key[tuple[KeyT2], OwnT2],
+        attrs: Data[KeyT2, AnyIdx[()], Any, SQL, Any, Interface[OwnT2]],
         alias: str | None = ...,
         default: KeyT2 | Literal[Not.defined] = ...,
         default_factory: Callable[[], KeyT2] | None = ...,
@@ -221,6 +215,7 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     @overload
@@ -234,6 +229,7 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     def __init__(  # noqa: D107
@@ -246,13 +242,15 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
         repr: bool = True,
         hash: bool = True,
         compare: bool = True,
+        _owner_map: dict[type, Prop] | None = None,
+        **kwds: Any,
     ) -> None:
         if attrs is None:
             self.attrs = ()
-
-        assert isinstance(attrs, Align)
-        assert has_type(attrs.data, tuple[Attr, ...])
-        self.attrs = attrs.data
+        else:
+            assert isinstance(attrs, Align)
+            assert has_type(attrs.data, tuple[Attr, ...])
+            self.attrs = attrs.data
 
         super().__init__(
             alias=alias,
@@ -262,6 +260,8 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
             repr=repr,
             hash=hash,
             compare=compare,
+            _owner_map=_owner_map or {},  # pyright: ignore[reportArgumentType]
+            **kwds,
         )
 
     def _index(
@@ -291,7 +291,7 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
         assert len(val) == len(idx_names)
         return {idx_name: idx_val for idx_name, idx_val in zip(idx_names, val)}
 
-    def _getter(self, instance: RecT) -> TupT | Literal[Not.resolved]:
+    def _getter(self, instance: OwnT) -> TupT | Literal[Not.resolved]:
         """Get the value of this attribute tuple."""
         val = tuple(attr.__get__(instance, type(instance)) for attr in self.components)
         return cast(TupT, val[0] if len(val) == 1 else val)
@@ -299,20 +299,21 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash((self.name, self.context, self.components))
 
-    def __set_name__(self, owner: type, name: str) -> None:
+    def __set_name__(self, owner: type[OwnT], name: str) -> None:
         """Return the attributes of this key."""
-        if len(self.components) == 0:
+        super().__set_name__(owner, name)
+        if not owner._template and len(self.attrs) == 0:
             self.attrs = (
                 Attr(
-                    alias=self.name,
-                    typeref=TypeRef(Attr[Hashable]),
+                    typeref=TypeRef(Attr[self.value_typeref.common_type]),
                     context=Interface(owner),
                 ),
             )
-            setattr(owner, f"{self.name}_attr", self.attrs[0])
+            setattr(owner, name := f"{self.name}_attr", self.attrs[0])
+            self.attrs[0].__set_name__(owner, name)
 
     @property
-    def components(self) -> tuple[Attr[Any, Any, RecT], ...]:
+    def components(self) -> tuple[Attr[Any, Any, OwnT], ...]:
         """Get the components of this key."""
         assert len(self.attrs) > 0, "Key must have at least one component."
         return self.attrs
@@ -320,10 +321,10 @@ class Key(Prop[TupT, Idx[()], R, RecT, Tab, SQL, R]):
     if TYPE_CHECKING:
 
         @overload
-        def __get__(self, instance: None, owner: type[RecT2]) -> Key[TupT, RecT2]: ...
+        def __get__(self, instance: None, owner: type[OwnT2]) -> Key[TupT, OwnT2]: ...
 
         @overload
-        def __get__(self, instance: RecT2, owner: type[RecT2]) -> TupT: ...
+        def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> TupT: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -342,7 +343,7 @@ type SingleJoinMap[Rec: Record, Rec2: Record] = (
 
 LnT = TypeVar(
     "LnT",
-    bound="Record | Mapping[Hashable, Record] | Iterable[Record] | None",
+    bound="Record",
     default=Any,
 )
 
@@ -373,6 +374,7 @@ class Link(
             Link[Rec, FullIdx[()], Any, Any, Rec2]
             | Set[Link[Rec, Idx[()], Any, Any, Rec2]]
         ),
+        incoming: bool = ...,
         alias: str | None = ...,
         default: Rec2 | Literal[Not.defined] = ...,
         default_factory: Callable[[], Rec2] | None = ...,
@@ -380,6 +382,25 @@ class Link(
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
+    ) -> None: ...
+
+    @overload
+    def __init__[Rec: Record, Rec2: Record](
+        self: Link[Rec2, Idx[()], Any, Any, Rec],
+        on: (
+            SingleJoinMap[Rec2, Rec]
+            | SupportsItems[type[Record], SingleJoinMap[Rec2, Rec]]
+        ),
+        incoming: Literal[True],
+        alias: str | None = ...,
+        default: Rec2 | Literal[Not.defined] = ...,
+        default_factory: Callable[[], Rec2] | None = ...,
+        init: bool = ...,
+        repr: bool = ...,
+        hash: bool = ...,
+        compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     @overload
@@ -389,6 +410,7 @@ class Link(
             SingleJoinMap[Rec, Rec2]
             | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
         ),
+        incoming: Literal[False] = ...,
         alias: str | None = ...,
         default: Rec2 | Literal[Not.defined] = ...,
         default_factory: Callable[[], Rec2] | None = ...,
@@ -396,12 +418,14 @@ class Link(
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
         self,
         on: None = ...,
+        incoming: Literal[False] = ...,
         alias: str | None = ...,
         default: Rec2 | Literal[Not.defined] = ...,
         default_factory: Callable[[], Rec2] | None = ...,
@@ -409,6 +433,7 @@ class Link(
         repr: bool = ...,
         hash: bool = ...,
         compare: bool = ...,
+        _owner_map: dict[type, Prop] | None = ...,
     ) -> None: ...
 
     def __init__(  # noqa: D107
@@ -419,6 +444,7 @@ class Link(
             | (Link[Record, Any] | Set[Link[Record, Any]])
             | None
         ) = None,
+        incoming: bool = False,
         alias: str | None = None,
         default: LnT | Literal[Not.defined] = Not.defined,
         default_factory: Callable[[], LnT] | None = None,
@@ -426,8 +452,11 @@ class Link(
         repr: bool = True,
         hash: bool = True,
         compare: bool = True,
+        _owner_map: dict[type, Prop] | None = None,
+        **kwds: Any,
     ) -> None:
         self.on = on
+        self.incoming = incoming or isinstance(on, Link | Set)
         super().__init__(
             alias=alias,
             default=default,
@@ -436,7 +465,23 @@ class Link(
             repr=repr,
             hash=hash,
             compare=compare,
+            _owner_map=_owner_map or {},  # pyright: ignore[reportArgumentType]
+            **kwds,
         )
+
+    def __set_name__(self, owner: type[RecT], name: str) -> None:
+        """Return the attributes of this key."""
+        super().__set_name__(owner, name)
+        if not owner._template and not self.incoming and self.on is None:
+            fks = {
+                k.name: k
+                for join_map in self.join_maps.values()
+                for k in join_map.keys()
+                if k.owner is not None and issubclass(owner, k.owner)
+            }
+            for name, fk in fks.items():
+                setattr(owner, fk_name := f"{self.name}_fk_{name}", fk)
+                fk.__set_name__(owner, fk_name)
 
     def _index(
         self,
@@ -461,7 +506,9 @@ class Link(
     @cached_prop
     def join_maps(self) -> Mapping[type[Record], SupportsItems[Prop, Attr]]:
         """Return the foreign key for this link."""
-        if self.on is None:
+        on = self.on
+
+        if on is None:
             return {
                 rec_type: {
                     Attr(
@@ -470,14 +517,25 @@ class Link(
                     ): pk
                     for pk in rec_type._primary_key().components
                 }
-                for rec_type in self.value_type_set
+                for rec_type in self.value_typeref.typeset
                 if issubclass(rec_type, Record)
             }
 
-        if has_type(self.on, SingleJoinMap):
-            rec_type = self.common_value_type
+        if has_type(on, SingleJoinMap):
+            rec_type = self.value_typeref.common_type
             assert issubclass(rec_type, Record)
-            self.on = {rec_type: self.on}
+            on = {rec_type: on}
+
+        if isinstance(on, Link):
+            on = {on}
+
+        if has_type(on, Set[Link]):
+            assert self.owner is not None
+            on = {
+                link.owner: link.get_full_join_map(self.owner)
+                for link in on
+                if link.owner is not None
+            }
 
         assert has_type(self.on, Mapping[type[Record], SingleJoinMap])
 
@@ -510,7 +568,9 @@ class Link(
             }
         )
 
-    def get_join_map(self, rec_type: type[LnT | RecT]) -> SupportsItems[Prop, Prop]:
+    def get_full_join_map(
+        self, rec_type: type[LnT | RecT]
+    ) -> SupportsItems[Prop, Prop]:
         """Get the join map for a specific record type."""
         matching = [
             join_map
@@ -525,7 +585,7 @@ class Link(
 
     def source_prop_map(self, src_rec: RecT) -> dict[str, Any]:
         """Extract the props on the source record required for this link, if any."""
-        join_map = self.get_join_map(type(src_rec))
+        join_map = self.get_full_join_map(type(src_rec))
         idx_names = [attr.name for attr in join_map.keys()]
 
         val_idx = src_rec._pk
@@ -537,7 +597,7 @@ class Link(
         """Extract the props on the target record required for this link, if any."""
         assert isinstance(tgt_rec, Record)
 
-        join_map = self.get_join_map(type(tgt_rec))
+        join_map = self.get_full_join_map(type(tgt_rec))
         idx_names = [attr.name for attr in join_map.keys()]
 
         val_idx = tgt_rec._pk
@@ -548,12 +608,7 @@ class Link(
     @property
     def init_level(self) -> int:
         """Get the init level of this link depending on foreign key locations."""
-        src_jm = list(self.get_join_map(get_common_type(self.typeargs[RecT])).items())
-        tgt_jm = list(self.get_join_map(get_common_type(self.typeargs[LnT])).items())
-
-        return (
-            0 if len(src_jm) > 0 and len(tgt_jm) > 0 else -1 if len(src_jm) > 0 else 1
-        )
+        return 1 if self.incoming else -1
 
     if TYPE_CHECKING:
 
@@ -596,7 +651,7 @@ def records_to_df(
         df_data,
         schema=get_pl_schema(
             {
-                attr.name: attr.common_value_type
+                attr.name: attr.value_typeref.common_type
                 for rec in model_types
                 for attr in rec._attrs().values()
             }
@@ -604,10 +659,10 @@ def records_to_df(
     )
 
 
-class Record(Model, AutoIndexable[*KeyTt]):
+class Record(Model, Generic[*KeyTt]):
     """Schema for a table in a database."""
 
-    _root_class = True
+    _template = True
 
     _table_name: ClassVar[str] | None = None
     _type_map: ClassVar[dict[type, sqla.types.TypeEngine]] = {
@@ -634,6 +689,7 @@ class Record(Model, AutoIndexable[*KeyTt]):
                 }
                 for col in col_map.keys():
                     setattr(cls, col.name, col)
+                    col.__set_name__(cls, col.name)
 
                 pk = Key[tuple[*get_args(super_pk.typeargs[ValT])], cls](
                     cast(
@@ -642,9 +698,17 @@ class Record(Model, AutoIndexable[*KeyTt]):
                     )
                 )
                 setattr(cls, pk.name, pk)
+                pk.__set_name__(cls, pk.name)
 
                 ln = Link[superclass, Idx[()], Any, Any, cls](on=col_map)
                 setattr(cls, ln.name, ln)
+                ln.__set_name__(cls, ln.name)
+
+    @classmethod
+    def _index_components(cls) -> tuple[Data[Any, Any, Col, SQL, R, Interface], ...]:
+        """Get SQL columns for this auto-indexed type."""
+        """Return the components of the index for this record type."""
+        return cls._primary_key().components
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -1039,7 +1103,7 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
 
         rec_list = list(
             sorted(
-                self.value_type_set,
+                self.value_typeref.typeset,
                 key=cmp_to_key(
                     lambda x, y: (
                         -1 if issubclass(y, x) else 1 if issubclass(x, y) else 0
@@ -1506,10 +1570,10 @@ class DataBase(
             attr: sqla.Column(
                 attr.name,
                 registry._resolve_type(
-                    attr.value_typeform  # pyright: ignore[reportArgumentType]
+                    attr.value_typeref  # pyright: ignore[reportArgumentType]
                 ),
                 autoincrement=False,
-                nullable=has_type(None, attr.value_typeform),
+                nullable=has_type(None, attr.value_typeref.typeform),
             )
             for attr in rec_type._attrs().values()
         }
@@ -1539,7 +1603,7 @@ class DataBase(
         fks: dict[Link, sqla.ForeignKeyConstraint] = {}
 
         for link in rec_type._links().values():
-            target_type = cast(type[Record], link.common_value_type)
+            target_type = cast(type[Record], link.value_typeref.common_type)
             target_table = self._get_base_table(target_type)
 
             fks[link] = sqla.ForeignKeyConstraint(

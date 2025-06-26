@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from py_research.reflect.types import (
     SingleTypeDef,
-    get_common_type,
+    TypeRef,
     is_subtype,
     typedef_to_typeset,
 )
@@ -38,9 +38,9 @@ def get_storage_driver[U, T](
 def get_storage_types(src_type: SingleTypeDef | UnionType) -> StorageTypes:
     """Get the storage types for a given type."""
     if is_subtype(src_type, Storable):
-        return get_common_type(
+        return TypeRef(
             src_type
-        ).__storage_types__()  # pyright: ignore[reportAbstractUsage]
+        ).common_type.__storage_types__()  # pyright: ignore[reportAbstractUsage]
 
     driver = get_storage_driver(src_type, {object})
     if driver is not None:

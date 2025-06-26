@@ -12,7 +12,12 @@ import polars as pl
 from typing_extensions import TypeVar
 
 from py_research.caching import cached_method
-from py_research.reflect.types import SingleTypeDef, get_typevar_map, is_subtype
+from py_research.reflect.types import (
+    SingleTypeDef,
+    TypeRef,
+    get_typevar_map,
+    is_subtype,
+)
 
 T = TypeVar("T", contravariant=True)
 T2 = TypeVar("T2")
@@ -117,7 +122,7 @@ class StorageDriver(ABC, Generic[V, T, B]):
 
     @cached_method
     @classmethod
-    def typeargs(cls) -> dict[TypeVar, SingleTypeDef | UnionType]:
+    def typeargs(cls) -> dict[TypeVar, TypeRef]:
         """Return the type arguments for this converter."""
         return get_typevar_map(cls)
 
@@ -127,20 +132,20 @@ class StorageDriver(ABC, Generic[V, T, B]):
         """Return the type of object this converter handles."""
         t = cls.typeargs()[V]
         assert not isinstance(t, UnionType), "U must not be a Union type"
-        return t
+        return t.single_typedef
 
     @classmethod
     @cached_method
     def storage_types(cls) -> StorageTypes[T]:
         """Return the set of types that this class can convert to/from."""
-        t = cls.typeargs()[T]
+        t = cls.typeargs()[T].typeform
 
         targets = get_args(t) if isinstance(t, UnionType) else (t,)
 
         return StorageTypes(targets)
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def load(
         cls: type[StorageDriver[V2, Any]],
         source: T,
@@ -150,8 +155,8 @@ class StorageDriver(ABC, Generic[V, T, B]):
         """Parse from the source type or format."""
         ...
 
-    @abstractmethod
     @classmethod
+    @abstractmethod
     def store(
         cls,
         instance: V,

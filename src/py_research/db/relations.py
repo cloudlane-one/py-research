@@ -24,7 +24,7 @@ from typing_extensions import TypeVar
 
 from py_research.caching import cached_prop
 from py_research.hashing import gen_str_hash
-from py_research.reflect.types import SingleTypeDef, get_common_type, is_subtype
+from py_research.reflect.types import SingleTypeDef, is_subtype
 from py_research.types import UUID4
 
 from .data import (
@@ -79,7 +79,7 @@ class Ref(
             return self.converter(values)
 
         if (
-            issubclass(data.common_value_type, self.common_prop_type)
+            issubclass(data.value_typeref.common_type, self.common_prop_type)
             and data.index() is None
         ):
             return cast(ValT, values[0])
@@ -121,28 +121,31 @@ class Edge(Record[str, str], Generic[RecT, TgtT]):
     _from: Link[RecT] = Link()
     _to: Link[RecT] = Link()
 
-    _pk = Key[tuple[str, str]](
-        cast(
-            Data[tuple, Any, Tab, SQL],
-            reduce(
-                Data.__matmul__,
-                [
-                    *(
-                        a
-                        for fk_map in _from.join_maps.values()
-                        for a in fk_map.keys()
-                        if isinstance(a, Attr)
-                    ),
-                    *(
-                        a
-                        for fk_map in _to.join_maps.values()
-                        for a in fk_map.keys()
-                        if isinstance(a, Attr)
-                    ),
-                ],
-            ),
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
+        super().__init_subclass__(**kwargs)
+
+        cls._pk = Key[tuple[str, str]](
+            cast(
+                Data[tuple, Any, Tab, SQL],
+                reduce(
+                    Data.__matmul__,
+                    [
+                        *(
+                            a
+                            for fk_map in cls._from.join_maps.values()
+                            for a in fk_map.keys()
+                            if isinstance(a, Attr)
+                        ),
+                        *(
+                            a
+                            for fk_map in cls._to.join_maps.values()
+                            for a in fk_map.keys()
+                            if isinstance(a, Attr)
+                        ),
+                    ],
+                ),
+            )
         )
-    )
 
 
 class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
@@ -154,29 +157,32 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
     _to: Link[RecT] = Link()
     _rel_idx: Attr[KeyT] = Attr()
 
-    _pk = Key[tuple[str, str, KeyT]](
-        cast(
-            Data[tuple, Any, Tab, SQL],
-            reduce(
-                Data.__matmul__,
-                [
-                    *(
-                        a
-                        for fk_map in _from.join_maps.values()
-                        for a in fk_map.keys()
-                        if isinstance(a, Attr)
-                    ),
-                    *(
-                        a
-                        for fk_map in _to.join_maps.values()
-                        for a in fk_map.keys()
-                        if isinstance(a, Attr)
-                    ),
-                    _rel_idx,
-                ],
-            ),
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
+        super().__init_subclass__(**kwargs)
+
+        cls._pk = Key[tuple[str, str, KeyT]](
+            cast(
+                Data[tuple, Any, Tab, SQL],
+                reduce(
+                    Data.__matmul__,
+                    [
+                        *(
+                            a
+                            for fk_map in cls._from.join_maps.values()
+                            for a in fk_map.keys()
+                            if isinstance(a, Attr)
+                        ),
+                        *(
+                            a
+                            for fk_map in cls._to.join_maps.values()
+                            for a in fk_map.keys()
+                            if isinstance(a, Attr)
+                        ),
+                        cls._rel_idx,
+                    ],
+                ),
+            )
         )
-    )
 
 
 RelIdxT = TypeVar("RelIdxT", bound=FullIdx, default=FullIdx[Any, *tuple[Any, ...]])
@@ -212,7 +218,7 @@ class Rel(
         self,
     ) -> type[EdgeT]:
         """Return the type of the edge record."""
-        return get_common_type(self.typeargs[EdgeT])
+        return self.typeref.args[EdgeT].common_type
 
     if TYPE_CHECKING:
 
@@ -249,23 +255,26 @@ class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
     _idx: Attr[KeyT] = Attr()
     _val: Attr[ValT]
 
-    _pk = Key[tuple[*tuple[Any, ...], KeyT]](
-        cast(
-            Data[tuple, Any, Tab, SQL],
-            reduce(
-                Data.__matmul__,
-                [
-                    *(
-                        a
-                        for fk_map in _from.join_maps.values()
-                        for a in fk_map.keys()
-                        if isinstance(a, Attr)
-                    ),
-                    _idx,
-                ],
-            ),
+    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
+        super().__init_subclass__(**kwargs)
+
+        cls._pk = Key[tuple[*tuple[Any, ...], KeyT]](
+            cast(
+                Data[tuple, Any, Tab, SQL],
+                reduce(
+                    Data.__matmul__,
+                    [
+                        *(
+                            a
+                            for fk_map in cls._from.join_maps.values()
+                            for a in fk_map.keys()
+                            if isinstance(a, Attr)
+                        ),
+                        cls._idx,
+                    ],
+                ),
+            )
         )
-    )
 
 
 _item_classes: dict[str, type[Item]] = {}
@@ -299,7 +308,7 @@ class Array(
     @cached_prop
     def key_type(self) -> type:
         """Return the dynamic key type for this array."""
-        idx_type = self.typeargs[KeyT]
+        idx_type = self.typeref.args[KeyT].args
         key_tuple = get_args(idx_type)
         return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
 
@@ -312,7 +321,7 @@ class Array(
         rec = _item_classes.get(
             base_array_fqn,
             dynamic_record_type(
-                Item[self.common_value_type, self.key_type, self.owner],
+                Item[self.value_typeref.common_type, self.key_type, self.owner],
                 f"{self.owner.__name__}.{self.name}",
                 src_module=self.owner._src_mod or getmodule(self.owner),
                 extra_attrs={"_array": self},

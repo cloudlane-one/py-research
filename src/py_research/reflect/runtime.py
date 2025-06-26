@@ -5,7 +5,7 @@ from collections.abc import Callable, Sequence
 from types import ModuleType, UnionType
 from typing import Any, TypeVar
 
-from .types import SingleTypeDef
+from py_research.types import SingleTypeDef
 
 T = TypeVar("T")
 

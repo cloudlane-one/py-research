@@ -23,8 +23,9 @@ from py_research.data import copy_and_override
 from py_research.db.data import SQL, Data, Filter, FullIdx, Interface
 from py_research.db.models import Prop
 from py_research.hashing import gen_int_hash, gen_str_hash
-from py_research.reflect.types import SupportsItems, has_type
+from py_research.reflect.types import has_type
 from py_research.telemetry import tqdm
+from py_research.types import SupportsItems
 
 from .records import Attr, DataBase, Link, Record, Table
 
@@ -517,7 +518,10 @@ class RecMap[Rec: Record](DataMap[Any, Rec]):
             **{
                 tgt: (
                     copy_and_override(
-                        Pull, sel, sel=sel.sel, _target_type=tgt.common_value_type
+                        Pull,
+                        sel,
+                        sel=sel.sel,
+                        _target_type=tgt.value_typeref.common_type,
                     )
                     if isinstance(sel, Pull)
                     else DataSelect.parse(sel)
@@ -716,7 +720,7 @@ class Push[Val, Rec: Record](DataMap[Any, Val]):
     @property
     def target_type(self) -> type[Rec]:
         """Get the target type."""
-        return cast(type[Rec], self.target.common_value_type)
+        return cast(type[Rec], self.target.value_typeref.common_type)
 
 
 @dataclass(kw_only=True, eq=False)

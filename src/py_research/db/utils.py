@@ -23,7 +23,7 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from py_research.reflect.types import SingleTypeDef, get_common_type
+from py_research.reflect.types import SingleTypeDef, TypeRef
 from py_research.types import UUID4
 
 pl_type_map: dict[
@@ -80,13 +80,14 @@ def get_pl_schema(
 ) -> dict[str, pl.DataType | type | None]:
     """Return the schema of the dataset."""
     exact_matches = {
-        name: (pl_type_map.get(get_common_type(typ)), typ) for name, typ in cols.items()
+        name: (pl_type_map.get(TypeRef(typ).common_type), typ)
+        for name, typ in cols.items()
     }
     matches = {
         name: (
-            (match, get_common_type(typ))
+            (match, TypeRef(typ).common_type)
             if match is not None
-            else (pl_type_map.get(get_common_type(typ)), typ)
+            else (pl_type_map.get(TypeRef(typ).common_type), typ)
         )
         for name, (match, typ) in exact_matches.items()
     }

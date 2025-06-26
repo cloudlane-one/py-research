@@ -41,16 +41,13 @@ from py_research.reflect.types import (
     GenericAlias,
     SingleTypeDef,
     TypeRef,
-    get_base_type,
-    get_common_type,
     get_typevar_map,
-    hint_to_typedef,
     is_subtype,
 )
 from py_research.storage import get_storage_types
 from py_research.storage.common import JSONDict, JSONFile
 from py_research.storage.storables import Realm, Storable, StorageTypes
-from py_research.types import DataclassInstance, Not
+from py_research.types import Not
 
 from .data import (
     PL,
@@ -70,7 +67,6 @@ from .data import (
     Idx,
     Interface,
     KeyTt2,
-    Node,
     R,
     Root,
     RwxT,
@@ -128,8 +124,8 @@ class Prop(
             s
             for s in subclasses
             if s._type_matcher(
-                val_type=typevars[ValT],
-                index_type=typevars[IdxT],
+                val_type=typevars[ValT].typeform,
+                index_type=typevars[IdxT].typeform,
                 owner_type=owner,
             )
         ]
@@ -139,8 +135,8 @@ class Prop(
 
         return matching[0]
 
-    context: Interface[OwnT] | Data[Any, Any, Any, Any, Any, Interface[OwnT]] = (
-        Interface()
+    context: Interface[OwnT] | Data[Any, Any, Any, Any, Any, Interface[OwnT]] = field(
+        default_factory=Interface
     )
 
     alias: str | None = None
@@ -179,12 +175,7 @@ class Prop(
     @cached_prop
     def common_prop_type(self) -> type[ValT]:
         """Get the common type of this property."""
-        return cast(
-            type[ValT],
-            get_common_type(
-                self.typeref.typeform if self.typeref is not None else type(self)
-            ),
-        )
+        return cast(type[ValT], self.typeref.common_type)
 
     def __set_name__(self, owner: type[OwnT], name: str) -> None:  # noqa: D105
         if self.alias is None:
@@ -195,8 +186,7 @@ class Prop(
 
             self.typeref = copy_and_override(
                 TypeRef,
-                self.typeref or TypeRef(object),
-                hint=get_annotations(owner)[self.name],
+                self.typeref or TypeRef(get_annotations(owner).get(name, object)),
             )
 
     @property
@@ -212,7 +202,7 @@ class Prop(
     @property
     def owner(self: Prop[Any, Any, Any, OwnT2]) -> type[OwnT2] | None:
         """Owner of the property."""
-        owner = cast(type[OwnT2], self.typeargs[OwnT])
+        owner = cast(type[OwnT2], self.typeref.args[OwnT].common_type)
         return owner if owner is not Any else None
 
     @staticmethod
@@ -227,7 +217,7 @@ class Prop(
             prop.typeref or TypeRef(),
             var_map=dict(prop.typeref.var_map if prop.typeref is not None else {})
             | get_typevar_map(owner)
-            | {OwnT: owner},
+            | {OwnT: TypeRef(owner)},
         )
 
     @overload
@@ -388,11 +378,6 @@ class ModelMeta(type):
         if "_src_mod" not in dct:
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
-        # Copy all supplied data instances to get independent objects.
-        for prop_name, prop in cls.__dict__.items():
-            if isinstance(prop, Prop):
-                setattr(cls, prop_name, copy(prop))
-
         cls.__class_props = None
         cls._get_class_props()
 
@@ -414,21 +399,22 @@ class ModelMeta(type):
         props = {}
         typevar_map = get_typevar_map(cls)
 
-        for name, anno in get_annotations(cls).items():
+        for name, hint in get_annotations(cls).items():
             if name not in cls.__dict__:
-                typedef = hint_to_typedef(anno)
-                assert not isinstance(typedef, UnionType)
+                prop_type: type[Prop] | None = TypeRef(hint).base_type(bound=Prop)
 
-                prop_type = get_base_type(typedef, bound=Prop)
+                if prop_type is None:
+                    continue
 
-                default_type = prop_type._get_default_class(typedef, cls)
-                if default_type is not None and is_subtype(default_type, typedef):
+                default_type = Prop._get_default_class(prop_type, cls)
+                if default_type is not None and is_subtype(default_type, prop_type):
                     prop_type = cast(type, default_type)
 
                 prop = prop_type()
 
                 props[name] = prop
                 setattr(cls, name, prop)
+                prop.__set_name__(cls, name)
 
         for c in cls._super_types:
             # Get proper origin class of generic supertype.
@@ -453,6 +439,7 @@ class ModelMeta(type):
                     if prop_name not in props:
                         prop = copy(super_prop)
                         setattr(cls, prop_name, prop)
+                        prop.__set_name__(cls, prop_name)
                         orig_props[prop_name] = prop
 
                 props = {**orig_props, **props}  # Prepend template props.
@@ -503,7 +490,9 @@ class Memory(Root["Model"]):
 class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
     """Local, in-memory singleton model instance."""
 
-    context: Memory | Data[Any, Any, Any, Any, Any, Memory] = Memory()
+    context: Memory | Data[Any, Any, Any, Any, Any, Memory] = field(
+        default_factory=Memory
+    )
     model: ModT
 
     def _id(self) -> str:
@@ -530,9 +519,6 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
     eq_default=False,
 )
 class Model(
-    DataclassInstance,
-    Storable[JSONDict | JSONFile | Dir],
-    Node,
     metaclass=ModelMeta,
 ):
     """Schema for a record in a database."""
@@ -542,6 +528,7 @@ class Model(
     _root_class: ClassVar[bool] = True
     _fqn: ClassVar[str] = "dbase.Model"
 
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
     __pydantic_model: ClassVar[type[BaseModel]] | None = None
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
@@ -578,7 +565,7 @@ class Model(
         """Return the schema of the dataset."""
         return get_pl_schema(
             {
-                name: prop.common_value_type
+                name: prop.value_typeref.common_type
                 for name, prop in cls._props.items()
                 if prop._getter is not None
             }

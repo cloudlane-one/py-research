@@ -46,7 +46,7 @@ from py_research.hashing import gen_int_hash
 from py_research.reflect.types import (
     SingleTypeDef,
     TypeAware,
-    get_common_type,
+    TypeRef,
     has_type,
     is_subtype,
     typedef_to_typeset,
@@ -598,7 +598,7 @@ def frame_isin(
     return cast(Frame[ExT2, Col], Frame(data))
 
 
-class Node:
+class Node(Protocol):
     """Base class for graphable objects."""
 
 
@@ -646,19 +646,9 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
     # Type:
 
     @cached_prop
-    def value_typeform(self) -> SingleTypeDef[ValT] | UnionType:
+    def value_typeref(self) -> TypeRef[ValT]:
         """Target typeform of this prop."""
-        return self.typeargs[ValT]
-
-    @cached_prop
-    def value_type_set(self) -> set[type[ValT]]:
-        """Target types of this prop (>1 in case of union typeform)."""
-        return typedef_to_typeset(self.value_typeform)
-
-    @cached_prop
-    def common_value_type(self) -> type[ValT]:
-        """Common base type of the target types."""
-        return get_common_type(self.value_typeform)
+        return self.typeref.args[ValT]
 
     # Context:
 
@@ -814,7 +804,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
             case Idx():
                 full_idx = tuple(self[c] for c in index.components)
             case SelfIdx():
-                assert self.typeargs[DxT] is Col
+                assert self.typeref.args[DxT] is Col
                 full_idx = (
                     cast(Data[Any, Any, Col, Any, R, CtxT, *tuple[Any, ...]], self),
                 )
@@ -1051,10 +1041,10 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
             case pl.Series():
                 return data.to_list()
             case pl.DataFrame():
-                constructor = self.common_value_type
+                constructor = self.value_typeref.common_type
                 return [constructor(d) for d in data.to_dicts()]
             case dict():
-                return self.common_value_type(*data.values())
+                return self.value_typeref.common_type(*data.values())
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
@@ -1486,7 +1476,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
                 ):
                     key = key if isinstance(key, tuple) else (key,)
                     if len(key) == len(self._idx_components()) and is_subtype(
-                        self.typeargs[CtxT], Root
+                        self.typeref.args[CtxT].typeform, Root
                     ):
                         rooted = True
 
@@ -1593,21 +1583,21 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         CtxT2,
     ]:
         """Align two datasets."""
-        if is_subtype(self.value_typeform, tuple):
+        if is_subtype(self.value_typeref.typeform, tuple):
             assert isinstance(self, Align)
             self_data = self.data
             self_types = self.value_types
         else:
             self_data = (self,)
-            self_types = (self.value_typeform,)
+            self_types = (self.value_typeref,)
 
-        if is_subtype(other.value_typeform, tuple):
+        if is_subtype(other.value_typeref.typeform, tuple):
             assert isinstance(other, Align)
             other_data = other.data
             other_types = other.value_types
         else:
             other_data = (other,)
-            other_types = (other.value_typeform,)
+            other_types = (other.value_typeref,)
 
         return Align[
             tuple[*self_types, *other_types],
@@ -1715,7 +1705,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
             frame_func=lambda left, right: op(left.get(), right.get()),
             contract="value",
         )
-        assert issubclass(self.common_value_type, tuple)
+        assert issubclass(self.value_typeref.common_type, tuple)
         return cast(
             Data,
             self[reduction],
@@ -2116,12 +2106,12 @@ class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, RootT, None], ABC):
     _instance_map: dict[Hashable, RegT] = field(default_factory=dict)
 
     def _id(self) -> str:
-        ctx_module = getmodule(self.common_value_type)
+        ctx_module = getmodule(self.value_typeref.common_type)
         return (
             (
-                ctx_module.__name__ + "." + self.common_value_type.__name__
+                ctx_module.__name__ + "." + self.value_typeref.common_type.__name__
                 if ctx_module is not None
-                else self.common_value_type.__name__
+                else self.value_typeref.common_type.__name__
             )
             + "."
             + self._id()
@@ -2142,7 +2132,7 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
     @cached_prop
     def value_types(self) -> tuple[SingleTypeDef[ValT] | UnionType, ...]:
         """Get the value types."""
-        return tuple(d.value_typeform for d in self.data)
+        return tuple(d.value_typeref.typeform for d in self.data)
 
     def _id(self) -> str:
         """Name of the property."""

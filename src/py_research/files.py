@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Generator, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import cached_property
 from itertools import groupby
 from mimetypes import guess_extension, guess_type
 from pathlib import Path
@@ -22,8 +23,6 @@ from typing import (
 
 from identify.identify import tags_from_path
 from typing_extensions import TypeVar
-
-from py_research.caching import cached_method, cached_prop
 
 
 def ensure_dir_exists(path: Path | str):
@@ -79,7 +78,7 @@ class File(ABC, Generic[M, I]):
     mime: M
     io_type: type[I]
 
-    @cached_prop
+    @cached_property
     def extension(self) -> str:
         """Return the file extension based on the MIME type."""
         ext = guess_extension(self.mime, strict=False)
@@ -161,12 +160,12 @@ class LocalFile(File[M, TextIO | BinaryIO]):
             dir=LocalDir(path=dir_path), name=name, mime=mime, io_type=io_type
         )
 
-    @cached_prop
+    @cached_property
     def path(self) -> Path:
         """Return the absolute path of the file."""
         return (self.dir.abs_path / (self.name + self.extension)).absolute()
 
-    @cached_prop
+    @cached_property
     def detected_format(self) -> Literal["text", "binary"]:
         """Default encoding based on filename and content."""
         path = Path(self.path)
@@ -271,14 +270,17 @@ class LocalDir(Dir[LocalFile, "LocalDir"]):
 
     path: Path | str
 
-    @cached_prop
+    _exists: Literal[True] | None = None
+
+    @cached_property
     def abs_path(self) -> Path:
         """Return the absolute path of the directory."""
         return Path(self.path).absolute()
 
-    @cached_method
     def _ensure_exists(self) -> None:
-        ensure_dir_exists(self.abs_path)
+        if not self._exists:
+            ensure_dir_exists(self.abs_path)
+            self._exists = True
 
     def keys(self) -> Sequence[str]:
         """Iterate over the items in the directory."""

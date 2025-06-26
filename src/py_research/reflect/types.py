@@ -5,7 +5,7 @@ from __future__ import annotations
 import operator
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import cache, reduce
+from functools import cache, cached_property, reduce
 from inspect import getmodule, getmro
 from itertools import chain, groupby
 from types import ModuleType, NoneType, UnionType, new_class
@@ -29,64 +29,28 @@ from typing import (
 from beartype.door import is_bearable, is_subhint
 from typing_extensions import TypeVar, runtime_checkable
 
-from py_research.caching import cached_prop
 from py_research.hashing import gen_str_hash
 from py_research.reflect.runtime import get_subclasses
-from py_research.types import Not
-
-T = TypeVar("T", covariant=True)
-T_cov = TypeVar("T_cov", covariant=True)
-U_cov = TypeVar("U_cov", covariant=True)
-
-type _AnnotationScanType = type[Any] | TypeAliasType | GenericAlias[
-    Any
-] | NewType | ForwardRef | str
-
-
-@runtime_checkable
-class GenericAlias(Protocol[T]):  # type: ignore
-    """protocol for generic types.
-
-    this since Python.typing _GenericAlias is private
-
-    """
-
-    __args__: tuple[_AnnotationScanType, ...]
-    __origin__: type[T]
-
-
-type SingleTypeDef[T] = GenericAlias[T] | TypeAliasType | type[T] | NewType
-
-
-@runtime_checkable
-class SupportsItems(Protocol[T_cov, U_cov]):
-    """Protocol for objects that support item access."""
-
-    def keys(self) -> Iterable[T_cov]: ...  # noqa: D102
-
-    def values(self) -> Iterable[U_cov]: ...  # noqa: D102
-
-    def items(self) -> Iterable[tuple[T_cov, U_cov]]: ...  # noqa: D102
-
-
-T_contra = TypeVar("T_contra", contravariant=True)
-
-
-@final
-@dataclass
-class ContraType(Generic[T_contra]):
-    """Represent a contravariant type."""
-
-    type_: type[T_contra] | None = None
+from py_research.types import GenericAlias, Not, SingleTypeDef, T
 
 
 def is_subtype(type_: SingleTypeDef | UnionType, supertype: T) -> TypeGuard[T]:
     """Check if object is of given type hint."""
-    return (
-        is_subhint(type_, supertype)
-        if not isinstance(type_, TypeAliasType)
-        else is_subhint(type_.__value__, supertype)
-    )
+    if not isinstance(type_, TypeAliasType):
+        type_args = get_args(type_)
+        supertype_args = get_args(supertype)
+
+        if len(type_args) == 0 and len(supertype_args) == 0:
+            # Special case since beartype can't handle empty typevartuples as args.
+            typeset = typedef_to_typeset(type_)
+            supertype_tuple = tuple(
+                typedef_to_typeset(cast(SingleTypeDef | UnionType, supertype))
+            )
+            return all(issubclass(t, supertype_tuple) for t in typeset)
+
+        return is_subhint(type_, supertype)
+
+    return is_subhint(type_.__value__, supertype)
 
 
 def has_type(obj: Any, type_: SingleTypeDef[T] | UnionType) -> TypeGuard[T]:
@@ -155,104 +119,9 @@ def get_inheritance_distance(cls: type, base: type) -> int | None:
 _type_alias_classes: dict[TypeAliasType, type] = {}
 
 
-@overload
-def hint_to_typedef(
-    hint: SingleTypeDef,
-    *,
-    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
-    ctx_module: ModuleType | None = ...,
-    unresolved_typevars: Literal["raise", "keep"] = ...,
-) -> SingleTypeDef: ...
-
-
-@overload
-def hint_to_typedef(
-    hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    *,
-    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
-    ctx_module: ModuleType | None = ...,
-    unresolved_typevars: Literal["raise"] = ...,
-) -> SingleTypeDef | UnionType: ...
-
-
-@overload
-def hint_to_typedef(
-    hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    *,
-    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
-    ctx_module: ModuleType | None = ...,
-    unresolved_typevars: Literal["keep"],
-) -> SingleTypeDef | UnionType | TypeVar: ...
-
-
-def hint_to_typedef(
-    hint: SingleTypeDef | UnionType | TypeVar | str | ForwardRef,
-    typevar_map: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = None,
-    ctx_module: ModuleType | None = None,
-    unresolved_typevars: Literal["raise", "keep"] = "raise",
-) -> SingleTypeDef | UnionType | TypeVar:
-    """Convert type hint to type definition."""
-    typevar_map = typevar_map or {}
-
-    typedef = hint
-
-    if isinstance(typedef, str):
-        typedef = eval(
-            typedef,
-            {**globals(), **(vars(ctx_module) if ctx_module else {})},
-        )
-
-    if isinstance(typedef, TypeVar):
-        type_res = typevar_map.get(typedef, Not.defined)
-
-        if (
-            type_res is Not.defined
-            and hasattr(typedef, "__default__")
-            and typedef.has_default()
-        ):
-            type_res = typedef.__default__
-        if type_res is Not.defined:
-            if unresolved_typevars == "keep":
-                return typedef
-            else:
-                raise TypeError(
-                    f"Type variable `{typedef}` not bound for typehint `{hint}`."
-                )
-
-        typedef = type_res
-
-    if isinstance(typedef, ForwardRef):
-        typedef = typedef._evaluate(
-            {**globals(), **(vars(ctx_module) if ctx_module else {})},
-            {},
-            recursive_guard=frozenset(),
-        )
-
-    orig = get_origin(typedef)
-    args = get_args(typedef)
-    if (
-        orig is not None
-        and len(args) > 0
-        and not (isinstance(typedef, UnionType) or orig is Union)
-    ):
-        typedef = orig[
-            *(
-                hint_to_typedef(
-                    arg,
-                    typevar_map=typevar_map,
-                    ctx_module=ctx_module,
-                    unresolved_typevars=unresolved_typevars,
-                )
-                for arg in args
-            )
-        ]
-
-    return cast(SingleTypeDef, typedef)
-
-
 def typedef_to_typeset(
     typedef: SingleTypeDef | UnionType | None,
-    typevar_map: dict[TypeVar, SingleTypeDef | UnionType] | None = None,
+    typevar_map: dict[TypeVar, TypeRef] | None = None,
     ctx_module: ModuleType | None = None,
     remove_null: bool = False,
 ) -> set[type]:
@@ -282,7 +151,9 @@ def typedef_to_typeset(
             continue
 
         t_parsed = (
-            hint_to_typedef(t.__value__, typevar_map=typevar_map, ctx_module=ctx_module)
+            TypeRef(
+                t.__value__, var_map=typevar_map or {}, ctx_module=ctx_module
+            ).typeform
             if isinstance(t, TypeAliasType)
             else t
         )
@@ -315,39 +186,16 @@ def typedef_to_typeset(
     return typeset
 
 
-@overload
 def get_typevar_map(
     c: SingleTypeDef | UnionType | tuple[type, ...],
-    *,
-    subs: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
-    subs_defaults: Literal[True] = ...,
-    arg_count: int | None = ...,
-) -> dict[TypeVar, SingleTypeDef | UnionType]: ...
-
-
-@overload
-def get_typevar_map(
-    c: SingleTypeDef | UnionType | tuple[type, ...],
-    *,
-    subs: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = ...,
-    subs_defaults: Literal[False],
-    arg_count: int | None = ...,
-) -> dict[TypeVar, SingleTypeDef | UnionType | TypeVar]: ...
-
-
-def get_typevar_map(
-    c: SingleTypeDef | UnionType | tuple[type, ...],
-    subs: Mapping[TypeVar, SingleTypeDef | UnionType | TypeVar] | None = None,
-    subs_defaults: bool = True,
-    arg_count: int | None = None,
-) -> (
-    dict[TypeVar, SingleTypeDef | UnionType]
-    | dict[TypeVar, SingleTypeDef | UnionType | TypeVar]
-):
+    subs: Mapping[TypeVar, TypeRef] | None = None,
+    ctx_module: ModuleType | None = None,
+) -> dict[TypeVar, TypeRef]:
     """Return a mapping of type variables to their actual types."""
+    ctx_module = ctx_module or getmodule(c)
     subs = subs or {}
 
-    typevar_map = {}
+    typevar_map: dict[TypeVar, TypeRef] = {}
 
     orig = get_origin(c) or c
     args = get_args(c)
@@ -356,10 +204,7 @@ def get_typevar_map(
         # Resolve typevar map of each union arg individually and
         # union the resulting types per typevar.
         base_typevar_items = chain(
-            *(
-                get_typevar_map(arg, subs=subs, subs_defaults=False).items()
-                for arg in args
-            )
+            *(get_typevar_map(arg, subs=subs).items() for arg in args)
         )
         groups = groupby(
             sorted(base_typevar_items, key=lambda x: x[0].__name__),
@@ -375,7 +220,7 @@ def get_typevar_map(
         # Just concat all typevar maps of the base classes.
         typevar_map = reduce(
             lambda x, y: x | y,
-            (get_typevar_map(base, subs=subs, subs_defaults=False) for base in c),
+            (get_typevar_map(base, subs=subs) for base in c),
         )
 
     elif c is not Generic and orig is not Generic:
@@ -394,7 +239,11 @@ def get_typevar_map(
 
         # Apply substitutions.
         subs_typevar_map = {
-            k: hint_to_typedef(v, typevar_map=subs, unresolved_typevars="keep")
+            k: TypeRef(
+                v,
+                var_map=subs,
+                ctx_module=ctx_module,
+            )
             for k, v in local_typevar_map.items()
         }
 
@@ -407,34 +256,16 @@ def get_typevar_map(
                 if hasattr(orig, "__orig_bases__")
                 else orig.__bases__
             )
-            if len(bases) > 1:
+            if len(bases) > 0:
                 base_typevar_map = get_typevar_map(
                     bases if len(bases) > 1 else bases[0],
                     subs=subs_typevar_map,
-                    subs_defaults=False,
                 )
         elif isinstance(orig, TypeAliasType):
-            base_typevar_map = get_typevar_map(
-                orig.__value__, subs=subs_typevar_map, subs_defaults=False
-            )
+            base_typevar_map = get_typevar_map(orig.__value__, subs=subs_typevar_map)
 
         # Merge with base typevar map.
         typevar_map = subs_typevar_map | base_typevar_map
-
-    if subs_defaults:
-        # Substitute defaults.
-        return {
-            p: (
-                (
-                    cast(type, p.__default__)
-                    if hasattr(p, "__default__") and p.has_default()
-                    else object
-                )
-                if isinstance(p, TypeVar)
-                else p
-            )
-            for p in typevar_map.keys()
-        }
 
     return typevar_map
 
@@ -458,7 +289,7 @@ def set_typeargs[T](
 
     assert hasattr(orig, "__parameters__")
     typearg_map = dict(zip(getattr(orig, "__parameters__"), args))
-    typevar_map = get_typevar_map(typedef, subs_defaults=False)
+    typevar_map = get_typevar_map(typedef)
 
     for typevar, arg in args.items():
         # Go through substitutions if typevar is not directly in arg_map.
@@ -482,62 +313,129 @@ def get_typeargs(instance: Any) -> tuple[type, ...] | None:
 
 
 @cache
-def _map_str_annotation_base[U](anno: str, base: type[U]) -> type[U]:
+def _map_str_annotation_base[U](anno: str, base: type[U]) -> type[U] | None:
     """Map property type name to class."""
     name_map = {cls.__name__: cls for cls in get_subclasses(base) if cls is not base}
     matches = [name_map[n] for n in name_map if anno.startswith(n + "[")]
-    assert len(matches) == 1
-    return matches[0]
-
-
-def get_base_type(hint: SingleTypeDef[T] | str, bound: type[T]) -> type[T]:
-    """Resolve base type of the typehint."""
-    if has_type(hint, SingleTypeDef):
-        base = get_origin(hint)
-        if base is None or not issubclass(base, bound):
-            raise TypeError(f"Type hint `{hint}` is not a subclass of `{bound}`.")
-
-        return base
-    else:
-        assert isinstance(hint, str)
-        return _map_str_annotation_base(hint, bound)
+    return matches[0] if len(matches) == 1 else None
 
 
 @dataclass
 class TypeRef[T]:
     """Reference to a type."""
 
-    hint: SingleTypeDef[T] | UnionType | str = "Any"
-    var_map: Mapping[TypeVar, SingleTypeDef | UnionType] = field(default_factory=dict)
+    hint: SingleTypeDef[T] | UnionType | ForwardRef | str | TypeVar = cast(
+        type[T], object
+    )
+    var_map: Mapping[TypeVar, TypeRef] = field(default_factory=dict)
     ctx_module: ModuleType | None = None
+    ctx: dict[str, Any] = field(default_factory=dict)
+    unresolved_typevars: Literal["default", "raise"] = "default"
 
-    @cached_prop
+    @cached_property
     def typeform(self) -> SingleTypeDef[T] | UnionType:
         """Return the type format."""
-        form = hint_to_typedef(
-            self.hint,
-            typevar_map=self.var_map,
-            ctx_module=self.ctx_module,
-        )
-        return form
 
-    @cached_prop
-    def type_set(self) -> set[type[T]]:
+        if isinstance(self.hint, str):
+            hint = eval(
+                self.hint,
+                {
+                    **globals(),
+                    **(vars(self.ctx_module) if self.ctx_module else {}),
+                    **self.ctx,
+                },
+            )
+            return TypeRef(
+                hint,
+                var_map=self.var_map,
+                ctx_module=self.ctx_module,
+                ctx=self.ctx,
+                unresolved_typevars=self.unresolved_typevars,
+            ).typeform
+
+        if isinstance(self.hint, TypeVar):
+            type_res = self.var_map.get(self.hint, Not.defined)
+
+            if isinstance(type_res, Not) or type_res.hint is self.hint:
+                if self.unresolved_typevars == "default":
+                    v = type_res if isinstance(type_res, TypeVar) else self.hint
+
+                    return cast(
+                        SingleTypeDef[T] | UnionType,
+                        (
+                            TypeRef(v.__default__, ctx_module=getmodule(v)).typeform
+                            if hasattr(v, "__default__")
+                            and v.has_default()
+                            and v.__default__ is not Any
+                            else (v.__bound__ if v.__bound__ is not None else object)
+                        ),
+                    )
+                else:
+                    raise TypeError(
+                        f"Type variable `{self.hint}` not bound for typehint `{self.hint}`."
+                    )
+
+            return type_res.typeform
+
+        if isinstance(self.hint, ForwardRef):
+            evaluated = self.hint._evaluate(
+                {
+                    **globals(),
+                    **(vars(self.ctx_module) if self.ctx_module else {}),
+                    **self.ctx,
+                },
+                None,
+                recursive_guard=frozenset(),
+            )
+            assert evaluated is not None
+            return evaluated
+
+        orig = get_origin(self.hint)
+        args = get_args(self.hint)
+        if orig is not None and len(args) > 0:
+            return orig[
+                *(
+                    TypeRef(
+                        arg,
+                        var_map=self.var_map,
+                        ctx_module=self.ctx_module,
+                        ctx=self.ctx,
+                        unresolved_typevars=self.unresolved_typevars,
+                    ).typeform
+                    for arg in args
+                )
+            ]
+
+        return self.hint
+
+    @cached_property
+    def typeset(self) -> set[type[T]]:
         """Target types of this prop (>1 in case of union typeform)."""
         return typedef_to_typeset(self.typeform)
 
-    @cached_prop
-    def common_type(self) -> type:
+    @cached_property
+    def common_type(self) -> type[T]:
         """Common base type of the target types."""
-        return get_common_type(self.typeform)
+        return get_lowest_common_base(
+            typedef_to_typeset(
+                self.typeform,
+                remove_null=True,
+            )
+        )
 
-    @property
-    def base_type(self) -> type[T]:
+    def base_type(self, bound: type[T] | None = None) -> type[T] | None:
         """Resolve the prop typehint."""
-        typeargs = get_typeargs(self)
-        bound: type[Any] = typeargs[0] if typeargs is not None else object
+        bound = bound if bound is not None else cast(type[T], object)
 
-        return get_base_type(self.single_typedef, bound)
+        if has_type(self.hint, SingleTypeDef):
+            base = get_origin(self.hint)
+            if base is None or not issubclass(base, bound):
+                return None
+
+            return base
+        else:
+            assert isinstance(self.hint, str)
+            return _map_str_annotation_base(self.hint, bound)
 
     @property
     def single_typedef(self) -> SingleTypeDef[T]:
@@ -548,22 +446,10 @@ class TypeRef[T]:
             else self.common_type
         )
 
-    @cached_prop
-    def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
+    @cached_property
+    def args(self) -> dict[TypeVar, TypeRef]:
         """Type arguments of this prop."""
         return get_typevar_map(self.single_typedef)
-
-
-def get_common_type[T](
-    typedef: SingleTypeDef[T] | UnionType,
-) -> type[T]:
-    """Get the common type of a type definition."""
-    return get_lowest_common_base(
-        typedef_to_typeset(
-            typedef,
-            remove_null=True,
-        )
-    )
 
 
 @dataclass(kw_only=True)
@@ -572,37 +458,27 @@ class TypeAware(Generic[T]):
 
     # Core attributes:
 
-    typeref: TypeRef[TypeAware[T]] | None = None
+    typeref: TypeRef[TypeAware[T]] = field(default_factory=TypeRef)
 
-    @cached_prop
-    def resolved_type(self) -> SingleTypeDef[TypeAware[T]]:
-        """Resolved type of this prop."""
-        if self.typeref is None:
-            return cast(SingleTypeDef[TypeAware[T]], type(self))
+    def __post_init__(self) -> None:
+        if self.typeref.hint is object:
+            self.typeref.hint = type(self)
 
-        return self.typeref.single_typedef
+    # @staticmethod
+    # def has_type[U: TypeAware](instance: TypeAware, typedef: type[U]) -> TypeGuard[U]:
+    #     """Check if the dataset has the specified type."""
+    #     orig = get_origin(typedef)
+    #     base = get_base_type(instance.resolved_type, bound=TypeAware)
+    #     if orig is None or base is None or not issubclass(base, orig):
+    #         return False
 
-    @cached_prop
-    def typeargs(self) -> dict[TypeVar, SingleTypeDef | UnionType]:
-        """Type arguments of this prop."""
-        return get_typevar_map(self.resolved_type)
+    #     own_typevars = get_typevar_map(instance.resolved_type)
+    #     target_typevars = get_typevar_map(typedef)
 
-    @staticmethod
-    def has_type[U: TypeAware](instance: TypeAware, typedef: type[U]) -> TypeGuard[U]:
-        """Check if the dataset has the specified type."""
-        orig = get_origin(typedef)
-        if orig is None or not issubclass(
-            get_base_type(instance.resolved_type, bound=TypeAware), orig
-        ):
-            return False
+    #     for tv, tv_type in target_typevars.items():
+    #         if tv not in own_typevars:
+    #             return False
+    #         if not is_subtype(own_typevars[tv], tv_type):
+    #             return False
 
-        own_typevars = get_typevar_map(instance.resolved_type)
-        target_typevars = get_typevar_map(typedef)
-
-        for tv, tv_type in target_typevars.items():
-            if tv not in own_typevars:
-                return False
-            if not is_subtype(own_typevars[tv], tv_type):
-                return False
-
-        return True
+    #     return True
