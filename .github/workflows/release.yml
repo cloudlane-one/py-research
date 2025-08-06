@@ -48,7 +48,7 @@ jobs:
           # PDM struggles to get the version from the git tag, so we pass it in directly.
           PDM_BUILD_SCM_VERSION: ${{ needs.semantic-release.outputs.version }}
       - name: Store the distribution packages
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
@@ -66,7 +66,7 @@ jobs:
       id-token: write  # IMPORTANT: mandatory for trusted publishing
     steps:
       - name: Download all the dists
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: python-package-distributions
           path: dist/
