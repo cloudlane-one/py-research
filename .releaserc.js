@@ -1,18 +1,15 @@
 module.exports = {
   plugins: [
     [
-      'semantic-release-gitmoji', {
+      "semantic-release-gitmoji",
+      {
         releaseRules: {
-          major: [ ':boom:' ],
-          minor: [ ':sparkles:' ],
-          patch: [
-            ':bug:',
-            ':ambulance:',
-            ':lock:'
-          ]
-        }
-      }
+          major: [":boom:"],
+          minor: [":sparkles:"],
+          patch: [":bug:", ":ambulance:", ":lock:", ":arrow_up:"],
+        },
+      },
     ],
-    '@semantic-release/github'
-  ]
-}
+    "@semantic-release/github",
+  ],
+};

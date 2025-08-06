@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar, cast, overload
+from typing import Any, ParamSpec, TypeVar, cast, get_origin, overload
 
 import numpy as np
 import pandas as pd
@@ -134,7 +134,11 @@ class FileCache:
                         -1
                     ]
                     extension = last_cached.name.split(".")[-1]
-                    return_type = get_return_type(func) or type
+                    return_type_anno = get_return_type(func) or type
+                    return_type = get_origin(return_type_anno) or return_type_anno
+                    assert isinstance(
+                        return_type, type
+                    ), "Return type of cached function must be a type."
 
                     cached_result = None
                     if issubclass(return_type, str) and extension == "txt":
