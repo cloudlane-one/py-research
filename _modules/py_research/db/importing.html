@@ -1,0 +1,846 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>py_research.db.importing &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/py_research/db/importing';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research.db.importing</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for py_research.db.importing</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Utilities for importing different data representations into relational format.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Hashable</span><span class="p">,</span> <span class="n">Mapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">itertools</span><span class="w"> </span><span class="kn">import</span> <span class="n">chain</span><span class="p">,</span> <span class="n">groupby</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">TypeAlias</span><span class="p">,</span> <span class="n">cast</span><span class="p">,</span> <span class="n">overload</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">uuid</span><span class="w"> </span><span class="kn">import</span> <span class="n">uuid4</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.hashing</span><span class="w"> </span><span class="kn">import</span> <span class="n">gen_str_hash</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">DB</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.conflicts</span><span class="w"> </span><span class="kn">import</span> <span class="n">DataConflictError</span><span class="p">,</span> <span class="n">DataConflictPolicy</span><span class="p">,</span> <span class="n">DataConflicts</span>
+
+<span class="n">Scalar</span> <span class="o">=</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">float</span> <span class="o">|</span> <span class="n">datetime</span>
+
+<span class="n">_AttrMap</span> <span class="o">=</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="s2">&quot;str | bool | _AttrMap&quot;</span><span class="p">]</span>
+<span class="sd">&quot;&quot;&quot;Mapping of hierarchical attributes to table columns&quot;&quot;&quot;</span>
+
+<span class="n">_RelationalMap</span> <span class="o">=</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="s2">&quot;str | bool | _RelationalMap | TableMap | list[TableMap]&quot;</span><span class="p">]</span>
+<span class="sd">&quot;&quot;&quot;Mapping of hierarchical attributes to table columns or other tables.&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="TableMap">
+<a class="viewcode-back" href="../../../docs/ref-api/py/py_research.db.importing.html#py_research.db.importing.TableMap">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">TableMap</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Configuration for how to map (nested) dictionary items to relational tables.&quot;&quot;&quot;</span>
+
+    <span class="n">table</span><span class="p">:</span> <span class="nb">str</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of the table to map to attributes in ``map`` to.&quot;&quot;&quot;</span>
+
+    <span class="nb">map</span><span class="p">:</span> <span class="p">(</span>
+        <span class="n">_RelationalMap</span>
+        <span class="o">|</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+        <span class="o">|</span> <span class="nb">str</span>
+        <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">dict</span> <span class="o">|</span> <span class="nb">str</span><span class="p">],</span> <span class="n">_RelationalMap</span> <span class="o">|</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span><span class="p">]</span>
+    <span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mapping of hierarchical attributes to table columns or other tables.&quot;&quot;&quot;</span>
+
+    <span class="n">ext_maps</span><span class="p">:</span> <span class="s2">&quot;list[TableMap] | None&quot;</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Map attributes on the same level to different tables&quot;&quot;&quot;</span>
+
+    <span class="n">link_attr</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Override attribute to use when referencing this table from a parent table.&quot;&quot;&quot;</span>
+
+    <span class="n">link_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;1-n&quot;</span><span class="p">,</span> <span class="s2">&quot;n-1&quot;</span><span class="p">,</span> <span class="s2">&quot;n-m&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;n-m&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Type of reference between this table and the parent table.</span>
+<span class="sd">    Only ``n-m`` will create a join table.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">join_table_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of the join table to use for referencing this table to its parent, if any&quot;&quot;&quot;</span>
+
+    <span class="n">join_table_map</span><span class="p">:</span> <span class="n">_AttrMap</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mapping of hierarchical attributes to join table rows.&quot;&quot;&quot;</span>
+
+    <span class="n">id_type</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;hash&quot;</span><span class="p">,</span> <span class="s2">&quot;attr&quot;</span><span class="p">,</span> <span class="s2">&quot;uuid&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="s2">&quot;hash&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Type of id to use for this table.</span>
+<span class="sd">    - ``hash``: sha256 hash of a subset of all mapped attributes</span>
+<span class="sd">    - ``attr``: use given attr as id directly, no hashing</span>
+<span class="sd">    - ``uuid``: generate random uuid for each row</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">id_attr</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of unique, mapped attribute to use as id directly or</span>
+<span class="sd">    list of mapped attributes to use for auto-generating row ids via sha256 hashing.</span>
+<span class="sd">    If None, all mapped attributes will be used for hashing.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">hash_id_with_path</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;If True, the id will be generated based on the data and the full tree path.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">match_by_attr</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Try to match this mapped data to target table (by given attr)</span>
+<span class="sd">    before creating a new row.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">conflict_policy</span><span class="p">:</span> <span class="n">DataConflictPolicy</span> <span class="o">=</span> <span class="s2">&quot;raise&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Which policy to use if import conflicts occur for this table.&quot;&quot;&quot;</span></div>
+
+
+
+<span class="n">_SubMap</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">dict</span> <span class="o">|</span> <span class="nb">list</span><span class="p">,</span> <span class="n">TableMap</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">TableMap</span><span class="p">]]</span>
+<span class="sd">&quot;&quot;&quot;Combination of data and mapping for a subtree.&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_map_sublayer</span><span class="p">(</span>
+    <span class="n">node</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">mapping</span><span class="p">:</span> <span class="n">_RelationalMap</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">_SubMap</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Extract hierarchical data into set of scalar attributes + ref&#39;d data objects.&quot;&quot;&quot;</span>
+    <span class="c1"># Split the current mapping level into groups based on type.</span>
+    <span class="n">target_groups</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">t</span><span class="p">:</span> <span class="nb">dict</span><span class="p">(</span><span class="n">g</span><span class="p">)</span>  <span class="c1"># type: ignore</span>
+        <span class="k">for</span> <span class="n">t</span><span class="p">,</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">groupby</span><span class="p">(</span>
+            <span class="nb">sorted</span><span class="p">(</span>
+                <span class="n">mapping</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span>
+                <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="mi">1</span><span class="p">])),</span>
+            <span class="p">),</span>
+            <span class="n">key</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="p">:</span> <span class="nb">type</span><span class="p">(</span><span class="n">item</span><span class="p">[</span><span class="mi">1</span><span class="p">]),</span>
+        <span class="p">)</span>
+    <span class="p">}</span>  <span class="c1"># type: ignore</span>
+
+    <span class="c1"># First list and handle all scalars, hence data attributes on the current level,</span>
+    <span class="c1"># which are to be mapped to table columns.</span>
+    <span class="n">scalars</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span>
+        <span class="n">chain</span><span class="p">(</span>
+            <span class="p">(</span><span class="n">target_groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span>
+            <span class="p">(</span><span class="n">target_groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">bool</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="n">cols</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="p">(</span><span class="n">col</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">col</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">attr</span><span class="p">):</span> <span class="n">data</span>
+        <span class="k">for</span> <span class="n">attr</span><span class="p">,</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">scalars</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span> <span class="o">:=</span> <span class="n">node</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">attr</span><span class="p">),</span> <span class="n">Scalar</span><span class="p">)</span>
+    <span class="p">}</span>
+
+    <span class="n">refs</span> <span class="o">=</span> <span class="p">{</span>
+        <span class="n">attr</span><span class="p">:</span> <span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">cast</span><span class="p">(</span><span class="n">TableMap</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="n">TableMap</span><span class="p">],</span> <span class="n">sub_map</span><span class="p">))</span>
+        <span class="k">for</span> <span class="n">attr</span><span class="p">,</span> <span class="n">sub_map</span> <span class="ow">in</span> <span class="p">{</span>
+            <span class="o">**</span><span class="p">(</span><span class="n">target_groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">TableMap</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}),</span>
+            <span class="o">**</span><span class="p">(</span><span class="n">target_groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">list</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{}),</span>
+        <span class="p">}</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span> <span class="o">:=</span> <span class="n">node</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">attr</span><span class="p">),</span> <span class="nb">dict</span> <span class="o">|</span> <span class="nb">list</span><span class="p">)</span>
+    <span class="p">}</span>
+
+    <span class="c1"># Handle nested data attributes (which come as dict types).</span>
+    <span class="k">for</span> <span class="n">attr</span><span class="p">,</span> <span class="n">sub_map</span> <span class="ow">in</span> <span class="p">(</span><span class="n">target_groups</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="nb">dict</span><span class="p">)</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">sub_node</span> <span class="o">=</span> <span class="n">node</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">attr</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sub_node</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="n">sub_row</span><span class="p">,</span> <span class="n">sub_refs</span> <span class="o">=</span> <span class="n">_map_sublayer</span><span class="p">(</span><span class="n">sub_node</span><span class="p">,</span> <span class="n">cast</span><span class="p">(</span><span class="nb">dict</span><span class="p">,</span> <span class="n">sub_map</span><span class="p">))</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">cols</span><span class="p">,</span> <span class="o">**</span><span class="n">sub_row</span><span class="p">}</span>
+            <span class="n">refs</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">refs</span><span class="p">,</span> <span class="o">**</span><span class="n">sub_refs</span><span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span><span class="n">cols</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">),</span> <span class="n">refs</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_gen_row_hash</span><span class="p">(</span>
+    <span class="n">row</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span>
+    <span class="n">context_path</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">hash_subset</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate hash for given row.&quot;&quot;&quot;</span>
+    <span class="n">hash_row</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">row</span><span class="p">[</span><span class="nb">list</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">hash_subset</span><span class="p">)</span> <span class="o">&amp;</span> <span class="nb">set</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">index</span><span class="p">))]</span> <span class="k">if</span> <span class="n">hash_subset</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">row</span>
+    <span class="p">)</span>
+    <span class="n">row_id</span> <span class="o">=</span> <span class="n">gen_str_hash</span><span class="p">(</span>
+        <span class="n">hash_row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">context_path</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">else</span> <span class="p">(</span><span class="n">hash_row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span> <span class="n">context_path</span><span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">row_id</span>
+
+
+<span class="n">_DictDB</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Hashable</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span>
+<span class="sd">&quot;&quot;&quot;All-dictionary representation of a relational database for performant extending.&quot;&quot;&quot;</span>
+
+<span class="n">_Rels</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]]</span>
+<span class="sd">&quot;&quot;&quot;Relations between tables, indexed by the referencing table and column.&quot;&quot;&quot;</span>
+
+<span class="n">_JoinTables</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="sd">&quot;&quot;&quot;Names of all join tables in the database.&quot;&quot;&quot;</span>
+
+<span class="n">RelDB</span> <span class="o">=</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">_DictDB</span><span class="p">,</span> <span class="n">_Rels</span><span class="p">,</span> <span class="n">_JoinTables</span><span class="p">]</span>
+<span class="sd">&quot;&quot;&quot;Full relational database representation.&quot;&quot;&quot;</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_handle_refs</span><span class="p">(</span>  <span class="c1"># noqa: C901</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">TableMap</span><span class="p">,</span>
+    <span class="n">db</span><span class="p">:</span> <span class="n">RelDB</span><span class="p">,</span>
+    <span class="n">row</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span>
+    <span class="n">refs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">_SubMap</span><span class="p">]],</span>
+    <span class="n">collect_conflicts</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">_all_conflicts</span><span class="p">:</span> <span class="n">DataConflicts</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">_path</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DataConflicts</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Handle references to other tables.&quot;&quot;&quot;</span>
+    <span class="n">_all_conflicts</span> <span class="o">=</span> <span class="n">_all_conflicts</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="n">_path</span> <span class="o">=</span> <span class="n">_path</span> <span class="ow">or</span> <span class="p">[]</span>
+    <span class="n">database</span><span class="p">,</span> <span class="n">relations</span><span class="p">,</span> <span class="n">join_tables</span> <span class="o">=</span> <span class="n">db</span>
+
+    <span class="c1"># Handle nested data, which is to be extracted into separate tables and referenced.</span>
+    <span class="k">for</span> <span class="n">attr</span><span class="p">,</span> <span class="p">(</span><span class="n">sub_data</span><span class="p">,</span> <span class="n">sub_maps</span><span class="p">)</span> <span class="ow">in</span> <span class="n">refs</span><span class="p">:</span>
+        <span class="c1"># Get info about the ref table to use from mapping</span>
+        <span class="c1"># (or generate a new for the ref table).</span>
+
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sub_maps</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+            <span class="n">sub_maps</span> <span class="o">=</span> <span class="p">[</span><span class="n">sub_maps</span><span class="p">]</span>
+
+        <span class="k">for</span> <span class="n">sub_map</span> <span class="ow">in</span> <span class="n">sub_maps</span><span class="p">:</span>
+            <span class="n">join_table_name</span> <span class="o">=</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">join_table_name</span>
+            <span class="n">join_table_exists</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="n">alt_join_table_names</span> <span class="o">=</span> <span class="p">[</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="si">}</span><span class="s2">_</span><span class="si">{</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+            <span class="p">]</span>
+
+            <span class="k">if</span> <span class="n">join_table_name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">join_table_name</span> <span class="o">=</span> <span class="n">alt_join_table_names</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">alt_join_table_names</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">database</span><span class="p">:</span>
+                        <span class="n">join_table_name</span> <span class="o">=</span> <span class="n">name</span>
+                        <span class="n">join_table_exists</span> <span class="o">=</span> <span class="kc">True</span>
+                        <span class="k">break</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">join_table_exists</span> <span class="o">=</span> <span class="n">join_table_name</span> <span class="ow">in</span> <span class="n">database</span>
+
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sub_data</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+                <span class="n">sub_data</span> <span class="o">=</span> <span class="p">[</span><span class="n">sub_data</span><span class="p">]</span>
+
+            <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">sub_data_item</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">sub_data</span><span class="p">):</span>
+                <span class="n">_sub_path</span> <span class="o">=</span> <span class="p">[</span><span class="n">_path</span><span class="p">,</span> <span class="n">attr</span><span class="p">,</span> <span class="n">i</span><span class="p">]</span>
+
+                <span class="n">rel_row</span><span class="p">,</span> <span class="n">_all_conflicts</span> <span class="o">=</span> <span class="n">_tree_to_db</span><span class="p">(</span>
+                    <span class="n">sub_data_item</span><span class="p">,</span>
+                    <span class="n">sub_map</span><span class="p">,</span>
+                    <span class="n">db</span><span class="p">,</span>
+                    <span class="n">collect_conflicts</span><span class="p">,</span>
+                    <span class="n">_all_conflicts</span><span class="p">,</span>
+                    <span class="n">_sub_path</span><span class="p">,</span>
+                <span class="p">)</span>
+
+                <span class="k">if</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">link_type</span> <span class="o">==</span> <span class="s2">&quot;n-m&quot;</span><span class="p">:</span>
+                    <span class="c1"># Map via join table.</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">join_table_exists</span><span class="p">:</span>
+                        <span class="n">database</span><span class="p">[</span><span class="n">join_table_name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+                        <span class="n">join_table_exists</span> <span class="o">=</span> <span class="kc">True</span>
+
+                    <span class="n">ref_row</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="n">_map_sublayer</span><span class="p">(</span><span class="n">sub_data_item</span><span class="p">,</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">join_table_map</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">sub_data_item</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+                        <span class="ow">and</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">join_table_map</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                        <span class="k">else</span> <span class="p">(</span><span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span><span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">),</span> <span class="kc">None</span><span class="p">)</span>
+                    <span class="p">)</span>
+
+                    <span class="n">left_col</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">attr</span><span class="si">}</span><span class="s2">_of&quot;</span> <span class="k">if</span> <span class="n">attr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">mapping</span><span class="o">.</span><span class="n">table</span>
+                    <span class="n">relations</span><span class="p">[(</span><span class="n">join_table_name</span><span class="p">,</span> <span class="n">left_col</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">,</span>
+                        <span class="s2">&quot;_id&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="n">ref_row</span><span class="p">[</span><span class="n">left_col</span><span class="p">]</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span>
+
+                    <span class="n">right_col</span> <span class="o">=</span> <span class="n">attr</span> <span class="k">if</span> <span class="n">attr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">table</span>
+                    <span class="n">relations</span><span class="p">[(</span><span class="n">join_table_name</span><span class="p">,</span> <span class="n">right_col</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="p">,</span>
+                        <span class="s2">&quot;_id&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+                    <span class="n">ref_row</span><span class="p">[</span><span class="n">right_col</span><span class="p">]</span> <span class="o">=</span> <span class="n">rel_row</span><span class="o">.</span><span class="n">name</span>
+
+                    <span class="n">ref_row</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">_gen_row_hash</span><span class="p">(</span><span class="n">ref_row</span><span class="p">,</span> <span class="n">_sub_path</span><span class="p">)</span>
+
+                    <span class="n">database</span><span class="p">[</span><span class="n">join_table_name</span><span class="p">][</span><span class="n">ref_row</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">ref_row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+                    <span class="n">join_tables</span> <span class="o">|=</span> <span class="p">{</span><span class="n">join_table_name</span><span class="p">}</span>
+                <span class="k">elif</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">link_type</span> <span class="o">==</span> <span class="s2">&quot;1-n&quot;</span><span class="p">:</span>
+                    <span class="c1"># Map via direct reference from children to parent.</span>
+                    <span class="n">col</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">attr</span><span class="si">}</span><span class="s2">_of&quot;</span> <span class="k">if</span> <span class="n">attr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">mapping</span><span class="o">.</span><span class="n">table</span>
+
+                    <span class="k">if</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">rel_row</span><span class="o">.</span><span class="n">index</span><span class="p">:</span>
+                        <span class="k">assert</span> <span class="n">rel_row</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">rel_row</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span>
+
+                    <span class="n">relations</span><span class="p">[(</span><span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="p">,</span> <span class="n">col</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">,</span>
+                        <span class="s2">&quot;_id&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                    <span class="n">database</span><span class="p">[</span><span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="p">][</span><span class="n">rel_row</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="o">**</span><span class="n">rel_row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span>
+                        <span class="n">col</span><span class="p">:</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                    <span class="p">}</span>
+                <span class="k">elif</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">link_type</span> <span class="o">==</span> <span class="s2">&quot;n-1&quot;</span><span class="p">:</span>
+                    <span class="c1"># Map via direct reference from parents to child.</span>
+                    <span class="n">col</span> <span class="o">=</span> <span class="n">attr</span> <span class="k">if</span> <span class="n">attr</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">sub_map</span><span class="o">.</span><span class="n">table</span>
+
+                    <span class="k">if</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">row</span><span class="o">.</span><span class="n">index</span><span class="p">:</span>
+                        <span class="k">assert</span> <span class="n">row</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">row</span><span class="p">[</span><span class="n">col</span><span class="p">]</span> <span class="o">==</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span>
+
+                    <span class="n">relations</span><span class="p">[(</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">,</span> <span class="n">col</span><span class="p">)]</span> <span class="o">=</span> <span class="p">(</span>
+                        <span class="n">sub_map</span><span class="o">.</span><span class="n">table</span><span class="p">,</span>
+                        <span class="s2">&quot;_id&quot;</span><span class="p">,</span>
+                    <span class="p">)</span>
+
+                    <span class="n">database</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">][</span><span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="o">**</span><span class="n">row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">(),</span>
+                        <span class="n">col</span><span class="p">:</span> <span class="n">rel_row</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                    <span class="p">}</span>
+
+    <span class="k">return</span> <span class="n">_all_conflicts</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_tree_to_db</span><span class="p">(</span>  <span class="c1"># noqa: C901</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">TableMap</span><span class="p">,</span>
+    <span class="n">db</span><span class="p">:</span> <span class="n">RelDB</span><span class="p">,</span>
+    <span class="n">collect_conflicts</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">_all_conflicts</span><span class="p">:</span> <span class="n">DataConflicts</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">_path</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span> <span class="n">DataConflicts</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transform recursive dictionary data into relational format.&quot;&quot;&quot;</span>
+    <span class="n">_all_conflicts</span> <span class="o">=</span> <span class="n">_all_conflicts</span> <span class="ow">or</span> <span class="p">{}</span>
+    <span class="n">_path</span> <span class="o">=</span> <span class="n">_path</span> <span class="ow">or</span> <span class="p">[]</span>
+    <span class="n">database</span><span class="p">,</span> <span class="n">_</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">db</span>
+
+    <span class="c1"># Initialize new table as defined by mapping, if it doesn&#39;t exist yet.</span>
+    <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">table</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">database</span><span class="p">:</span>
+        <span class="n">database</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="n">resolved_map</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">mapping</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">data</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mapping</span><span class="o">.</span><span class="n">map</span><span class="p">,</span> <span class="n">Callable</span><span class="p">)</span> <span class="k">else</span> <span class="n">mapping</span><span class="o">.</span><span class="n">map</span>
+    <span class="p">)</span>
+
+    <span class="c1"># Extract row of data attributes and refs to other objects.</span>
+    <span class="n">row</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="n">refs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">_SubMap</span><span class="p">]]</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="c1"># If mapping is only a string, extract the target attr directly.</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">resolved_map</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+        <span class="n">row</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">({</span><span class="n">resolved_map</span><span class="p">:</span> <span class="n">data</span><span class="p">},</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span><span class="p">)</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">resolved_map</span><span class="p">,</span> <span class="nb">set</span><span class="p">):</span>
+            <span class="n">row</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span>
+                <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">data</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">resolved_map</span><span class="p">},</span> <span class="n">dtype</span><span class="o">=</span><span class="nb">object</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">resolved_map</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+            <span class="n">row</span><span class="p">,</span> <span class="n">ref_dict</span> <span class="o">=</span> <span class="n">_map_sublayer</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">resolved_map</span><span class="p">)</span>
+            <span class="n">refs</span> <span class="o">=</span> <span class="p">[</span><span class="o">*</span><span class="n">refs</span><span class="p">,</span> <span class="o">*</span><span class="n">ref_dict</span><span class="o">.</span><span class="n">items</span><span class="p">()]</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s2">&quot;Unsupported mapping type </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">resolved_map</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                <span class="sa">f</span><span class="s2">&quot; for data of type </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="p">)</span>
+
+    <span class="n">row</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">row</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span><span class="p">]</span>
+        <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">id_type</span> <span class="o">==</span> <span class="s2">&quot;attr&quot;</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+        <span class="k">else</span> <span class="p">(</span>
+            <span class="n">_gen_row_hash</span><span class="p">(</span>
+                <span class="n">row</span><span class="p">,</span>
+                <span class="n">_path</span><span class="p">,</span>
+                <span class="p">(</span>
+                    <span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                    <span class="k">else</span> <span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span>
+                <span class="p">),</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">id_type</span> <span class="o">==</span> <span class="s2">&quot;hash&quot;</span>
+            <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">uuid4</span><span class="p">())[</span><span class="o">-</span><span class="mi">10</span><span class="p">:]</span>
+        <span class="p">)</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;Value of `&#39;</span><span class="si">{</span><span class="n">mapping</span><span class="o">.</span><span class="n">id_attr</span><span class="si">}</span><span class="s2">&#39;` (`TableMap.id_attr`) &quot;</span>
+            <span class="sa">f</span><span class="s2">&quot;must be a string or int for all objects, but received </span><span class="si">{</span><span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">ext_maps</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+        <span class="n">refs</span> <span class="o">=</span> <span class="p">[</span><span class="o">*</span><span class="n">refs</span><span class="p">,</span> <span class="o">*</span><span class="p">((</span><span class="n">m</span><span class="o">.</span><span class="n">link_attr</span><span class="p">,</span> <span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">m</span><span class="p">))</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">mapping</span><span class="o">.</span><span class="n">ext_maps</span><span class="p">)]</span>
+
+    <span class="n">_all_conflicts</span> <span class="o">=</span> <span class="n">_handle_refs</span><span class="p">(</span>
+        <span class="n">mapping</span><span class="p">,</span> <span class="n">db</span><span class="p">,</span> <span class="n">row</span><span class="p">,</span> <span class="n">refs</span><span class="p">,</span> <span class="n">collect_conflicts</span><span class="p">,</span> <span class="n">_all_conflicts</span>
+    <span class="p">)</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">row</span><span class="o">.</span><span class="n">empty</span><span class="p">:</span>
+        <span class="n">existing_row</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">match_by_attr</span><span class="p">:</span>
+            <span class="c1"># Make sure any existing data in database is consistent with new data.</span>
+            <span class="n">match_by</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="nb">str</span><span class="p">,</span> <span class="n">mapping</span><span class="o">.</span><span class="n">match_by_attr</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">match_by_attr</span> <span class="ow">is</span> <span class="kc">True</span><span class="p">:</span>
+                <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">resolved_map</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                <span class="n">match_by</span> <span class="o">=</span> <span class="n">resolved_map</span>
+
+            <span class="n">match_to</span> <span class="o">=</span> <span class="n">row</span><span class="p">[</span><span class="n">match_by</span><span class="p">]</span>
+
+            <span class="c1"># Match to existing row or create new one.</span>
+            <span class="n">existing_rows</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]]</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span>
+                <span class="nb">filter</span><span class="p">(</span>
+                    <span class="k">lambda</span> <span class="n">i</span><span class="p">:</span> <span class="n">i</span><span class="p">[</span><span class="mi">1</span><span class="p">][</span><span class="n">match_by</span><span class="p">]</span> <span class="o">==</span> <span class="n">match_to</span><span class="p">,</span>
+                    <span class="n">database</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">]</span><span class="o">.</span><span class="n">items</span><span class="p">(),</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">existing_rows</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">existing_row_id</span><span class="p">,</span> <span class="n">existing_row</span> <span class="o">=</span> <span class="n">existing_rows</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+                <span class="c1"># Take over the id of the existing row.</span>
+                <span class="n">row</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">existing_row_id</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">existing_row</span> <span class="o">=</span> <span class="n">database</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">existing_row</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">existing_attrs</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span>
+                <span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">existing_row</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="ow">and</span> <span class="n">pd</span><span class="o">.</span><span class="n">notna</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">new_attrs</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">row</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">k</span> <span class="ow">and</span> <span class="n">pd</span><span class="o">.</span><span class="n">notna</span><span class="p">(</span><span class="n">v</span><span class="p">))</span>
+
+            <span class="c1"># Assert that overlapping attributes are equal.</span>
+            <span class="n">intersect</span> <span class="o">=</span> <span class="n">existing_attrs</span> <span class="o">&amp;</span> <span class="n">new_attrs</span>
+
+            <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">conflict_policy</span> <span class="o">==</span> <span class="s2">&quot;raise&quot;</span><span class="p">:</span>
+                <span class="n">conflicts</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="p">(</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">,</span> <span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">c</span><span class="p">):</span> <span class="p">(</span><span class="n">existing_row</span><span class="p">[</span><span class="n">c</span><span class="p">],</span> <span class="n">row</span><span class="p">[</span><span class="n">c</span><span class="p">])</span>
+                    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">intersect</span>
+                    <span class="k">if</span> <span class="n">existing_row</span><span class="p">[</span><span class="n">c</span><span class="p">]</span> <span class="o">!=</span> <span class="n">row</span><span class="p">[</span><span class="n">c</span><span class="p">]</span>
+                <span class="p">}</span>
+
+                <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">conflicts</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="ow">not</span> <span class="n">collect_conflicts</span><span class="p">:</span>
+                        <span class="k">raise</span> <span class="n">DataConflictError</span><span class="p">(</span><span class="n">conflicts</span><span class="p">)</span>
+
+                    <span class="n">_all_conflicts</span> <span class="o">=</span> <span class="p">{</span><span class="o">**</span><span class="n">_all_conflicts</span><span class="p">,</span> <span class="o">**</span><span class="n">conflicts</span><span class="p">}</span>
+            <span class="k">if</span> <span class="n">mapping</span><span class="o">.</span><span class="n">conflict_policy</span> <span class="o">==</span> <span class="s2">&quot;ignore&quot;</span><span class="p">:</span>
+                <span class="n">row</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span>
+                    <span class="p">{</span><span class="o">**</span><span class="n">row</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="nb">list</span><span class="p">(</span><span class="n">new_attrs</span><span class="p">)],</span> <span class="o">**</span><span class="n">existing_row</span><span class="p">},</span> <span class="n">name</span><span class="o">=</span><span class="n">row</span><span class="o">.</span><span class="n">name</span>
+                <span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">row</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span>
+                    <span class="p">{</span><span class="o">**</span><span class="n">existing_row</span><span class="p">,</span> <span class="o">**</span><span class="n">row</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="nb">list</span><span class="p">(</span><span class="n">new_attrs</span><span class="p">)]},</span> <span class="n">name</span><span class="o">=</span><span class="n">row</span><span class="o">.</span><span class="n">name</span>
+                <span class="p">)</span>
+
+        <span class="c1"># Add row to database table or update it.</span>
+        <span class="n">database</span><span class="p">[</span><span class="n">mapping</span><span class="o">.</span><span class="n">table</span><span class="p">][</span><span class="n">row</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">row</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+
+    <span class="c1"># Return row (used for recursion).</span>
+    <span class="k">return</span> <span class="n">row</span><span class="p">,</span> <span class="n">_all_conflicts</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tree_to_db</span><span class="p">(</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">TableMap</span><span class="p">,</span>
+    <span class="n">collect_conflicts</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">DB</span><span class="p">,</span> <span class="n">DataConflicts</span><span class="p">]:</span> <span class="o">...</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">tree_to_db</span><span class="p">(</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">TableMap</span><span class="p">,</span>
+    <span class="n">collect_conflicts</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DB</span><span class="p">:</span> <span class="o">...</span>
+
+
+<div class="viewcode-block" id="tree_to_db">
+<a class="viewcode-back" href="../../../docs/ref-api/py/py_research.db.importing.html#py_research.db.importing.tree_to_db">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">tree_to_db</span><span class="p">(</span>  <span class="c1"># noqa: C901</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">mapping</span><span class="p">:</span> <span class="n">TableMap</span><span class="p">,</span>
+    <span class="n">collect_conflicts</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">DB</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">DB</span><span class="p">,</span> <span class="n">DataConflicts</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Transform recursive dictionary data into relational format.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        data: The data to be transformed</span>
+<span class="sd">        mapping:</span>
+<span class="sd">            Configuration for how to performm the mapping.</span>
+<span class="sd">        collect_conflicts:</span>
+<span class="sd">            Collect all conflicts and return them, rather than stopping right away.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The relational database representation of the data.</span>
+<span class="sd">        If ``collect_conflicts`` is ``True``, a tuple of the database and the conflicts</span>
+<span class="sd">        is returned.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">df_dict</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">rels</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">join_tables</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="n">_</span><span class="p">,</span> <span class="n">conflicts</span> <span class="o">=</span> <span class="n">_tree_to_db</span><span class="p">(</span>
+        <span class="n">data</span><span class="p">,</span> <span class="n">mapping</span><span class="p">,</span> <span class="p">(</span><span class="n">df_dict</span><span class="p">,</span> <span class="n">rels</span><span class="p">,</span> <span class="n">join_tables</span><span class="p">),</span> <span class="n">collect_conflicts</span>
+    <span class="p">)</span>
+    <span class="n">db</span> <span class="o">=</span> <span class="n">DB</span><span class="p">(</span>
+        <span class="n">table_dfs</span><span class="o">=</span><span class="p">{</span>
+            <span class="n">name</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">orient</span><span class="o">=</span><span class="s2">&quot;index&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">rename_axis</span><span class="p">(</span>
+                <span class="s2">&quot;_id&quot;</span><span class="p">,</span> <span class="n">axis</span><span class="o">=</span><span class="s2">&quot;index&quot;</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">df</span> <span class="ow">in</span> <span class="n">df_dict</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">},</span>
+        <span class="n">relations</span><span class="o">=</span><span class="n">rels</span><span class="p">,</span>
+        <span class="n">join_tables</span><span class="o">=</span><span class="n">join_tables</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">db</span><span class="p">,</span> <span class="n">conflicts</span><span class="p">)</span> <span class="k">if</span> <span class="n">collect_conflicts</span> <span class="k">else</span> <span class="n">db</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

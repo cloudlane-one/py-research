@@ -1,0 +1,17 @@
+py\_research.db package
+=======================
+
+.. automodule:: py_research.db
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Submodules
+----------
+
+.. toctree::
+   :maxdepth: 4
+
+   py_research.db.base
+   py_research.db.conflicts
+   py_research.db.importing

@@ -1,0 +1,7 @@
+py\_research.hashing module
+===========================
+
+.. automodule:: py_research.hashing
+   :members:
+   :undoc-members:
+   :show-inheritance:

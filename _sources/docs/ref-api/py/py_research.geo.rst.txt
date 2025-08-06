@@ -1,0 +1,7 @@
+py\_research.geo module
+=======================
+
+.. automodule:: py_research.geo
+   :members:
+   :undoc-members:
+   :show-inheritance:

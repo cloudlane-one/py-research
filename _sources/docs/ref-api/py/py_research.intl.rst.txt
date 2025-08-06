@@ -1,0 +1,7 @@
+py\_research.intl module
+========================
+
+.. automodule:: py_research.intl
+   :members:
+   :undoc-members:
+   :show-inheritance:

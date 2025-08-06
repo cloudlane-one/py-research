@@ -1,0 +1,7 @@
+py\_research.caching module
+===========================
+
+.. automodule:: py_research.caching
+   :members:
+   :undoc-members:
+   :show-inheritance:

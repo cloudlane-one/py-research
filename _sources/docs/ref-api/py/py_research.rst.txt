@@ -1,0 +1,38 @@
+py\_research package
+====================
+
+.. automodule:: py_research
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Subpackages
+-----------
+
+.. toctree::
+   :maxdepth: 4
+
+   py_research.db
+   py_research.plots
+   py_research.reflect
+
+Submodules
+----------
+
+.. toctree::
+   :maxdepth: 4
+
+   py_research.caching
+   py_research.colors
+   py_research.data
+   py_research.enums
+   py_research.files
+   py_research.geo
+   py_research.hashing
+   py_research.intl
+   py_research.ranking
+   py_research.sql
+   py_research.stats
+   py_research.tables
+   py_research.telemetry
+   py_research.time

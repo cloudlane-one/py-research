@@ -1,0 +1,7 @@
+py\_research.time module
+========================
+
+.. automodule:: py_research.time
+   :members:
+   :undoc-members:
+   :show-inheritance:

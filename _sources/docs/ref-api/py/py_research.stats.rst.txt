@@ -1,0 +1,7 @@
+py\_research.stats module
+=========================
+
+.. automodule:: py_research.stats
+   :members:
+   :undoc-members:
+   :show-inheritance:

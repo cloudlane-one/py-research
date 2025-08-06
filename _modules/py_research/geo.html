@@ -1,0 +1,864 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>py_research.geo &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/py_research/geo';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research.geo</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for py_research.geo</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Utilities for working with geographical data, esp. data associated with countries.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections</span><span class="w"> </span><span class="kn">import</span> <span class="n">UserString</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">enum</span><span class="w"> </span><span class="kn">import</span> <span class="n">auto</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">TypeAlias</span><span class="p">,</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">country_converter</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">coco</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic</span><span class="w"> </span><span class="kn">import</span> <span class="n">GetCoreSchemaHandler</span><span class="p">,</span> <span class="n">GetJsonSchemaHandler</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic.json_schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">JsonSchemaValue</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic_core</span><span class="w"> </span><span class="kn">import</span> <span class="n">core_schema</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Self</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.enums</span><span class="w"> </span><span class="kn">import</span> <span class="n">StrEnum</span>
+
+
+<div class="viewcode-block" id="GeoAlliance">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoAlliance">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">GeoAlliance</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;List of international alliances used to define geo-regions of interest.&quot;&quot;&quot;</span>
+
+    <span class="n">EU</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`See Eurostat definition &lt;https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:EU_enlargements&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">EU12</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+    <span class="n">EU15</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+    <span class="n">EU25</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+    <span class="n">EU27</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+    <span class="n">EU27_2007</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+    <span class="n">EU28</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+
+    <span class="n">EEA</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`EEA according to Eurostat &lt;https://ec.europa.eu/eurostat/statistics-explained/index.php?title=Glossary:European_Economic_Area_(EEA)&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">G7</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`G7 according to Wikipedia &lt;https://en.wikipedia.org/wiki/G7&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">G20</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`G20 according to Wikipedia &lt;https://en.wikipedia.org/wiki/G20&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">APEC</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`APEC according to Wikipedia &lt;https://en.wikipedia.org/wiki/Asia-Pacific_Economic_Cooperation&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">BRIC</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`BRIC according to Wikipedia &lt;https://en.wikipedia.org/wiki/BRIC&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">BASIC</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`BASIC according to Wikipedia &lt;https://en.wikipedia.org/wiki/BASIC_countries&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">CIS</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`CIS according to Wikipedia &lt;https://en.wikipedia.org/wiki/Commonwealth_of_Independent_States&gt;`_&quot;&quot;&quot;</span>
+
+    <span class="n">OECD</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`OECD members &lt;https://www.oecd.org/about/members-and-partners/&gt;`_&quot;&quot;&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="GeoScheme">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoScheme">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">GeoScheme</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;List of schemes, which can be used to define geo-regions of interest.&quot;&quot;&quot;</span>
+
+    <span class="n">country_name</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Short name of a country.&quot;&quot;&quot;</span>
+
+    <span class="n">continent</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of a continent.&quot;&quot;&quot;</span>
+
+    <span class="n">cc_iso3</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ISO3 code of a country.&quot;&quot;&quot;</span>
+
+    <span class="n">cc_iso2</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;ISO2 code of a country.&quot;&quot;&quot;</span>
+
+    <span class="n">alliance</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of an international alliance, to which a country belongs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">world</span> <span class="o">=</span> <span class="n">auto</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Dummy scheme to match all of the world.&quot;&quot;&quot;</span>
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_scheme_map</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="s2">&quot;GeoScheme&quot;</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">:</span> <span class="s2">&quot;name_short&quot;</span><span class="p">,</span>
+            <span class="n">GeoScheme</span><span class="o">.</span><span class="n">continent</span><span class="p">:</span> <span class="s2">&quot;continent&quot;</span><span class="p">,</span>
+            <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">:</span> <span class="s2">&quot;ISO3&quot;</span><span class="p">,</span>
+            <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span><span class="p">:</span> <span class="s2">&quot;ISO2&quot;</span><span class="p">,</span>
+        <span class="p">}</span>
+
+<div class="viewcode-block" id="GeoScheme.to_coco_scheme">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoScheme.to_coco_scheme">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_coco_scheme</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return associated coco scheme, if applicable.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_scheme_map</span><span class="p">()</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="GeoRegion">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoRegion">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">GeoRegion</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Define a geo-region according to some scheme (country, continent, etc.).&quot;&quot;&quot;</span>
+
+    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The geo-location&#39;s label according to `scheme`.&quot;&quot;&quot;</span>
+
+    <span class="n">scheme</span><span class="p">:</span> <span class="n">GeoScheme</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The naming/classification scheme used.&quot;&quot;&quot;</span>
+
+    <span class="n">display_label</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Optional, custom display label for the geo-location.&quot;&quot;&quot;</span>
+
+    <span class="n">exclude_already_covered</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;When listing multiple geo-regions, exclude locations</span>
+<span class="sd">    which have already been covered by previously listed regions.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="GeoRegion.get_label">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoRegion.get_label">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_label</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return string label of this region.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">display_label</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">label</span></div>
+
+
+<div class="viewcode-block" id="GeoRegion.to_country_list">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.GeoRegion.to_country_list">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_country_list</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">scheme</span><span class="p">:</span> <span class="s2">&quot;CountryScheme&quot;</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return list of matching countries in given ``scheme``.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            scheme: The scheme to convert to countries.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            List of countries in ``scheme``.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">res</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="k">match</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">scheme</span><span class="p">):</span>
+            <span class="k">case</span> <span class="p">(</span>
+                <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span>
+                <span class="o">|</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">continent</span>
+                <span class="o">|</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span>
+                <span class="o">|</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span>
+            <span class="p">):</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="n">coco</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="p">,</span>
+                    <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">(),</span>
+                    <span class="n">to</span><span class="o">=</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">(),</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">alliance</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="n">coco</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">()</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">world</span><span class="p">:</span>
+                <span class="n">res</span> <span class="o">=</span> <span class="n">coco</span><span class="o">.</span><span class="n">CountryConverter</span><span class="p">()</span><span class="o">.</span><span class="n">data</span><span class="p">[</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">()]</span><span class="o">.</span><span class="n">to_list</span><span class="p">()</span>
+            <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Unsupported geo-location scheme: </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">scheme</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">res</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="n">res</span><span class="p">]</span></div>
+
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">__get_pydantic_core_schema__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">cls</span><span class="p">,</span>
+        <span class="n">_source_type</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">_handler</span><span class="p">:</span> <span class="n">GetCoreSchemaHandler</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">core_schema</span><span class="o">.</span><span class="n">CoreSchema</span><span class="p">:</span>
+        <span class="n">from_str_schema</span> <span class="o">=</span> <span class="n">core_schema</span><span class="o">.</span><span class="n">chain_schema</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">core_schema</span><span class="o">.</span><span class="n">str_schema</span><span class="p">(),</span>
+                <span class="n">core_schema</span><span class="o">.</span><span class="n">no_info_plain_validator_function</span><span class="p">(</span><span class="n">GeoRegion</span><span class="p">),</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+
+        <span class="n">from_dict_schema</span> <span class="o">=</span> <span class="n">core_schema</span><span class="o">.</span><span class="n">chain_schema</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">core_schema</span><span class="o">.</span><span class="n">dict_schema</span><span class="p">(),</span>
+                <span class="n">core_schema</span><span class="o">.</span><span class="n">no_info_plain_validator_function</span><span class="p">(</span>
+                    <span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="n">GeoRegion</span><span class="p">(</span>
+                        <span class="n">label</span><span class="o">=</span><span class="n">x</span><span class="p">[</span><span class="s2">&quot;label&quot;</span><span class="p">],</span> <span class="n">scheme</span><span class="o">=</span><span class="n">GeoScheme</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">x</span><span class="p">[</span><span class="s2">&quot;scheme&quot;</span><span class="p">])</span>
+                    <span class="p">)</span>
+                <span class="p">),</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">core_schema</span><span class="o">.</span><span class="n">json_or_python_schema</span><span class="p">(</span>
+            <span class="n">json_schema</span><span class="o">=</span><span class="n">core_schema</span><span class="o">.</span><span class="n">union_schema</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="n">from_dict_schema</span><span class="p">,</span>
+                    <span class="n">from_str_schema</span><span class="p">,</span>
+                <span class="p">]</span>
+            <span class="p">),</span>
+            <span class="n">python_schema</span><span class="o">=</span><span class="n">core_schema</span><span class="o">.</span><span class="n">union_schema</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="c1"># check if it&#39;s an instance first before doing any further work</span>
+                    <span class="n">core_schema</span><span class="o">.</span><span class="n">is_instance_schema</span><span class="p">(</span><span class="n">GeoRegion</span><span class="p">),</span>
+                    <span class="n">from_dict_schema</span><span class="p">,</span>
+                    <span class="n">from_str_schema</span><span class="p">,</span>
+                <span class="p">]</span>
+            <span class="p">),</span>
+            <span class="n">serialization</span><span class="o">=</span><span class="n">core_schema</span><span class="o">.</span><span class="n">plain_serializer_function_ser_schema</span><span class="p">(</span>
+                <span class="k">lambda</span> <span class="n">instance</span><span class="p">:</span> <span class="p">(</span>
+                    <span class="n">instance</span><span class="o">.</span><span class="n">label</span> <span class="k">if</span> <span class="n">instance</span><span class="o">.</span><span class="n">schema</span> <span class="o">==</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span> <span class="k">else</span> <span class="n">instance</span>
+                <span class="p">)</span>
+            <span class="p">),</span>
+        <span class="p">)</span>
+
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">__get_pydantic_json_schema__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">cls</span><span class="p">,</span> <span class="n">_core_schema</span><span class="p">:</span> <span class="n">core_schema</span><span class="o">.</span><span class="n">CoreSchema</span><span class="p">,</span> <span class="n">handler</span><span class="p">:</span> <span class="n">GetJsonSchemaHandler</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">JsonSchemaValue</span><span class="p">:</span>
+        <span class="c1"># Use the same schema that would be used for `int`</span>
+        <span class="k">return</span> <span class="n">handler</span><span class="p">(</span>
+            <span class="n">core_schema</span><span class="o">.</span><span class="n">union_schema</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="c1"># check if it&#39;s an instance first before doing any further work</span>
+                    <span class="n">core_schema</span><span class="o">.</span><span class="n">dict_schema</span><span class="p">(),</span>
+                    <span class="n">core_schema</span><span class="o">.</span><span class="n">str_schema</span><span class="p">(),</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
+        <span class="p">)</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_region_to_country_map</span><span class="p">(</span>
+    <span class="n">region</span><span class="p">:</span> <span class="n">GeoRegion</span><span class="p">,</span> <span class="n">scheme</span><span class="p">:</span> <span class="s2">&quot;CountryScheme&quot;</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">,</span> <span class="n">cc_col</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;cc&quot;</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Resolve geo-region definition to a dataframe.</span>
+
+<span class="sd">    Result df maps the region&#39;s (display) label to one or more</span>
+<span class="sd">    ISO3 country codes.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">iso3_list</span> <span class="o">=</span> <span class="n">region</span><span class="o">.</span><span class="n">to_country_list</span><span class="p">(</span><span class="n">scheme</span><span class="o">=</span><span class="n">scheme</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="n">cc_col</span><span class="p">:</span> <span class="n">iso3_list</span><span class="p">})</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span><span class="n">geo_region</span><span class="o">=</span><span class="n">region</span><span class="o">.</span><span class="n">get_label</span><span class="p">())</span>
+
+
+<span class="n">CountryScheme</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Literal</span><span class="p">[</span>
+    <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span>
+<span class="p">]</span>
+<span class="sd">&quot;&quot;&quot;A :py:class:`GeoScheme` which can be used to define a single country.`&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="Country">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.Country">[docs]</a>
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Country</span><span class="p">(</span><span class="n">UserString</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;A country represented by ISO2 code, ISO3 code or name.&quot;&quot;&quot;</span>
+
+    <span class="n">label</span><span class="p">:</span> <span class="nb">str</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The country&#39;s label according to `scheme`.&quot;&quot;&quot;</span>
+
+    <span class="n">scheme</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;The naming/classification scheme used.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="Country.to">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.Country.to">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">scheme</span><span class="p">:</span> <span class="n">CountryScheme</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Convert to other scheme.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span>
+            <span class="n">Self</span><span class="p">,</span>
+            <span class="p">(</span>
+                <span class="n">Country</span><span class="p">(</span>
+                    <span class="n">cast</span><span class="p">(</span>
+                        <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">coco</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">label</span><span class="p">,</span> <span class="n">to</span><span class="o">=</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">(),</span> <span class="n">src</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">scheme</span>
+                        <span class="p">),</span>
+                    <span class="p">),</span>
+                    <span class="n">scheme</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="n">scheme</span> <span class="o">!=</span> <span class="bp">self</span><span class="o">.</span><span class="n">scheme</span>
+                <span class="k">else</span> <span class="bp">self</span>
+            <span class="p">),</span>
+        <span class="p">)</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">data</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># type: ignore</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return the country&#39;s label.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">label</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__format__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">cast</span><span class="p">(</span><span class="n">CountryScheme</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="p">(</span><span class="n">spec</span><span class="p">))))</span></div>
+
+
+
+<div class="viewcode-block" id="countries_to_scheme">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.countries_to_scheme">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">countries_to_scheme</span><span class="p">(</span>
+    <span class="n">countries</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span>
+    <span class="n">target</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">,</span>
+    <span class="n">src</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Translate given series of country labels to ``scheme``.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        countries: Series of country labels.</span>
+<span class="sd">        target: Target scheme to translate to.</span>
+<span class="sd">        src: Source scheme to translate from.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Series of translated country labels.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span>
+        <span class="n">coco</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span>
+            <span class="n">countries</span><span class="p">,</span>
+            <span class="n">src</span><span class="o">=</span><span class="n">src</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">()</span> <span class="k">if</span> <span class="n">src</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">to</span><span class="o">=</span><span class="n">target</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">(),</span>
+        <span class="p">),</span>
+        <span class="n">index</span><span class="o">=</span><span class="n">countries</span><span class="o">.</span><span class="n">index</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="expand_geo_col_to_cc">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.expand_geo_col_to_cc">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">expand_geo_col_to_cc</span><span class="p">(</span>
+    <span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+    <span class="n">geo_col</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">scheme</span><span class="p">:</span> <span class="n">GeoScheme</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">,</span>
+    <span class="n">cc_scheme</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Expand geo-regions present in ``geo_col`` to country codes.</span>
+
+<span class="sd">    Expand such that rows of ``df`` with multiple mapped CCs are multiplicated.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        df: The dataframe to expand.</span>
+<span class="sd">        geo_col: The column containing geo-regions.</span>
+<span class="sd">        scheme: The scheme used to define the geo-regions.</span>
+<span class="sd">        cc_scheme: The scheme to expand to.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The expanded dataframe.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="n">geo_col</span><span class="p">])</span>
+
+    <span class="n">cc_col</span> <span class="o">=</span> <span class="s2">&quot;cc&quot;</span> <span class="k">if</span> <span class="n">geo_col</span> <span class="o">!=</span> <span class="s2">&quot;cc&quot;</span> <span class="k">else</span> <span class="s2">&quot;cc_mapped&quot;</span>
+
+    <span class="n">cc_map</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
+        <span class="p">[</span>
+            <span class="n">_region_to_country_map</span><span class="p">(</span>
+                <span class="n">GeoRegion</span><span class="p">(</span><span class="n">g</span><span class="p">,</span> <span class="n">scheme</span><span class="o">=</span><span class="n">scheme</span><span class="p">),</span> <span class="n">scheme</span><span class="o">=</span><span class="n">cc_scheme</span><span class="p">,</span> <span class="n">cc_col</span><span class="o">=</span><span class="n">cc_col</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">g</span> <span class="ow">in</span> <span class="n">df</span><span class="p">[</span><span class="n">geo_col</span><span class="p">]</span><span class="o">.</span><span class="n">dropna</span><span class="p">()</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="p">]</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">df</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">cc_map</span><span class="p">,</span> <span class="n">left_on</span><span class="o">=</span><span class="n">geo_col</span><span class="p">,</span> <span class="n">right_on</span><span class="o">=</span><span class="s2">&quot;geo_region&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;left&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span>
+        <span class="n">columns</span><span class="o">=</span><span class="s2">&quot;geo_region&quot;</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="merge_geo_regions">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.merge_geo_regions">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">merge_geo_regions</span><span class="p">(</span>
+    <span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+    <span class="n">geo_col</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">geo_regions</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="n">GeoRegion</span> <span class="o">|</span> <span class="nb">str</span><span class="p">],</span>
+    <span class="n">input_scheme</span><span class="p">:</span> <span class="n">GeoScheme</span> <span class="o">=</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">,</span>
+    <span class="n">pretty_labels</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Right-merge ``geo_regions`` onto ``df`` based on ``geo_col``.</span>
+
+<span class="sd">    Merge such that rows with multiple mapped regions are multiplicated.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        df: The dataframe to merge into.</span>
+<span class="sd">        geo_col: The column containing geo-regions.</span>
+<span class="sd">        geo_regions: The geo-regions to merge.</span>
+<span class="sd">        input_scheme: The scheme used to define the geo-regions.</span>
+<span class="sd">        rest_of_world: Whether to add a &quot;Rest of World&quot; region.</span>
+<span class="sd">        pretty_labels: Whether to use pretty labels for regions.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        The merged dataframe.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">src_df</span> <span class="o">=</span> <span class="n">expand_geo_col_to_cc</span><span class="p">(</span><span class="n">df</span><span class="p">,</span> <span class="n">geo_col</span><span class="o">=</span><span class="n">geo_col</span><span class="p">,</span> <span class="n">scheme</span><span class="o">=</span><span class="n">input_scheme</span><span class="p">)</span>
+
+    <span class="n">cc_coverage</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+    <span class="n">res_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">()</span>
+
+    <span class="n">geo_regions</span> <span class="o">=</span> <span class="p">[</span>
+        <span class="o">*</span><span class="n">geo_regions</span><span class="p">,</span>
+        <span class="n">GeoRegion</span><span class="p">(</span><span class="s2">&quot;world&quot;</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">world</span><span class="p">,</span> <span class="n">exclude_already_covered</span><span class="o">=</span><span class="kc">True</span><span class="p">),</span>
+    <span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">gr</span> <span class="ow">in</span> <span class="n">geo_regions</span><span class="p">:</span>
+        <span class="n">gr</span> <span class="o">=</span> <span class="n">gr</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gr</span><span class="p">,</span> <span class="n">GeoRegion</span><span class="p">)</span> <span class="k">else</span> <span class="n">GeoRegion</span><span class="p">(</span><span class="n">gr</span><span class="p">)</span>
+        <span class="n">geo_region_res</span> <span class="o">=</span> <span class="n">gr</span><span class="o">.</span><span class="n">get_label</span><span class="p">()</span>
+
+        <span class="n">cc_map</span> <span class="o">=</span> <span class="n">_region_to_country_map</span><span class="p">(</span><span class="n">gr</span><span class="p">)</span>
+        <span class="n">cc_set</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">cc_map</span><span class="p">[</span><span class="s2">&quot;cc&quot;</span><span class="p">])</span>
+        <span class="n">cc_already_covered</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">cc_coverage</span> <span class="o">&amp;</span> <span class="n">cc_set</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">pretty_labels</span> <span class="ow">and</span> <span class="p">(</span>
+            <span class="n">gr</span><span class="o">.</span><span class="n">scheme</span> <span class="o">==</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span> <span class="ow">or</span> <span class="n">gr</span><span class="o">.</span><span class="n">scheme</span> <span class="o">==</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span>
+        <span class="p">):</span>
+            <span class="n">geo_region_res</span> <span class="o">=</span> <span class="n">coco</span><span class="o">.</span><span class="n">convert</span><span class="p">(</span>
+                <span class="n">geo_region_res</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="n">gr</span><span class="o">.</span><span class="n">scheme</span><span class="o">.</span><span class="n">to_coco_scheme</span><span class="p">(),</span> <span class="n">to</span><span class="o">=</span><span class="s2">&quot;name&quot;</span>
+            <span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">cc_already_covered</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">gr</span><span class="o">.</span><span class="n">exclude_already_covered</span><span class="p">:</span>
+            <span class="n">geo_region_res</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;Rest of </span><span class="si">{</span><span class="n">gr</span><span class="o">.</span><span class="n">get_label</span><span class="p">()</span><span class="si">}</span><span class="s2">&quot;</span>
+            <span class="n">cc_map</span> <span class="o">=</span> <span class="n">cc_map</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="o">~</span><span class="n">cc_map</span><span class="p">[</span><span class="s2">&quot;cc&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">cc_already_covered</span><span class="p">)]</span>
+
+        <span class="n">res_df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">concat</span><span class="p">(</span>
+            <span class="p">[</span>
+                <span class="n">res_df</span><span class="p">,</span>
+                <span class="n">src_df</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">cc_map</span><span class="p">,</span> <span class="n">on</span><span class="o">=</span><span class="s2">&quot;cc&quot;</span><span class="p">,</span> <span class="n">how</span><span class="o">=</span><span class="s2">&quot;inner&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">assign</span><span class="p">(</span>
+                    <span class="n">geo_region</span><span class="o">=</span><span class="n">geo_region_res</span><span class="p">,</span> <span class="n">geo_region_label</span><span class="o">=</span><span class="n">gr</span><span class="o">.</span><span class="n">get_label</span><span class="p">()</span>
+                <span class="p">),</span>
+            <span class="p">]</span>
+        <span class="p">)</span>
+        <span class="n">cc_coverage</span> <span class="o">|=</span> <span class="n">cc_set</span>
+
+    <span class="k">return</span> <span class="n">res_df</span></div>
+
+
+
+<div class="viewcode-block" id="match_to_geo_region">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.match_to_geo_region">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">match_to_geo_region</span><span class="p">(</span>
+    <span class="n">countries</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span>
+    <span class="n">geo_region</span><span class="p">:</span> <span class="n">GeoRegion</span><span class="p">,</span>
+    <span class="n">country_scheme</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Check whether countries are in given geo-region.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        countries: Series of countries to check.</span>
+<span class="sd">        geo_region: The geo-region to check against.</span>
+<span class="sd">        country_scheme: The scheme of the countries.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Series of booleans indicating whether countries are in geo-region.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">countries_to_scheme</span><span class="p">(</span><span class="n">countries</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">,</span> <span class="n">src</span><span class="o">=</span><span class="n">country_scheme</span><span class="p">)</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span>
+        <span class="n">geo_region</span><span class="o">.</span><span class="n">to_country_list</span><span class="p">(</span><span class="n">scheme</span><span class="o">=</span><span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso3</span><span class="p">)</span>
+    <span class="p">)</span></div>
+
+
+
+<span class="n">flag_sizes</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">([</span><span class="mi">20</span><span class="p">,</span> <span class="mi">40</span><span class="p">,</span> <span class="mi">80</span><span class="p">,</span> <span class="mi">160</span><span class="p">,</span> <span class="mi">320</span><span class="p">,</span> <span class="mi">640</span><span class="p">,</span> <span class="mi">1280</span><span class="p">,</span> <span class="mi">2560</span><span class="p">])</span>
+
+
+<div class="viewcode-block" id="gen_flag_url">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.gen_flag_url">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">gen_flag_url</span><span class="p">(</span><span class="n">cc</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get the URL of a small flag image for a given country code.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cc: Series of country codes.</span>
+<span class="sd">        width: The desired width of the flag.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Series of flag image URLs.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="s2">&quot;https://flagcdn.com/w&quot;</span>
+        <span class="o">+</span> <span class="nb">str</span><span class="p">(</span><span class="n">flag_sizes</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">flag_sizes</span> <span class="o">&gt;</span> <span class="n">width</span><span class="p">]</span><span class="o">.</span><span class="n">min</span><span class="p">())</span>
+        <span class="o">+</span> <span class="s2">&quot;/&quot;</span>
+        <span class="o">+</span> <span class="n">countries_to_scheme</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span><span class="p">)</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+        <span class="o">+</span> <span class="s2">&quot;.png&quot;</span>
+    <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="gen_flag_img_tag">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.geo.html#py_research.geo.gen_flag_img_tag">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">gen_flag_img_tag</span><span class="p">(</span><span class="n">cc</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">,</span> <span class="n">width</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Generate a HTML image tag with a small flag for a given country code.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        cc: Series of country codes.</span>
+<span class="sd">        width: The desired width of the flag.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Series of HTML image tags.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">flags</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="s2">&quot;&lt;img &quot;</span>
+        <span class="o">+</span> <span class="p">(</span><span class="s1">&#39; src=&quot;&#39;</span> <span class="o">+</span> <span class="n">gen_flag_url</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">width</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;&quot;&#39;</span><span class="p">)</span>
+        <span class="o">+</span> <span class="p">(</span>
+            <span class="p">(</span><span class="s1">&#39; srcset=&quot;&#39;</span> <span class="o">+</span> <span class="n">gen_flag_url</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">width</span> <span class="o">*</span> <span class="mi">2</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39; 2x&quot;&#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">width</span> <span class="o">!=</span> <span class="mi">2560</span>
+            <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+        <span class="p">)</span>
+        <span class="o">+</span> <span class="sa">f</span><span class="s1">&#39; width=&quot;</span><span class="si">{</span><span class="n">width</span><span class="si">}</span><span class="s1">&quot;&#39;</span>
+        <span class="o">+</span> <span class="p">(</span><span class="s1">&#39; alt=&quot;&#39;</span> <span class="o">+</span> <span class="n">countries_to_scheme</span><span class="p">(</span><span class="n">cc</span><span class="p">,</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;&quot;&#39;</span><span class="p">)</span>
+        <span class="o">+</span> <span class="s1">&#39; style=&quot;border: 1px solid #00000080&quot;&#39;</span>
+        <span class="o">+</span> <span class="s2">&quot;/&gt;&quot;</span>
+    <span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">flags</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="o">~</span><span class="n">cc</span><span class="o">.</span><span class="n">isin</span><span class="p">([</span><span class="s2">&quot;not found&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="s2">&quot;?&quot;</span><span class="p">])</span> <span class="o">&amp;</span> <span class="n">cc</span><span class="o">.</span><span class="n">notna</span><span class="p">(),</span> <span class="s2">&quot;&quot;</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

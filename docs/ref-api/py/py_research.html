@@ -1,0 +1,870 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>py_research package &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'docs/ref-api/py/py_research';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="py_research.db package" href="py_research.db.html" />
+    <link rel="prev" title="src" href="modules.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="modules.html">src</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active has-children"><a class="current reference internal" href="#">py_research package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l3 has-children"><a class="reference internal" href="py_research.db.html">py_research.db package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html">py_research.db.base module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.conflicts.html">py_research.db.conflicts module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.importing.html">py_research.db.importing module</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.plots.html">py_research.plots package</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="py_research.reflect.html">py_research.reflect package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html">py_research.reflect.deps module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html">py_research.reflect.dist module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.env.html">py_research.reflect.env module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.ref.html">py_research.reflect.ref module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html">py_research.reflect.runtime module</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.caching.html">py_research.caching module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.colors.html">py_research.colors module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.data.html">py_research.data module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.enums.html">py_research.enums module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.files.html">py_research.files module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html">py_research.geo module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.hashing.html">py_research.hashing module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html">py_research.intl module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.ranking.html">py_research.ranking module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html">py_research.sql module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.stats.html">py_research.stats module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html">py_research.tables module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.telemetry.html">py_research.telemetry module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.time.html">py_research.time module</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">API References</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="modules.html" class="nav-link">src</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research package</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-py_research">
+<span id="py-research-package"></span><h1>py_research package<a class="headerlink" href="#module-py_research" title="Link to this heading">#</a></h1>
+<p>Collection of utilities for R&amp;D coding in Python.</p>
+<section id="subpackages">
+<h2>Subpackages<a class="headerlink" href="#subpackages" title="Link to this heading">#</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="py_research.db.html">py_research.db package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.html#submodules">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html">py_research.db.base module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table"><code class="docutils literal notranslate"><span class="pre">Table</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable"><code class="docutils literal notranslate"><span class="pre">SingleTable</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SourceTable"><code class="docutils literal notranslate"><span class="pre">SourceTable</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DBSchema"><code class="docutils literal notranslate"><span class="pre">DBSchema</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB"><code class="docutils literal notranslate"><span class="pre">DB</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.conflicts.html">py_research.db.conflicts module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflictPolicy"><code class="docutils literal notranslate"><span class="pre">DataConflictPolicy</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflicts"><code class="docutils literal notranslate"><span class="pre">DataConflicts</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflictError"><code class="docutils literal notranslate"><span class="pre">DataConflictError</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html">py_research.db.importing module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap"><code class="docutils literal notranslate"><span class="pre">TableMap</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.RelDB"><code class="docutils literal notranslate"><span class="pre">RelDB</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.tree_to_db"><code class="docutils literal notranslate"><span class="pre">tree_to_db()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.plots.html">py_research.plots package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.plots.html#py_research.plots.export_html"><code class="docutils literal notranslate"><span class="pre">export_html()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.plots.html#py_research.plots.plotly_to_html"><code class="docutils literal notranslate"><span class="pre">plotly_to_html()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.plots.html#py_research.plots.with_dropdown"><code class="docutils literal notranslate"><span class="pre">with_dropdown()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.reflect.html">py_research.reflect package</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.reflect.html#submodules">Submodules</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.reflect.deps.html">py_research.reflect.deps module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.get_all_module_dependencies"><code class="docutils literal notranslate"><span class="pre">get_all_module_dependencies()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.get_dist_requirements"><code class="docutils literal notranslate"><span class="pre">get_dist_requirements()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.get_versions_on_pypi"><code class="docutils literal notranslate"><span class="pre">get_versions_on_pypi()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.version_diff"><code class="docutils literal notranslate"><span class="pre">version_diff()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.get_outdated_deps"><code class="docutils literal notranslate"><span class="pre">get_outdated_deps()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.version_to_range"><code class="docutils literal notranslate"><span class="pre">version_to_range()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html#py_research.reflect.deps.semver_range_to_spec"><code class="docutils literal notranslate"><span class="pre">semver_range_to_spec()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.reflect.dist.html">py_research.reflect.dist module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_distributions"><code class="docutils literal notranslate"><span class="pre">get_distributions()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_module_file"><code class="docutils literal notranslate"><span class="pre">get_module_file()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_module_distribution"><code class="docutils literal notranslate"><span class="pre">get_module_distribution()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_file_repo"><code class="docutils literal notranslate"><span class="pre">get_file_repo()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_module_repo"><code class="docutils literal notranslate"><span class="pre">get_module_repo()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_project_urls"><code class="docutils literal notranslate"><span class="pre">get_project_urls()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html#py_research.reflect.dist.get_py_inventory"><code class="docutils literal notranslate"><span class="pre">get_py_inventory()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.reflect.env.html">py_research.reflect.env module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.env.html#py_research.reflect.env.env_info"><code class="docutils literal notranslate"><span class="pre">env_info()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.env.html#py_research.reflect.env.is_in_jupyter"><code class="docutils literal notranslate"><span class="pre">is_in_jupyter()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.reflect.ref.html">py_research.reflect.ref module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.ref.html#py_research.reflect.ref.PyObjectRef"><code class="docutils literal notranslate"><span class="pre">PyObjectRef</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.ref.html#py_research.reflect.ref.stref"><code class="docutils literal notranslate"><span class="pre">stref()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.reflect.runtime.html">py_research.reflect.runtime module</a><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html#py_research.reflect.runtime.get_calling_module"><code class="docutils literal notranslate"><span class="pre">get_calling_module()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html#py_research.reflect.runtime.get_full_args_dict"><code class="docutils literal notranslate"><span class="pre">get_full_args_dict()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html#py_research.reflect.runtime.get_return_type"><code class="docutils literal notranslate"><span class="pre">get_return_type()</span></code></a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html#py_research.reflect.runtime.get_all_subclasses"><code class="docutils literal notranslate"><span class="pre">get_all_subclasses()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">#</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="py_research.caching.html">py_research.caching module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.caching.html#py_research.caching.FileCache"><code class="docutils literal notranslate"><span class="pre">FileCache</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.caching.html#py_research.caching.FileCache.path"><code class="docutils literal notranslate"><span class="pre">FileCache.path</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.caching.html#py_research.caching.FileCache.max_cache_time"><code class="docutils literal notranslate"><span class="pre">FileCache.max_cache_time</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.caching.html#py_research.caching.FileCache.function"><code class="docutils literal notranslate"><span class="pre">FileCache.function()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.caching.html#py_research.caching.get_cache"><code class="docutils literal notranslate"><span class="pre">get_cache()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.colors.html">py_research.colors module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.default_highlights"><code class="docutils literal notranslate"><span class="pre">default_highlights()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.default_scales"><code class="docutils literal notranslate"><span class="pre">default_scales()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.ColorTheme"><code class="docutils literal notranslate"><span class="pre">ColorTheme</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.colors.html#py_research.colors.ColorTheme.highlights"><code class="docutils literal notranslate"><span class="pre">ColorTheme.highlights</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.colors.html#py_research.colors.ColorTheme.scales"><code class="docutils literal notranslate"><span class="pre">ColorTheme.scales</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.colors.html#py_research.colors.ColorTheme.activate"><code class="docutils literal notranslate"><span class="pre">ColorTheme.activate()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.get_theme"><code class="docutils literal notranslate"><span class="pre">get_theme()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.to_bg_color"><code class="docutils literal notranslate"><span class="pre">to_bg_color()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.default_file_path"><code class="docutils literal notranslate"><span class="pre">default_file_path</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.colors.html#py_research.colors.load_from_file"><code class="docutils literal notranslate"><span class="pre">load_from_file()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.data.html">py_research.data module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.is_number_dtype"><code class="docutils literal notranslate"><span class="pre">is_number_dtype()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.to_boolean"><code class="docutils literal notranslate"><span class="pre">to_boolean()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.to_integer"><code class="docutils literal notranslate"><span class="pre">to_integer()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.to_float"><code class="docutils literal notranslate"><span class="pre">to_float()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.parse_dtype"><code class="docutils literal notranslate"><span class="pre">parse_dtype()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.data.html#py_research.data.gen_id"><code class="docutils literal notranslate"><span class="pre">gen_id()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.enums.html">py_research.enums module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.enums.html#py_research.enums.StrEnum"><code class="docutils literal notranslate"><span class="pre">StrEnum</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.enums.html#py_research.enums.StrEnum.parse"><code class="docutils literal notranslate"><span class="pre">StrEnum.parse()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.files.html">py_research.files module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.files.html#py_research.files.ensure_dir_exists"><code class="docutils literal notranslate"><span class="pre">ensure_dir_exists()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.geo.html">py_research.geo module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance"><code class="docutils literal notranslate"><span class="pre">GeoAlliance</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU12"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU12</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU15"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU15</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU25"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU25</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU27"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU27</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU27_2007"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU27_2007</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EU28"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EU28</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.EEA"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.EEA</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.G7"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.G7</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.G20"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.G20</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.APEC"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.APEC</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.BRIC"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.BRIC</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.BASIC"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.BASIC</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.CIS"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.CIS</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoAlliance.OECD"><code class="docutils literal notranslate"><span class="pre">GeoAlliance.OECD</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme"><code class="docutils literal notranslate"><span class="pre">GeoScheme</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.country_name"><code class="docutils literal notranslate"><span class="pre">GeoScheme.country_name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.continent"><code class="docutils literal notranslate"><span class="pre">GeoScheme.continent</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.cc_iso3"><code class="docutils literal notranslate"><span class="pre">GeoScheme.cc_iso3</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.cc_iso2"><code class="docutils literal notranslate"><span class="pre">GeoScheme.cc_iso2</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.alliance"><code class="docutils literal notranslate"><span class="pre">GeoScheme.alliance</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.world"><code class="docutils literal notranslate"><span class="pre">GeoScheme.world</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoScheme.to_coco_scheme"><code class="docutils literal notranslate"><span class="pre">GeoScheme.to_coco_scheme()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion"><code class="docutils literal notranslate"><span class="pre">GeoRegion</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.label"><code class="docutils literal notranslate"><span class="pre">GeoRegion.label</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.scheme"><code class="docutils literal notranslate"><span class="pre">GeoRegion.scheme</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.display_label"><code class="docutils literal notranslate"><span class="pre">GeoRegion.display_label</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.exclude_already_covered"><code class="docutils literal notranslate"><span class="pre">GeoRegion.exclude_already_covered</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.get_label"><code class="docutils literal notranslate"><span class="pre">GeoRegion.get_label()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.GeoRegion.to_country_list"><code class="docutils literal notranslate"><span class="pre">GeoRegion.to_country_list()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.CountryScheme"><code class="docutils literal notranslate"><span class="pre">CountryScheme</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.Country"><code class="docutils literal notranslate"><span class="pre">Country</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.Country.label"><code class="docutils literal notranslate"><span class="pre">Country.label</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.Country.scheme"><code class="docutils literal notranslate"><span class="pre">Country.scheme</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.Country.to"><code class="docutils literal notranslate"><span class="pre">Country.to()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html#py_research.geo.Country.data"><code class="docutils literal notranslate"><span class="pre">Country.data</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.countries_to_scheme"><code class="docutils literal notranslate"><span class="pre">countries_to_scheme()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.expand_geo_col_to_cc"><code class="docutils literal notranslate"><span class="pre">expand_geo_col_to_cc()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.merge_geo_regions"><code class="docutils literal notranslate"><span class="pre">merge_geo_regions()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.match_to_geo_region"><code class="docutils literal notranslate"><span class="pre">match_to_geo_region()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.gen_flag_url"><code class="docutils literal notranslate"><span class="pre">gen_flag_url()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.geo.html#py_research.geo.gen_flag_img_tag"><code class="docutils literal notranslate"><span class="pre">gen_flag_img_tag()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.hashing.html">py_research.hashing module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.hashing.html#py_research.hashing.gen_int_hash"><code class="docutils literal notranslate"><span class="pre">gen_int_hash()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.hashing.html#py_research.hashing.gen_str_hash"><code class="docutils literal notranslate"><span class="pre">gen_str_hash()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.intl.html">py_research.intl module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit"><code class="docutils literal notranslate"><span class="pre">DtUnit</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.year"><code class="docutils literal notranslate"><span class="pre">DtUnit.year</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.quarter"><code class="docutils literal notranslate"><span class="pre">DtUnit.quarter</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.month"><code class="docutils literal notranslate"><span class="pre">DtUnit.month</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.week"><code class="docutils literal notranslate"><span class="pre">DtUnit.week</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.week_of_month"><code class="docutils literal notranslate"><span class="pre">DtUnit.week_of_month</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.day"><code class="docutils literal notranslate"><span class="pre">DtUnit.day</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.day_of_year"><code class="docutils literal notranslate"><span class="pre">DtUnit.day_of_year</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.hour"><code class="docutils literal notranslate"><span class="pre">DtUnit.hour</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.minute"><code class="docutils literal notranslate"><span class="pre">DtUnit.minute</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.second"><code class="docutils literal notranslate"><span class="pre">DtUnit.second</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.DtUnit.millisecond"><code class="docutils literal notranslate"><span class="pre">DtUnit.millisecond</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format"><code class="docutils literal notranslate"><span class="pre">Format</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.decimal_notation"><code class="docutils literal notranslate"><span class="pre">Format.decimal_notation</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.decimal_digits"><code class="docutils literal notranslate"><span class="pre">Format.decimal_digits</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.decimal_min_digits"><code class="docutils literal notranslate"><span class="pre">Format.decimal_min_digits</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.decimal_max_digits"><code class="docutils literal notranslate"><span class="pre">Format.decimal_max_digits</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.decimal_group_separator"><code class="docutils literal notranslate"><span class="pre">Format.decimal_group_separator</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.datetime_auto_format"><code class="docutils literal notranslate"><span class="pre">Format.datetime_auto_format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.datetime_format"><code class="docutils literal notranslate"><span class="pre">Format.datetime_format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.timedelta_auto_format"><code class="docutils literal notranslate"><span class="pre">Format.timedelta_auto_format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.timedelta_resolution"><code class="docutils literal notranslate"><span class="pre">Format.timedelta_resolution</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.country_format"><code class="docutils literal notranslate"><span class="pre">Format.country_format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.fallback_to_translation"><code class="docutils literal notranslate"><span class="pre">Format.fallback_to_translation</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.na_representation"><code class="docutils literal notranslate"><span class="pre">Format.na_representation</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.merge"><code class="docutils literal notranslate"><span class="pre">Format.merge()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.spec"><code class="docutils literal notranslate"><span class="pre">Format.spec()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Format.auto_digits"><code class="docutils literal notranslate"><span class="pre">Format.auto_digits()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.Args"><code class="docutils literal notranslate"><span class="pre">Args</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Args.values"><code class="docutils literal notranslate"><span class="pre">Args.values</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Args.all"><code class="docutils literal notranslate"><span class="pre">Args.all</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Args.match"><code class="docutils literal notranslate"><span class="pre">Args.match()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template"><code class="docutils literal notranslate"><span class="pre">Template</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template.replace"><code class="docutils literal notranslate"><span class="pre">Template.replace</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template.wrap"><code class="docutils literal notranslate"><span class="pre">Template.wrap</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template.args"><code class="docutils literal notranslate"><span class="pre">Template.args</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template.apply_tmpl"><code class="docutils literal notranslate"><span class="pre">Template.apply_tmpl()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Template.apply_args"><code class="docutils literal notranslate"><span class="pre">Template.apply_args()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.Overrides"><code class="docutils literal notranslate"><span class="pre">Overrides</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Overrides.templates"><code class="docutils literal notranslate"><span class="pre">Overrides.templates</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Overrides.vocabulary"><code class="docutils literal notranslate"><span class="pre">Overrides.vocabulary</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Overrides.format"><code class="docutils literal notranslate"><span class="pre">Overrides.format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Overrides.merge"><code class="docutils literal notranslate"><span class="pre">Overrides.merge()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization"><code class="docutils literal notranslate"><span class="pre">Localization</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.loc"><code class="docutils literal notranslate"><span class="pre">Localization.loc</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.overrides"><code class="docutils literal notranslate"><span class="pre">Localization.overrides</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.show_raw"><code class="docutils literal notranslate"><span class="pre">Localization.show_raw</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.locale"><code class="docutils literal notranslate"><span class="pre">Localization.locale</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.override_dict"><code class="docutils literal notranslate"><span class="pre">Localization.override_dict</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.get_overrides"><code class="docutils literal notranslate"><span class="pre">Localization.get_overrides()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.activate"><code class="docutils literal notranslate"><span class="pre">Localization.activate()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.deactivate"><code class="docutils literal notranslate"><span class="pre">Localization.deactivate()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.term"><code class="docutils literal notranslate"><span class="pre">Localization.term()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.text"><code class="docutils literal notranslate"><span class="pre">Localization.text()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.label"><code class="docutils literal notranslate"><span class="pre">Localization.label()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.value"><code class="docutils literal notranslate"><span class="pre">Localization.value()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.formatter"><code class="docutils literal notranslate"><span class="pre">Localization.formatter()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html#py_research.intl.Localization.format_spec"><code class="docutils literal notranslate"><span class="pre">Localization.format_spec()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.get_localization"><code class="docutils literal notranslate"><span class="pre">get_localization()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.iter_locales"><code class="docutils literal notranslate"><span class="pre">iter_locales()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.default_file_path"><code class="docutils literal notranslate"><span class="pre">default_file_path</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.intl.html#py_research.intl.load_from_file"><code class="docutils literal notranslate"><span class="pre">load_from_file()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.ranking.html">py_research.ranking module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.ranking.html#py_research.ranking.create_rank_series"><code class="docutils literal notranslate"><span class="pre">create_rank_series()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.ranking.html#py_research.ranking.create_ranking_filter"><code class="docutils literal notranslate"><span class="pre">create_ranking_filter()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.sql.html">py_research.sql module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.ColRef"><code class="docutils literal notranslate"><span class="pre">ColRef</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col"><code class="docutils literal notranslate"><span class="pre">Col</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.cast_sqla_attr"><code class="docutils literal notranslate"><span class="pre">Col.cast_sqla_attr()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.column"><code class="docutils literal notranslate"><span class="pre">Col.column</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.foreign_keys"><code class="docutils literal notranslate"><span class="pre">Col.foreign_keys</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.deferred"><code class="docutils literal notranslate"><span class="pre">Col.deferred</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.deferred_group"><code class="docutils literal notranslate"><span class="pre">Col.deferred_group</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.deferred_raiseload"><code class="docutils literal notranslate"><span class="pre">Col.deferred_raiseload</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Col.active_history"><code class="docutils literal notranslate"><span class="pre">Col.active_history</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.ColumnClause"><code class="docutils literal notranslate"><span class="pre">ColumnClause</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.Data"><code class="docutils literal notranslate"><span class="pre">Data</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Data.columns"><code class="docutils literal notranslate"><span class="pre">Data.columns</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Data.name"><code class="docutils literal notranslate"><span class="pre">Data.name</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.Table"><code class="docutils literal notranslate"><span class="pre">Table</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Table.sqla_table"><code class="docutils literal notranslate"><span class="pre">Table.sqla_table</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Table.columns"><code class="docutils literal notranslate"><span class="pre">Table.columns</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Table.name"><code class="docutils literal notranslate"><span class="pre">Table.name</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query"><code class="docutils literal notranslate"><span class="pre">Query</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query.sel"><code class="docutils literal notranslate"><span class="pre">Query.sel</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query.query_name"><code class="docutils literal notranslate"><span class="pre">Query.query_name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query.schema"><code class="docutils literal notranslate"><span class="pre">Query.schema</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query.name"><code class="docutils literal notranslate"><span class="pre">Query.name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Query.columns"><code class="docutils literal notranslate"><span class="pre">Query.columns</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery"><code class="docutils literal notranslate"><span class="pre">DeferredQuery</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery.func"><code class="docutils literal notranslate"><span class="pre">DeferredQuery.func</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery.schema"><code class="docutils literal notranslate"><span class="pre">DeferredQuery.schema</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery.columns"><code class="docutils literal notranslate"><span class="pre">DeferredQuery.columns</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery.subquery"><code class="docutils literal notranslate"><span class="pre">DeferredQuery.subquery</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DeferredQuery.name"><code class="docutils literal notranslate"><span class="pre">DeferredQuery.name</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema"><code class="docutils literal notranslate"><span class="pre">Schema</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema.schema_def"><code class="docutils literal notranslate"><span class="pre">Schema.schema_def</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema.db_schema"><code class="docutils literal notranslate"><span class="pre">Schema.db_schema</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema.default"><code class="docutils literal notranslate"><span class="pre">Schema.default</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema.name"><code class="docutils literal notranslate"><span class="pre">Schema.name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.Schema.tables"><code class="docutils literal notranslate"><span class="pre">Schema.tables</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.DBSchema"><code class="docutils literal notranslate"><span class="pre">DBSchema</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DBSchema.schema_dict"><code class="docutils literal notranslate"><span class="pre">DBSchema.schema_dict()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DBSchema.default"><code class="docutils literal notranslate"><span class="pre">DBSchema.default()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DBSchema.defaults"><code class="docutils literal notranslate"><span class="pre">DBSchema.defaults()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DBSchema.metadata"><code class="docutils literal notranslate"><span class="pre">DBSchema.metadata()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB"><code class="docutils literal notranslate"><span class="pre">DB</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.url"><code class="docutils literal notranslate"><span class="pre">DB.url</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.schema"><code class="docutils literal notranslate"><span class="pre">DB.schema</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.tag"><code class="docutils literal notranslate"><span class="pre">DB.tag</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.validate"><code class="docutils literal notranslate"><span class="pre">DB.validate</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.activate"><code class="docutils literal notranslate"><span class="pre">DB.activate()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.default_table"><code class="docutils literal notranslate"><span class="pre">DB.default_table()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.to_table"><code class="docutils literal notranslate"><span class="pre">DB.to_table()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html#py_research.sql.DB.to_df"><code class="docutils literal notranslate"><span class="pre">DB.to_df()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.query"><code class="docutils literal notranslate"><span class="pre">query()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.sql.html#py_research.sql.default_table"><code class="docutils literal notranslate"><span class="pre">default_table()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.stats.html">py_research.stats module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.stats.html#py_research.stats.dist_table"><code class="docutils literal notranslate"><span class="pre">dist_table()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.tables.html">py_research.tables module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle"><code class="docutils literal notranslate"><span class="pre">TableStyle</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.dfs"><code class="docutils literal notranslate"><span class="pre">TableStyle.dfs</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.cols"><code class="docutils literal notranslate"><span class="pre">TableStyle.cols</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.rows"><code class="docutils literal notranslate"><span class="pre">TableStyle.rows</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.name"><code class="docutils literal notranslate"><span class="pre">TableStyle.name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.format"><code class="docutils literal notranslate"><span class="pre">TableStyle.format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.css"><code class="docutils literal notranslate"><span class="pre">TableStyle.css</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.header_css"><code class="docutils literal notranslate"><span class="pre">TableStyle.header_css</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.hide"><code class="docutils literal notranslate"><span class="pre">TableStyle.hide</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.include"><code class="docutils literal notranslate"><span class="pre">TableStyle.include</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableStyle.require"><code class="docutils literal notranslate"><span class="pre">TableStyle.require</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableColors"><code class="docutils literal notranslate"><span class="pre">TableColors</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableColors.row_even"><code class="docutils literal notranslate"><span class="pre">TableColors.row_even</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableColors.row_odd"><code class="docutils literal notranslate"><span class="pre">TableColors.row_odd</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableColors.header_even"><code class="docutils literal notranslate"><span class="pre">TableColors.header_even</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.TableColors.header_odd"><code class="docutils literal notranslate"><span class="pre">TableColors.header_odd</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable"><code class="docutils literal notranslate"><span class="pre">ResultTable</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.df"><code class="docutils literal notranslate"><span class="pre">ResultTable.df</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.styles"><code class="docutils literal notranslate"><span class="pre">ResultTable.styles</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.labels"><code class="docutils literal notranslate"><span class="pre">ResultTable.labels</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.widths"><code class="docutils literal notranslate"><span class="pre">ResultTable.widths</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.title"><code class="docutils literal notranslate"><span class="pre">ResultTable.title</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.max_row_cutoff"><code class="docutils literal notranslate"><span class="pre">ResultTable.max_row_cutoff</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.font_size"><code class="docutils literal notranslate"><span class="pre">ResultTable.font_size</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.default_style"><code class="docutils literal notranslate"><span class="pre">ResultTable.default_style</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.column_flatten_format"><code class="docutils literal notranslate"><span class="pre">ResultTable.column_flatten_format</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.show_index"><code class="docutils literal notranslate"><span class="pre">ResultTable.show_index</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.table_colors"><code class="docutils literal notranslate"><span class="pre">ResultTable.table_colors</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.table_css"><code class="docutils literal notranslate"><span class="pre">ResultTable.table_css</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.index_label"><code class="docutils literal notranslate"><span class="pre">ResultTable.index_label</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.html_description"><code class="docutils literal notranslate"><span class="pre">ResultTable.html_description()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.to_styled_df"><code class="docutils literal notranslate"><span class="pre">ResultTable.to_styled_df()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html#py_research.tables.ResultTable.to_html"><code class="docutils literal notranslate"><span class="pre">ResultTable.to_html()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.to_html"><code class="docutils literal notranslate"><span class="pre">to_html()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.html_to_pdf"><code class="docutils literal notranslate"><span class="pre">html_to_pdf()</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.tables.html#py_research.tables.html_to_image"><code class="docutils literal notranslate"><span class="pre">html_to_image()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.telemetry.html">py_research.telemetry module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.telemetry.html#py_research.telemetry.TqdmHandler"><code class="docutils literal notranslate"><span class="pre">TqdmHandler</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.telemetry.html#py_research.telemetry.TqdmHandler.tqdm"><code class="docutils literal notranslate"><span class="pre">TqdmHandler.tqdm</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.telemetry.html#py_research.telemetry.TqdmHandler.emit"><code class="docutils literal notranslate"><span class="pre">TqdmHandler.emit()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.telemetry.html#py_research.telemetry.configure_logging"><code class="docutils literal notranslate"><span class="pre">configure_logging()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.time.html">py_research.time module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.time.html#py_research.time.datetime_to_interval_series"><code class="docutils literal notranslate"><span class="pre">datetime_to_interval_series()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="modules.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">src</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="py_research.db.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">py_research.db package</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#subpackages">Subpackages</a></li>
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#submodules">Submodules</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../../_sources/docs/ref-api/py/py_research.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

@@ -1,0 +1,1198 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>py_research.sql &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/py_research/sql';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research.sql</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for py_research.sql</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Connect to an SQL server, validate its schema and perform cached analysis queries.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Mapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextvars</span><span class="w"> </span><span class="kn">import</span> <span class="n">ContextVar</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">InitVar</span><span class="p">,</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">datetime</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span><span class="p">,</span> <span class="n">wraps</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">TYPE_CHECKING</span><span class="p">,</span>
+    <span class="n">Any</span><span class="p">,</span>
+    <span class="n">Generic</span><span class="p">,</span>
+    <span class="n">Literal</span><span class="p">,</span>
+    <span class="n">ParamSpec</span><span class="p">,</span>
+    <span class="n">Protocol</span><span class="p">,</span>
+    <span class="n">TypeAlias</span><span class="p">,</span>
+    <span class="n">TypeVar</span><span class="p">,</span>
+    <span class="n">cast</span><span class="p">,</span>
+    <span class="n">overload</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlalchemy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sqla</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlalchemy.orm</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">orm</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sqlalchemy.sql.roles</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">sqla_roles</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pandas.api.types</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">is_datetime64_dtype</span><span class="p">,</span>
+    <span class="n">is_integer_dtype</span><span class="p">,</span>
+    <span class="n">is_numeric_dtype</span><span class="p">,</span>
+    <span class="n">is_string_dtype</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pandas.util</span><span class="w"> </span><span class="kn">import</span> <span class="n">hash_pandas_object</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Self</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.reflect.runtime</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_all_subclasses</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_hash_df</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span> <span class="o">|</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">hex</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="nb">sum</span><span class="p">(</span><span class="n">hash_pandas_object</span><span class="p">(</span><span class="n">df</span><span class="p">))))[</span><span class="mi">2</span><span class="p">:</span><span class="mi">12</span><span class="p">]</span>
+
+
+<span class="n">Params</span> <span class="o">=</span> <span class="n">ParamSpec</span><span class="p">(</span><span class="s2">&quot;Params&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_sql_ctx</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="s2">&quot;DB&quot;</span><span class="p">:</span>
+    <span class="n">sql_con</span> <span class="o">=</span> <span class="n">active_con</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+
+    <span class="k">if</span> <span class="n">sql_con</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="p">(</span><span class="ne">RuntimeError</span><span class="p">(</span><span class="s2">&quot;`SQLContext` object not supplied via context.&quot;</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">sql_con</span>
+
+
+<span class="n">SchemaBase</span> <span class="o">=</span> <span class="n">orm</span><span class="o">.</span><span class="n">DeclarativeBase</span>
+
+
+<span class="n">default_type_map</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="nb">str</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">String</span><span class="p">()</span><span class="o">.</span><span class="n">with_variant</span><span class="p">(</span>
+        <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">String</span><span class="p">(</span><span class="mi">50</span><span class="p">),</span> <span class="s2">&quot;oracle&quot;</span>
+    <span class="p">),</span>  <span class="c1"># Avoid oracle error when VARCHAR has no size parameter</span>
+<span class="p">}</span>
+
+
+<span class="n">V</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;V&quot;</span><span class="p">)</span>
+<span class="n">S</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;S&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="n">SchemaBase</span><span class="p">)</span>
+<span class="n">S_cov</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;S_cov&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="n">SchemaBase</span><span class="p">,</span> <span class="n">covariant</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">S_contra</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;S_contra&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="n">SchemaBase</span><span class="p">,</span> <span class="n">contravariant</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="n">V_contra</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;V_contra&quot;</span><span class="p">,</span> <span class="n">contravariant</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="ColRef">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.ColRef">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ColRef</span><span class="p">(</span><span class="n">orm</span><span class="o">.</span><span class="n">InstrumentedAttribute</span><span class="p">[</span><span class="n">V</span><span class="p">],</span> <span class="n">Generic</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S_contra</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reference a column by scheme type, name and value type.&quot;&quot;&quot;</span>  <span class="c1"># type: ignore[override]</span></div>
+
+
+
+<div class="viewcode-block" id="Col">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Col">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Col</span><span class="p">(</span><span class="n">orm</span><span class="o">.</span><span class="n">MappedColumn</span><span class="p">[</span><span class="n">V</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Define table column within a table schema.&quot;&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+
+        <span class="nd">@overload</span>
+        <span class="k">def</span><span class="w"> </span><span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instance</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S</span><span class="p">]:</span> <span class="o">...</span>
+
+        <span class="nd">@overload</span>
+        <span class="k">def</span><span class="w"> </span><span class="fm">__get__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">instance</span><span class="p">:</span> <span class="nb">object</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">V</span><span class="p">:</span> <span class="o">...</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="fm">__get__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+            <span class="bp">self</span><span class="p">,</span> <span class="n">instance</span><span class="p">:</span> <span class="nb">object</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">]</span>
+        <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="n">V</span><span class="p">:</span> <span class="o">...</span>
+
+<div class="viewcode-block" id="Col.cast_sqla_attr">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Col.cast_sqla_attr">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cast_sqla_attr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="n">attr</span><span class="p">:</span> <span class="n">orm</span><span class="o">.</span><span class="n">MappedColumn</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Cast a sqlalchemy attr object to this type.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span><span class="n">Self</span><span class="p">,</span> <span class="n">attr</span><span class="p">)</span></div>
+</div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_wrap_mapped_col</span><span class="p">(</span>
+    <span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">orm</span><span class="o">.</span><span class="n">MappedColumn</span><span class="p">[</span><span class="n">V</span><span class="p">]]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">Col</span><span class="p">[</span><span class="n">V</span><span class="p">]]:</span>
+    <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Params</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Params</span><span class="o">.</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Col</span><span class="p">[</span><span class="n">V</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">Col</span><span class="o">.</span><span class="n">cast_sqla_attr</span><span class="p">(</span><span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">))</span>
+
+    <span class="k">return</span> <span class="n">inner</span>
+
+
+<span class="n">col</span> <span class="o">=</span> <span class="n">_wrap_mapped_col</span><span class="p">(</span><span class="n">orm</span><span class="o">.</span><span class="n">mapped_column</span><span class="p">)</span>
+<span class="n">Relation</span> <span class="o">=</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ForeignKey</span>
+
+
+<div class="viewcode-block" id="ColumnClause">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.ColumnClause">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ColumnClause</span><span class="p">(</span><span class="n">sqla_roles</span><span class="o">.</span><span class="n">ColumnsClauseRole</span><span class="p">,</span> <span class="n">sqla_roles</span><span class="o">.</span><span class="n">ExpressionElementRole</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Mix sqlalchemy classes to mitigate typing mishabs.&quot;&quot;&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="Data">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Data">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Data</span><span class="p">(</span><span class="n">Protocol</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SQL table-shaped data.&quot;&quot;&quot;</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">columns</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return all columns within this data.&quot;&quot;&quot;</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__clause_element__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColumnClause</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S_cov</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">[</span><span class="n">V</span><span class="p">]:</span> <span class="o">...</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Data object&#39;s name, if any.&quot;&quot;&quot;</span>
+        <span class="o">...</span></div>
+
+
+
+<div class="viewcode-block" id="Table">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Table">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Table</span><span class="p">(</span><span class="n">Data</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Reference to a manifested SQL table.&quot;&quot;&quot;</span>
+
+    <span class="n">sqla_table</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">columns</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">]:</span>  <span class="c1"># noqa: D102</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sqla_table</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S_cov</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">[</span><span class="n">V</span><span class="p">]:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">ref</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">ref</span><span class="o">.</span><span class="n">key</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__clause_element__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColumnClause</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span><span class="n">ColumnClause</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">sqla_table</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>  <span class="c1"># noqa: D102</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">sqla_table</span><span class="o">.</span><span class="n">name</span></div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_map_df_dtype</span><span class="p">(</span><span class="n">c</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">TypeEngine</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">is_datetime64_dtype</span><span class="p">(</span><span class="n">c</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">DATETIME</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">is_integer_dtype</span><span class="p">(</span><span class="n">c</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">INTEGER</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">is_numeric_dtype</span><span class="p">(</span><span class="n">c</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">FLOAT</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">is_string_dtype</span><span class="p">(</span><span class="n">c</span><span class="p">):</span>
+        <span class="n">max_len</span> <span class="o">=</span> <span class="n">c</span><span class="o">.</span><span class="n">str</span><span class="o">.</span><span class="n">len</span><span class="p">()</span><span class="o">.</span><span class="n">max</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">max_len</span> <span class="o">&lt;</span> <span class="mi">16</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">CHAR</span><span class="p">(</span><span class="n">max_len</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">max_len</span> <span class="o">&lt;</span> <span class="mi">256</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">VARCHAR</span><span class="p">(</span><span class="n">max_len</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">sqla</span><span class="o">.</span><span class="n">types</span><span class="o">.</span><span class="n">BLOB</span><span class="p">()</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_cols_from_df</span><span class="p">(</span><span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">names</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s2">&quot;Multi-index not supported yet.&quot;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="o">**</span><span class="p">{</span>
+            <span class="n">level</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span>
+                <span class="n">level</span><span class="p">,</span>
+                <span class="n">_map_df_dtype</span><span class="p">(</span><span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">get_level_values</span><span class="p">(</span><span class="n">level</span><span class="p">)</span><span class="o">.</span><span class="n">to_series</span><span class="p">()),</span>
+                <span class="n">primary_key</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">level</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">names</span>
+        <span class="p">},</span>
+        <span class="o">**</span><span class="p">{</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">name</span><span class="p">):</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">col</span><span class="o">.</span><span class="n">name</span><span class="p">),</span> <span class="n">_map_df_dtype</span><span class="p">(</span><span class="n">col</span><span class="p">))</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">},</span>
+    <span class="p">}</span>
+
+
+<div class="viewcode-block" id="Query">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Query">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Query</span><span class="p">(</span><span class="n">Data</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SQL data defined by a query.&quot;&quot;&quot;</span>
+
+    <span class="n">sel</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Select</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SQLAlchemy select statement.&quot;&quot;&quot;</span>
+
+    <span class="n">query_name</span><span class="p">:</span> <span class="n">InitVar</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of this query.&quot;&quot;&quot;</span>
+
+    <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Schema of this query&#39;s result.&quot;&quot;&quot;</span>
+
+    <span class="n">_subquery</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Subquery</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">query_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__name</span> <span class="o">=</span> <span class="n">query_name</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Name of this query.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__name</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">columns</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">]:</span>  <span class="c1"># noqa: D102</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">sel</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__clause_element__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColumnClause</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">sel</span><span class="o">.</span><span class="n">subquery</span><span class="p">()</span>
+
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span><span class="n">ColumnClause</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S_cov</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">[</span><span class="n">V</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">ref</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">ref</span><span class="o">.</span><span class="n">key</span><span class="p">]</span></div>
+
+
+
+<span class="n">SelFunc</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Callable</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Select</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">]</span>
+<span class="n">BoundSelFunc</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Select</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">]</span>
+
+
+<div class="viewcode-block" id="DeferredQuery">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DeferredQuery">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DeferredQuery</span><span class="p">(</span><span class="n">Data</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SQL data defined by a query or table-returning Python function.&quot;&quot;&quot;</span>
+
+    <span class="n">func</span><span class="p">:</span> <span class="n">BoundSelFunc</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Function returning a SQL query or table.&quot;&quot;&quot;</span>
+
+    <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Schema of this query&#39;s result.&quot;&quot;&quot;</span>
+
+    <span class="n">_subquery</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Subquery</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">columns</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">]:</span>  <span class="c1"># noqa: D102</span>
+        <span class="k">return</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">subquery</span><span class="o">.</span><span class="n">columns</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">subquery</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Subquery</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return subquery or table defined by this query.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span> <span class="o">=</span> <span class="n">res</span><span class="o">.</span><span class="n">subquery</span><span class="p">()</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Select</span><span class="p">)</span> <span class="k">else</span> <span class="n">res</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_subquery</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__clause_element__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ColumnClause</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span><span class="n">ColumnClause</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">subquery</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">ref</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">ColRef</span><span class="p">[</span><span class="n">V</span><span class="p">,</span> <span class="n">S_cov</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ColumnElement</span><span class="p">[</span><span class="n">V</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">columns</span><span class="p">[</span><span class="n">ref</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">ref</span><span class="o">.</span><span class="n">key</span><span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>  <span class="c1"># noqa: D102</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">subquery</span><span class="o">.</span><span class="n">name</span> <span class="ow">or</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="p">,</span> <span class="n">partial</span><span class="p">)</span>
+            <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">func</span><span class="p">,</span> <span class="n">Callable</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span></div>
+
+
+
+<span class="n">DS</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;DS&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="s2">&quot;DBSchema&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_map_foreignkey_schema</span><span class="p">(</span>
+    <span class="n">table</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">,</span>
+    <span class="n">to_schema</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">constraint</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ForeignKeyConstraint</span><span class="p">,</span>
+    <span class="n">referred_schema</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">schema_dict</span><span class="p">:</span> <span class="s2">&quot;dict[str | None, Schema | None]&quot;</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">assert</span> <span class="n">to_schema</span> <span class="ow">in</span> <span class="n">schema_dict</span>
+
+    <span class="k">for</span> <span class="n">schema_name</span><span class="p">,</span> <span class="n">schema</span> <span class="ow">in</span> <span class="n">schema_dict</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">schema</span><span class="o">.</span><span class="n">schema_def</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">schema_class</span> <span class="ow">in</span> <span class="n">get_all_subclasses</span><span class="p">(</span><span class="n">schema</span><span class="o">.</span><span class="n">schema_def</span><span class="p">):</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="nb">hasattr</span><span class="p">(</span><span class="n">schema_class</span><span class="p">,</span> <span class="s2">&quot;__table__&quot;</span><span class="p">)</span>
+                    <span class="ow">and</span> <span class="n">schema_class</span><span class="o">.</span><span class="n">__table__</span> <span class="ow">is</span> <span class="n">constraint</span><span class="o">.</span><span class="n">referred_table</span>
+                <span class="p">):</span>
+                    <span class="k">return</span> <span class="n">schema_name</span>
+
+    <span class="k">return</span> <span class="n">referred_schema</span>
+
+
+<div class="viewcode-block" id="Schema">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.Schema">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Schema</span><span class="p">(</span><span class="n">Generic</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">DS</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;SQL schema defining multiple related tables.&quot;&quot;&quot;</span>
+
+    <span class="n">schema_def</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Schema base class for this schema&#39;s tables.&quot;&quot;&quot;</span>
+
+    <span class="n">db_schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">DS</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;DBSchema instance this schema is defined in.&quot;&quot;&quot;</span>
+
+    <span class="n">default</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether this is the default schema for its schema type.&quot;&quot;&quot;</span>
+
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Name of this schema.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__set_name__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">_</span><span class="p">:</span> <span class="nb">type</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span> <span class="k">if</span> <span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;__default__&quot;</span> <span class="k">else</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__get__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">instance</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">DS</span><span class="p">]</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Schema[S_cov, DS]&quot;</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">db_schema</span> <span class="o">=</span> <span class="n">owner</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">tables</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Table</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Tables defined by this schema.&quot;&quot;&quot;</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="n">name</span><span class="p">:</span> <span class="n">Table</span><span class="p">(</span><span class="n">table</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">table</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span>
+        <span class="p">}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">table</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Table</span><span class="p">[</span><span class="n">S</span><span class="p">]:</span>  <span class="c1"># noqa: D105</span>
+        <span class="c1"># TODO: Find a way to limit table to type[S_cov] without losing type info,</span>
+        <span class="c1"># maybe via decorating the schema classes.</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">db_schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">Table</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">db_schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="p">[</span>
+                <span class="s2">&quot;.&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                    <span class="p">[</span>
+                        <span class="o">*</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">name</span> <span class="k">else</span> <span class="p">[]),</span>
+                        <span class="n">table</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">table</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">table</span><span class="o">.</span><span class="n">__tablename__</span><span class="p">,</span>
+                    <span class="p">]</span>
+                <span class="p">)</span>
+            <span class="p">]</span>
+        <span class="p">)</span></div>
+
+
+
+<div class="viewcode-block" id="DBSchema">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DBSchema">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DBSchema</span><span class="p">(</span><span class="n">Generic</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Schema for an entire SQL database.&quot;&quot;&quot;</span>
+
+    <span class="n">__default__</span><span class="p">:</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">Self</span><span class="p">]</span> <span class="o">=</span> <span class="n">Schema</span><span class="p">()</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Default schema for this DB.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="DBSchema.schema_dict">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DBSchema.schema_dict">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">schema_dict</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">Schema</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return dict with all sub-schemas.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="kc">None</span><span class="p">:</span> <span class="bp">cls</span><span class="o">.</span><span class="n">__default__</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
+            <span class="o">**</span><span class="p">{</span>
+                <span class="p">(</span><span class="n">name</span> <span class="k">if</span> <span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;__default__&quot;</span> <span class="k">else</span> <span class="kc">None</span><span class="p">):</span> <span class="n">s</span>
+                <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="vm">__dict__</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">Schema</span><span class="p">)</span> <span class="ow">and</span> <span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;__default__&quot;</span>
+            <span class="p">},</span>
+        <span class="p">}</span></div>
+
+
+<div class="viewcode-block" id="DBSchema.default">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DBSchema.default">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">default</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">Self</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return default schema.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">__default__</span>  <span class="c1"># type: ignore</span></div>
+
+
+<div class="viewcode-block" id="DBSchema.defaults">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DBSchema.defaults">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">defaults</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">type</span><span class="p">[</span><span class="n">SchemaBase</span><span class="p">],</span> <span class="n">Schema</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return mapping of schema types to default schema names.&quot;&quot;&quot;</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">s</span> <span class="ow">in</span> <span class="bp">cls</span><span class="o">.</span><span class="n">schema_dict</span><span class="p">()</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="k">if</span> <span class="p">(</span>
+                <span class="n">s</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                <span class="ow">and</span> <span class="n">s</span><span class="o">.</span><span class="n">schema_def</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                <span class="ow">and</span> <span class="p">(</span><span class="n">s</span><span class="o">.</span><span class="n">schema_def</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">defaults</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span> <span class="ow">or</span> <span class="n">s</span><span class="o">.</span><span class="n">default</span><span class="p">)</span>
+            <span class="p">):</span>
+                <span class="n">defaults</span><span class="p">[</span><span class="n">s</span><span class="o">.</span><span class="n">schema_def</span><span class="p">]</span> <span class="o">=</span> <span class="n">s</span>
+        <span class="k">return</span> <span class="n">defaults</span></div>
+
+
+<div class="viewcode-block" id="DBSchema.metadata">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DBSchema.metadata">[docs]</a>
+    <span class="nd">@classmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">metadata</span><span class="p">(</span><span class="bp">cls</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">MetaData</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return metadata object containing all this DB&#39;s schemas and tables.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">cls</span><span class="p">,</span> <span class="s2">&quot;__metadata__&quot;</span><span class="p">):</span>
+            <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">__metadata__</span>
+
+        <span class="bp">cls</span><span class="o">.</span><span class="n">__metadata__</span> <span class="o">=</span> <span class="n">sqla</span><span class="o">.</span><span class="n">MetaData</span><span class="p">()</span>
+        <span class="n">schema_dict</span> <span class="o">=</span> <span class="bp">cls</span><span class="o">.</span><span class="n">schema_dict</span><span class="p">()</span>
+        <span class="k">for</span> <span class="n">schema</span> <span class="ow">in</span> <span class="n">schema_dict</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+            <span class="k">if</span> <span class="n">schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">schema</span><span class="o">.</span><span class="n">schema_def</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">table</span> <span class="ow">in</span> <span class="n">schema</span><span class="o">.</span><span class="n">schema_def</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">tables</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+                    <span class="n">table</span><span class="o">.</span><span class="n">to_metadata</span><span class="p">(</span>
+                        <span class="bp">cls</span><span class="o">.</span><span class="n">__metadata__</span><span class="p">,</span>
+                        <span class="n">schema</span><span class="o">=</span><span class="n">schema</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                        <span class="n">referred_schema_fn</span><span class="o">=</span><span class="n">partial</span><span class="p">(</span>
+                            <span class="n">_map_foreignkey_schema</span><span class="p">,</span> <span class="n">schema_dict</span><span class="o">=</span><span class="n">schema_dict</span>
+                        <span class="p">),</span>
+                    <span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">cls</span><span class="o">.</span><span class="n">__metadata__</span></div>
+</div>
+
+
+
+<span class="n">S2</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;S2&quot;</span><span class="p">,</span> <span class="n">bound</span><span class="o">=</span><span class="n">SchemaBase</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_remove_external_fk</span><span class="p">(</span><span class="n">table</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Dirty vodoo to remove external FKs from existing table.&quot;&quot;&quot;</span>
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">table</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+        <span class="n">c</span><span class="o">.</span><span class="n">foreign_keys</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span>
+            <span class="n">fk</span>
+            <span class="k">for</span> <span class="n">fk</span> <span class="ow">in</span> <span class="n">c</span><span class="o">.</span><span class="n">foreign_keys</span>
+            <span class="k">if</span> <span class="n">fk</span><span class="o">.</span><span class="n">constraint</span> <span class="ow">and</span> <span class="n">fk</span><span class="o">.</span><span class="n">constraint</span><span class="o">.</span><span class="n">referred_table</span><span class="o">.</span><span class="n">schema</span> <span class="o">==</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span>
+        <span class="p">)</span>
+
+    <span class="n">table</span><span class="o">.</span><span class="n">foreign_keys</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span>  <span class="c1"># type: ignore</span>
+        <span class="n">fk</span>
+        <span class="k">for</span> <span class="n">fk</span> <span class="ow">in</span> <span class="n">table</span><span class="o">.</span><span class="n">foreign_keys</span>
+        <span class="k">if</span> <span class="n">fk</span><span class="o">.</span><span class="n">constraint</span> <span class="ow">and</span> <span class="n">fk</span><span class="o">.</span><span class="n">constraint</span><span class="o">.</span><span class="n">referred_table</span><span class="o">.</span><span class="n">schema</span> <span class="o">==</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span>
+    <span class="p">)</span>
+
+    <span class="n">table</span><span class="o">.</span><span class="n">constraints</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span>
+        <span class="n">c</span>
+        <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">table</span><span class="o">.</span><span class="n">constraints</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">c</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">ForeignKeyConstraint</span><span class="p">)</span>
+        <span class="ow">or</span> <span class="n">c</span><span class="o">.</span><span class="n">referred_table</span><span class="o">.</span><span class="n">schema</span> <span class="o">==</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span>
+    <span class="p">)</span>
+
+
+<div class="viewcode-block" id="DB">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DB">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">DB</span><span class="p">(</span><span class="n">Generic</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">DS</span><span class="p">]):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Active connection to a SQL server.&quot;&quot;&quot;</span>
+
+    <span class="n">url</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">URL</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Connection URL.&quot;&quot;&quot;</span>
+
+    <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">DBSchema</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]]</span> <span class="o">=</span> <span class="n">DBSchema</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Schema for this DB.&quot;&quot;&quot;</span>
+
+    <span class="n">tag</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">datetime</span><span class="o">.</span><span class="n">today</span><span class="p">()</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;YYYY-MM-dd&quot;</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Tag for this DB session. Used to identify automatically created tables.&quot;&quot;&quot;</span>
+
+    <span class="n">validate</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether to validate the DB schema on connection.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">engine</span> <span class="o">=</span> <span class="n">sqla</span><span class="o">.</span><span class="n">create_engine</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">url</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">validate</span><span class="p">:</span>
+            <span class="c1"># Validation.</span>
+
+            <span class="n">inspector</span> <span class="o">=</span> <span class="n">sqla</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">table</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="o">.</span><span class="n">values</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="n">inspector</span><span class="o">.</span><span class="n">has_schema</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">schema</span><span class="p">)</span>
+
+                <span class="k">assert</span> <span class="n">inspector</span><span class="o">.</span><span class="n">has_table</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span><span class="p">)</span>
+
+                <span class="n">db_columns</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">c</span><span class="p">[</span><span class="s2">&quot;name&quot;</span><span class="p">]:</span> <span class="n">c</span>
+                    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">inspector</span><span class="o">.</span><span class="n">get_columns</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span><span class="p">)</span>
+                <span class="p">}</span>
+                <span class="k">for</span> <span class="n">column</span> <span class="ow">in</span> <span class="n">table</span><span class="o">.</span><span class="n">columns</span><span class="p">:</span>
+                    <span class="k">assert</span> <span class="n">column</span><span class="o">.</span><span class="n">name</span> <span class="ow">in</span> <span class="n">db_columns</span>
+
+                    <span class="n">db_col</span> <span class="o">=</span> <span class="n">db_columns</span><span class="p">[</span><span class="n">column</span><span class="o">.</span><span class="n">name</span><span class="p">]</span>
+                    <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">db_col</span><span class="p">[</span><span class="s2">&quot;type&quot;</span><span class="p">],</span> <span class="nb">type</span><span class="p">(</span><span class="n">column</span><span class="o">.</span><span class="n">type</span><span class="p">))</span>
+                    <span class="k">assert</span> <span class="p">(</span>
+                        <span class="n">db_col</span><span class="p">[</span><span class="s2">&quot;nullable&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="n">column</span><span class="o">.</span><span class="n">nullable</span> <span class="ow">or</span> <span class="n">column</span><span class="o">.</span><span class="n">nullable</span> <span class="ow">is</span> <span class="kc">None</span>
+                    <span class="p">)</span>
+
+                <span class="n">db_pk</span> <span class="o">=</span> <span class="n">inspector</span><span class="o">.</span><span class="n">get_pk_constraint</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span><span class="p">)</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="nb">len</span><span class="p">(</span><span class="n">db_pk</span><span class="p">[</span><span class="s2">&quot;constrained_columns&quot;</span><span class="p">])</span> <span class="o">&gt;</span> <span class="mi">0</span>
+                <span class="p">):</span>  <span class="c1"># Allow source tbales without pk</span>
+                    <span class="k">assert</span> <span class="nb">set</span><span class="p">(</span><span class="n">db_pk</span><span class="p">[</span><span class="s2">&quot;constrained_columns&quot;</span><span class="p">])</span> <span class="o">==</span> <span class="nb">set</span><span class="p">(</span>
+                        <span class="n">table</span><span class="o">.</span><span class="n">primary_key</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">keys</span><span class="p">()</span>
+                    <span class="p">)</span>
+
+                <span class="n">db_fks</span> <span class="o">=</span> <span class="n">inspector</span><span class="o">.</span><span class="n">get_foreign_keys</span><span class="p">(</span><span class="n">table</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">table</span><span class="o">.</span><span class="n">schema</span><span class="p">)</span>
+                <span class="k">for</span> <span class="n">fk</span> <span class="ow">in</span> <span class="n">table</span><span class="o">.</span><span class="n">foreign_key_constraints</span><span class="p">:</span>
+                    <span class="n">matches</span> <span class="o">=</span> <span class="p">[</span>
+                        <span class="p">(</span>
+                            <span class="nb">set</span><span class="p">(</span><span class="n">db_fk</span><span class="p">[</span><span class="s2">&quot;constrained_columns&quot;</span><span class="p">])</span> <span class="o">==</span> <span class="nb">set</span><span class="p">(</span><span class="n">fk</span><span class="o">.</span><span class="n">column_keys</span><span class="p">),</span>
+                            <span class="p">(</span>
+                                <span class="n">db_fk</span><span class="p">[</span><span class="s2">&quot;referred_table&quot;</span><span class="p">]</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+                                <span class="o">==</span> <span class="n">fk</span><span class="o">.</span><span class="n">referred_table</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+                            <span class="p">),</span>
+                            <span class="nb">set</span><span class="p">(</span><span class="n">db_fk</span><span class="p">[</span><span class="s2">&quot;referred_columns&quot;</span><span class="p">])</span>
+                            <span class="o">==</span> <span class="nb">set</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">column</span><span class="o">.</span><span class="n">name</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">fk</span><span class="o">.</span><span class="n">elements</span><span class="p">),</span>
+                        <span class="p">)</span>
+                        <span class="k">for</span> <span class="n">db_fk</span> <span class="ow">in</span> <span class="n">db_fks</span>
+                    <span class="p">]</span>
+
+                    <span class="k">assert</span> <span class="nb">any</span><span class="p">(</span><span class="nb">all</span><span class="p">(</span><span class="n">m</span><span class="p">)</span> <span class="k">for</span> <span class="n">m</span> <span class="ow">in</span> <span class="n">matches</span><span class="p">)</span>
+
+    <span class="nd">@overload</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S2</span><span class="p">,</span> <span class="n">DS</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S2</span><span class="p">,</span> <span class="n">DS</span><span class="p">]:</span> <span class="o">...</span>
+
+    <span class="nd">@overload</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">DS</span><span class="p">]:</span> <span class="o">...</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__getitem__</span><span class="p">(</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">key</span><span class="p">:</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S2</span><span class="p">,</span> <span class="n">DS</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S2</span><span class="p">,</span> <span class="n">DS</span><span class="p">]</span> <span class="o">|</span> <span class="n">Schema</span><span class="p">[</span><span class="n">S_cov</span><span class="p">,</span> <span class="n">DS</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">default</span><span class="p">()</span> <span class="k">if</span> <span class="n">key</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">key</span>  <span class="c1"># type: ignore</span>
+
+<div class="viewcode-block" id="DB.activate">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DB.activate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">activate</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Set this instance as the current SQL context.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="o">=</span> <span class="n">active_con</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">activate</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">active_con</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">__token</span><span class="p">)</span>
+
+<div class="viewcode-block" id="DB.default_table">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DB.default_table">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">default_table</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Table</span><span class="p">[</span><span class="n">S</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return default table for given table schema.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            schema: Schema of the table to return.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Default table for given schema.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">defaults</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">defaults</span><span class="p">()</span>
+
+        <span class="n">valid_keys</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">filter</span><span class="p">(</span><span class="k">lambda</span> <span class="n">s</span><span class="p">:</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">schema</span><span class="p">,</span> <span class="n">s</span><span class="p">),</span> <span class="n">defaults</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">valid_keys</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="n">schema</span><span class="p">)</span>
+
+        <span class="n">schema_name</span> <span class="o">=</span> <span class="n">defaults</span><span class="p">[</span><span class="n">valid_keys</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">return</span> <span class="n">Table</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="p">[</span>
+                <span class="s2">&quot;.&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span>
+                    <span class="p">[</span>
+                        <span class="o">*</span><span class="p">([</span><span class="n">schema_name</span><span class="p">]</span> <span class="k">if</span> <span class="n">schema_name</span> <span class="k">else</span> <span class="p">[]),</span>
+                        <span class="n">schema</span><span class="o">.</span><span class="n">__tablename__</span><span class="p">,</span>
+                    <span class="p">]</span>
+                <span class="p">)</span>
+            <span class="p">]</span>
+        <span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_table_from_df</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">df</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">,</span>
+        <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Table</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]:</span>
+        <span class="n">table_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">_df_</span><span class="si">{</span><span class="n">name</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="s1">&#39;_&#39;</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">name</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="s1">&#39;&#39;</span><span class="si">}{</span><span class="n">_hash_df</span><span class="p">(</span><span class="n">df</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="k">if</span> <span class="n">table_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">sqla</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">engine</span>
+        <span class="p">)</span><span class="o">.</span><span class="n">has_table</span><span class="p">(</span><span class="n">table_name</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+            <span class="n">cols</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="p">{</span>
+                    <span class="n">c</span><span class="o">.</span><span class="n">key</span><span class="p">:</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">c</span><span class="o">.</span><span class="n">key</span><span class="p">,</span> <span class="n">c</span><span class="o">.</span><span class="n">type</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="n">c</span><span class="o">.</span><span class="n">primary_key</span><span class="p">)</span>
+                    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">schema</span><span class="o">.</span><span class="n">__table__</span><span class="o">.</span><span class="n">columns</span>
+                <span class="p">}</span>
+                <span class="k">if</span> <span class="n">schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                <span class="k">else</span> <span class="n">_cols_from_df</span><span class="p">(</span><span class="n">df</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">table</span> <span class="o">=</span> <span class="n">Table</span><span class="p">(</span>
+                <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span><span class="n">table_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">(),</span> <span class="o">*</span><span class="n">cols</span><span class="o">.</span><span class="n">values</span><span class="p">())</span>
+            <span class="p">)</span>
+            <span class="n">table</span><span class="o">.</span><span class="n">sqla_table</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span>
+            <span class="n">df</span><span class="o">.</span><span class="n">reset_index</span><span class="p">()[</span><span class="nb">list</span><span class="p">(</span><span class="n">cols</span><span class="o">.</span><span class="n">keys</span><span class="p">())]</span><span class="o">.</span><span class="n">to_sql</span><span class="p">(</span>
+                <span class="n">table_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">,</span> <span class="n">if_exists</span><span class="o">=</span><span class="s2">&quot;append&quot;</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="kc">False</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="n">Table</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="p">[</span><span class="n">table_name</span><span class="p">])</span>
+            <span class="k">if</span> <span class="n">table_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span>
+            <span class="k">else</span> <span class="n">Table</span><span class="p">(</span>
+                <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span>
+                    <span class="n">table_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">(),</span> <span class="n">autoload_with</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_table_from_query</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">:</span> <span class="n">Query</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="n">DeferredQuery</span><span class="p">[</span><span class="n">S</span><span class="p">],</span> <span class="n">with_external_fk</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Table</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]:</span>
+        <span class="n">table_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">tag</span><span class="si">}</span><span class="s2">_query_</span><span class="si">{</span><span class="n">q</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&quot;</span>
+
+        <span class="k">if</span> <span class="n">table_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">Table</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">()</span><span class="o">.</span><span class="n">tables</span><span class="p">[</span><span class="n">table_name</span><span class="p">])</span>
+        <span class="k">elif</span> <span class="n">sqla</span><span class="o">.</span><span class="n">inspect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span><span class="o">.</span><span class="n">has_table</span><span class="p">(</span><span class="n">table_name</span><span class="p">,</span> <span class="n">schema</span><span class="o">=</span><span class="kc">None</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">Table</span><span class="p">(</span>
+                <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span>
+                    <span class="n">table_name</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">(),</span>
+                    <span class="n">autoload_with</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">sel_res</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">sqla</span><span class="o">.</span><span class="n">Subquery</span> <span class="o">|</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">,</span> <span class="n">q</span><span class="o">.</span><span class="n">__clause_element__</span><span class="p">())</span>
+
+            <span class="n">sqla_table</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="n">q</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">__table__</span><span class="o">.</span><span class="n">to_metadata</span><span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">(),</span>
+                    <span class="n">schema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># type: ignore</span>
+                    <span class="n">referred_schema_fn</span><span class="o">=</span><span class="n">partial</span><span class="p">(</span>
+                        <span class="n">_map_foreignkey_schema</span><span class="p">,</span> <span class="n">schema_dict</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">schema_dict</span><span class="p">()</span>
+                    <span class="p">),</span>
+                    <span class="n">name</span><span class="o">=</span><span class="n">table_name</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="n">q</span><span class="o">.</span><span class="n">schema</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">q</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">__table__</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">)</span>
+                <span class="k">else</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">(</span>
+                    <span class="n">table_name</span><span class="p">,</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">schema</span><span class="o">.</span><span class="n">metadata</span><span class="p">(),</span>
+                    <span class="o">*</span><span class="p">(</span>
+                        <span class="n">sqla</span><span class="o">.</span><span class="n">Column</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="n">col</span><span class="o">.</span><span class="n">type</span><span class="p">,</span> <span class="n">primary_key</span><span class="o">=</span><span class="n">col</span><span class="o">.</span><span class="n">primary_key</span><span class="p">)</span>
+                        <span class="k">for</span> <span class="n">name</span><span class="p">,</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">sel_res</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+                    <span class="p">),</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="n">with_external_fk</span><span class="p">:</span>
+                <span class="n">_remove_external_fk</span><span class="p">(</span><span class="n">sqla_table</span><span class="p">)</span>
+            <span class="n">sqla_table</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="p">)</span>
+
+            <span class="n">table</span> <span class="o">=</span> <span class="n">Table</span><span class="p">(</span><span class="n">sqla_table</span><span class="p">)</span>
+
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">begin</span><span class="p">()</span> <span class="k">as</span> <span class="n">con</span><span class="p">:</span>
+                <span class="n">con</span><span class="o">.</span><span class="n">execute</span><span class="p">(</span>
+                    <span class="n">sqla</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">table</span><span class="p">)</span><span class="o">.</span><span class="n">from_select</span><span class="p">(</span>
+                        <span class="n">sel_res</span><span class="o">.</span><span class="n">exported_columns</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span> <span class="n">sel_res</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+
+            <span class="k">return</span> <span class="n">table</span>
+
+<div class="viewcode-block" id="DB.to_table">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DB.to_table">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_table</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">src</span><span class="p">:</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span> <span class="o">|</span> <span class="n">Query</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="n">DeferredQuery</span><span class="p">[</span><span class="n">S_cov</span><span class="p">],</span>
+        <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">with_external_fk</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Table</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Transfer dataframe or sql query results to manifested SQL table.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            src: Source / definition of data.</span>
+<span class="sd">            schema: Schema of the table to create.</span>
+<span class="sd">            name: Name of the table to create.</span>
+<span class="sd">            with_external_fk: Whether to include foreign keys to external tables.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Reference to manifested SQL table.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">match</span> <span class="n">src</span><span class="p">:</span>
+            <span class="k">case</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">():</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_table_from_df</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">schema</span><span class="p">,</span> <span class="n">name</span><span class="p">)</span>
+            <span class="k">case</span> <span class="n">Query</span><span class="p">()</span> <span class="o">|</span> <span class="n">DeferredQuery</span><span class="p">():</span>
+                <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_table_from_query</span><span class="p">(</span><span class="n">src</span><span class="p">,</span> <span class="n">with_external_fk</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="DB.to_df">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.DB.to_df">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">to_df</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">q</span><span class="p">:</span> <span class="n">Data</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Transfer manifested table or query results to local dataframe.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            q: Source / definition of data.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Dataframe containing the data.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">sel</span> <span class="o">=</span> <span class="n">sqla</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">q</span><span class="p">)</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">engine</span><span class="o">.</span><span class="n">connect</span><span class="p">()</span> <span class="k">as</span> <span class="n">con</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_sql</span><span class="p">(</span><span class="n">sel</span><span class="p">,</span> <span class="n">con</span><span class="p">)</span></div>
+</div>
+
+
+
+<span class="n">active_con</span><span class="p">:</span> <span class="n">ContextVar</span><span class="p">[</span><span class="n">DB</span> <span class="o">|</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="n">ContextVar</span><span class="p">(</span><span class="s2">&quot;active_sql_con&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+
+<span class="n">QueryFunc</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Callable</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">Query</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]]</span>
+<span class="n">DefQueryFunc</span><span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Callable</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">DeferredQuery</span><span class="p">[</span><span class="n">S_cov</span><span class="p">]]</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]:</span> <span class="o">...</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span> <span class="n">defer</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># type: ignore</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]],</span> <span class="n">DefQueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]]:</span> <span class="o">...</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span> <span class="n">defer</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">True</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="o">...</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]],</span> <span class="n">DefQueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span> <span class="o">...</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span> <span class="n">defer</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span>  <span class="c1"># type: ignore</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]],</span> <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]]:</span> <span class="o">...</span>
+
+
+<span class="nd">@overload</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="o">*</span><span class="p">,</span> <span class="n">defer</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="kc">False</span><span class="p">]</span> <span class="o">=</span> <span class="o">...</span><span class="p">,</span> <span class="n">schema</span><span class="p">:</span> <span class="kc">None</span> <span class="o">=</span> <span class="o">...</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]],</span> <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span> <span class="o">...</span>
+
+
+<div class="viewcode-block" id="query">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.query">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">query</span><span class="p">(</span>
+    <span class="n">func</span><span class="p">:</span> <span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">defer</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="p">(</span>
+    <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]</span>
+    <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">]],</span> <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="n">DefQueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]]</span>
+<span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Decorator to transform query-returning function into a referencable query.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        func: Function returning a :py:obj:`sqla.Selectable`.</span>
+<span class="sd">        defer: Whether to defer execution of the query.</span>
+<span class="sd">        schema: Schema of the query&#39;s result.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Decorated function.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">inner</span><span class="p">(</span>
+        <span class="n">func</span><span class="p">:</span> <span class="n">SelFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">],</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="n">DefQueryFunc</span><span class="p">[</span><span class="n">Params</span><span class="p">,</span> <span class="n">S</span><span class="p">]:</span>
+        <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">inner_inner</span><span class="p">(</span>
+            <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Params</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Params</span><span class="o">.</span><span class="n">kwargs</span>
+        <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Query</span><span class="p">[</span><span class="n">S</span><span class="p">]</span> <span class="o">|</span> <span class="n">DeferredQuery</span><span class="p">[</span><span class="n">S</span><span class="p">]:</span>
+            <span class="n">res</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+            <span class="k">return</span> <span class="p">(</span>
+                <span class="n">Query</span><span class="p">(</span>
+                    <span class="n">res</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">res</span><span class="p">,</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Select</span><span class="p">)</span> <span class="k">else</span> <span class="n">sqla</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="n">res</span><span class="p">),</span>
+                    <span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="p">,</span>
+                    <span class="n">schema</span><span class="p">,</span>
+                <span class="p">)</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">defer</span>
+                <span class="k">else</span> <span class="n">DeferredQuery</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">func</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">),</span> <span class="n">schema</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">inner_inner</span>  <span class="c1"># type: ignore</span>
+
+    <span class="k">return</span> <span class="n">inner</span><span class="p">(</span><span class="n">func</span><span class="p">)</span> <span class="k">if</span> <span class="n">func</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">inner</span>  <span class="c1"># type: ignore</span></div>
+
+
+
+<div class="viewcode-block" id="default_table">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.sql.html#py_research.sql.default_table">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">default_table</span><span class="p">(</span><span class="n">schema</span><span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">S</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">DeferredQuery</span><span class="p">[</span><span class="n">S</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Return default table for given table schema.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        schema: Schema of the table to return.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Reference to default table for given schema.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_current_default_table</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">sqla</span><span class="o">.</span><span class="n">Table</span><span class="p">:</span>
+        <span class="n">ctx</span> <span class="o">=</span> <span class="n">_get_sql_ctx</span><span class="p">()</span>
+        <span class="k">return</span> <span class="n">ctx</span><span class="o">.</span><span class="n">default_table</span><span class="p">(</span><span class="n">schema</span><span class="p">)</span><span class="o">.</span><span class="n">sqla_table</span>
+
+    <span class="k">return</span> <span class="n">DeferredQuery</span><span class="p">(</span><span class="n">get_current_default_table</span><span class="p">,</span> <span class="n">schema</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

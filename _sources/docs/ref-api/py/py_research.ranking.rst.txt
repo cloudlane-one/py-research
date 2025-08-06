@@ -1,0 +1,7 @@
+py\_research.ranking module
+===========================
+
+.. automodule:: py_research.ranking
+   :members:
+   :undoc-members:
+   :show-inheritance:
