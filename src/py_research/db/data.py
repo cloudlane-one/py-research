@@ -31,6 +31,7 @@ from typing import (
     final,
     get_args,
     overload,
+    override,
 )
 
 import networkx as nx
@@ -45,7 +46,6 @@ from py_research.data import copy_and_override
 from py_research.hashing import gen_int_hash
 from py_research.reflect.types import (
     SingleTypeDef,
-    TypeAware,
     TypeRef,
     has_type,
     is_subtype,
@@ -166,11 +166,11 @@ class HashIdx(Generic[*HashKeyTt]):
 
 
 class AutoIndexable(Protocol[*KeyTt]):
-    """Base class for indexable objects."""
+    """Base class for auto-indexable objects."""
 
     @classmethod
     def _index_components(cls) -> tuple[Data[Any, Any, Col, SQL, R, Interface], ...]:
-        """Get SQL columns for this auto-indexed type."""
+        """Get components for this auto-indexed type."""
         ...
 
 
@@ -216,7 +216,7 @@ AddIdxT = TypeVar(
 
 @dataclass
 class Expand(Generic[AddIdxT]):
-    """Pass-through index."""
+    """Pass-through index and expand."""
 
     expansion: AddIdxT
 
@@ -226,7 +226,7 @@ type KeepIdx = Expand[Idx[()]]
 
 @dataclass
 class Reduce(Generic[SubIdxT]):
-    """Pass-through index."""
+    """Pass-through index and reduce."""
 
     reduction: SingleTypeDef[SubIdxT]
 
@@ -456,7 +456,7 @@ def frame_coalesce(
     frame: Frame[ExT2, Shape[SxT2]],
     coalesce: Literal["left", "right"] = "left",
 ) -> Frame[ExT2, SxT2]:
-    """Union two data instances and coalesce their columns."""
+    """Reduce the shape of a dataframe, coalescing its columns."""
     data = frame.get()
 
     if isinstance(data, pl.DataFrame):
@@ -603,12 +603,17 @@ class Node(Protocol):
 
 
 @dataclass(kw_only=True)
-class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
-    """Property definition for a model."""
+class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
+    """Base class for all data objects."""
 
     # Core attributes:
 
     context: CtxT | Data[Any, Any, Any, Any, Any, CtxT]
+    typeref: TypeRef[Data] = field(default_factory=TypeRef["Data"])
+
+    def __post_init__(self) -> None:  # noqa: D105
+        if self.typeref.hint is object:
+            self.typeref.hint = type(self)
 
     # Extension methods:
 
@@ -1111,7 +1116,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         except KeyError | IndexError:
             return default
 
-    def __iter__(  # noqa: D105
+    def __iter__(
         self: Data[Any, Any, Any, Any, Any, Root],
     ) -> Iterator[ValT]:
         return iter(self.values())
@@ -1237,7 +1242,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 5. Context application, no parent index, kept value
+    # 5. Context application, reduced index, kept value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, KeyT3], DxT2, ExT2, RwxT2],
@@ -1262,7 +1267,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         *CtxTt3,
     ]: ...
 
-    # 6. Context application, no parent index, new value
+    # 6. Context application, reduced index, new value
     @overload
     def __getitem__(
         self: Data[ValT2, AnyIdx[*KeyTt2, KeyT3], DxT2, ExT2, RwxT2],
@@ -1963,7 +1968,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[Any, Any, Any, Any, C | U, Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
-        """Union two databases, right overriding left."""
+        """Union two data objects on their index, right overriding left, with insert."""
         mutations = self._mutation(input_data, mode={C, U})
 
         for mutation in mutations:
@@ -2017,7 +2022,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[Any, Any, Any, Any, C, Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
-        """Union two databases, right overriding left."""
+        """Union two data objects on their index, left overriding right."""
         mutations = self._mutation(input_data, mode={C})
 
         for mutation in mutations:
@@ -2071,7 +2076,7 @@ class Data(TypeAware[ValT], Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], A
         self: Data[Any, Any, Any, Any, U, Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]:
-        """Union two databases, right overriding left."""
+        """Union two data objects on their index, right overriding left, no insert."""
         mutations = self._mutation(input_data, mode={U})
 
         for mutation in mutations:
@@ -2105,6 +2110,7 @@ class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, RwxT, RootT, None], ABC):
 
     _instance_map: dict[Hashable, RegT] = field(default_factory=dict)
 
+    @override
     def _id(self) -> str:
         ctx_module = getmodule(self.value_typeref.common_type)
         return (
@@ -2134,21 +2140,21 @@ class Align(Data[TupT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt]):
         """Get the value types."""
         return tuple(d.value_typeref.typeform for d in self.data)
 
+    @override
     def _id(self) -> str:
-        """Name of the property."""
         # TODO: Implement this method for the Align class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> IdxT:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -2205,21 +2211,21 @@ class Transform(
         self.context = Interface()
         # TODO: Implement the constructor for the Transform class.
 
+    @override
     def _id(self) -> str:
-        """Name of the property."""
-        # TODO: Implement this method for the Map class.
+        # TODO: Implement this method for the Transform class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> ModIdxT:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
 
@@ -2267,29 +2273,29 @@ class Filter(
 
         return Filter(bool_data=bool_data)
 
+    @override
     def _id(self) -> str:
-        """Name of the property."""
         # TODO: Implement this method for the Filter class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> KeepIdx:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
 
@@ -2309,27 +2315,27 @@ class KeySelect(
         self.context = Interface()
         self.key = key
 
+    @override
     def _id(self) -> str:
-        """Name of the property."""
-        # TODO: Implement this method for the Filter class.
+        # TODO: Implement this method for the KeySelect class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> Reduce[SubIdxT]:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()

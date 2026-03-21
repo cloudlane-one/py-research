@@ -124,7 +124,7 @@ def dist_table(
                     count_df.groupby(list(other_cat), group_keys=True)
                     .apply(
                         lambda df: df.set_index(col)
-                        .drop(columns=[*list(other_cat)])
+                        .drop(columns=[*list(other_cat)], errors="ignore")
                         .reindex(
                             domain,
                             fill_value=0,

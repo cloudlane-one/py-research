@@ -30,6 +30,7 @@ from typing import (
     cast,
     get_args,
     overload,
+    override,
 )
 
 import networkx as nx
@@ -143,24 +144,24 @@ class Attr(
         """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[
             Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]
         ],  # needs such specific typing to get getitem to work.
     ) -> Frame[PL, Col]:
-        """Get SQL-side reference to this property."""
         parent = self.parent()
         assert parent is not None
         parent_df = parent.load()
 
         return Frame(parent_df[self._id()])
 
+    @override
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
         self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
     if TYPE_CHECKING:
@@ -247,6 +248,8 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     ) -> None:
         if attrs is None:
             self.attrs = ()
+        elif isinstance(attrs, Attr):
+            self.attrs = (attrs,)
         else:
             assert isinstance(attrs, Align)
             assert has_type(attrs.data, tuple[Attr, ...])
@@ -264,24 +267,24 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
             **kwds,
         )
 
+    @override
     def _index(
         self,
     ) -> Expand[Idx[()]]:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, Tab],
     ) -> Frame[PL, Tab]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
         self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
     def gen_component_map(self, val: TupT) -> dict[str, Hashable]:
@@ -354,7 +357,7 @@ class Link(
     Prop[LnT, LnIdxT, CruT, RecT, Tab, SQL, RwxT],
     Generic[LnT, LnIdxT, CruT, RwxT, RecT],
 ):
-    """Link to a single record."""
+    """Link to one or multiple records."""
 
     @classmethod
     def _type_matcher(
@@ -483,24 +486,24 @@ class Link(
                 setattr(owner, fk_name := f"{self.name}_fk_{name}", fk)
                 fk.__set_name__(owner, fk_name)
 
+    @override
     def _index(
         self,
     ) -> Expand[LnIdxT]:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, Tab],
     ) -> Frame[PL, Tab]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
         self: Prop[Any, Any, CruT],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[CruT]] = {U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
     @cached_prop
@@ -778,7 +781,7 @@ class Record(Model, Generic[*KeyTt]):
         raise NotImplementedError()
 
     _published: bool = False
-    _base: Attr[DataBase] = Attr(default_factory=lambda: DataBase())
+    _base: Attr["DataBase"] = Attr(default_factory=lambda: DataBase())  # noqa: UP037
 
     _pk: Key[tuple[*KeyTt]] = Key()
 
@@ -995,29 +998,29 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
 
     input_data: InputData | None = None
 
+    @override
     def _id(self) -> str:
-        """Identity of the data object."""
         # TODO: implement this for Table class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> AutoIdx[TabT]:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
     ) -> Frame[PL, SxT2]:
-        """Get SQL expression or Polars data of this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(
         self: Table[Any, RwxT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         tables = {rec: table for rec, (table, _) in self._base_table_map.items()}
         base = self.root()
 
@@ -1320,28 +1323,28 @@ class DataBase(
         if self.validate_on_init:
             self.validate()
 
+    @override
     def _id(self) -> str:
-        """Identity of the data object."""
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> Idx:
-        """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
     ) -> Frame[PL, SxT2]:
-        """Get SQL expression or Polars data of this property."""
         raise NotImplementedError()
 
+    @override
     def _mutation(
         self: Data[Any, Any, Any, Any, RwxT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[RwxT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this property SQL-side."""
         raise NotImplementedError()
 
     @property
@@ -1698,6 +1701,7 @@ class DataBase(
             )
         )
 
+    @override
     def graph(
         self,
     ) -> nx.Graph:

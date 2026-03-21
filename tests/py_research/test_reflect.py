@@ -14,9 +14,9 @@ class StaticObject:
 def test_py_obj_ref():
     """Test Python object referencing."""
     ref = PyObjectRef.reference(StaticObject)
-    assert ref.package == "py-research"
+    assert ref.dist.name == "py-research"
 
-    obj = ref.resolve()
+    obj = ref.object
     assert obj is StaticObject
 
     assert ref.docs_url is not None
@@ -25,7 +25,7 @@ def test_py_obj_ref():
     assert dist is not None
     docs_urls = get_project_urls(dist, "Documentation")
     assert len(docs_urls) > 0
-    assert ref.docs_url.startswith(docs_urls[0])
+    assert str(ref.docs_url).startswith(docs_urls[0])
 
 
 def test_get_outdated_deps():

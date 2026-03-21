@@ -61,10 +61,19 @@ def get_return_type(func: Callable) -> SingleTypeDef | UnionType | None:
     )
 
 
-def get_subclasses(
+def get_subclasses[T](
     cls: type[T], max_level: int | None = None, _level: int = 1
 ) -> list[type[T]]:
-    """Return all subclasses of given class."""
+    """Return all subclasses of given class.
+
+    Args:
+        cls: The class to get subclasses for.
+        max_level: Maximum inheritance level to traverse.
+        _level: Current inheritance level (for internal use).
+
+    Returns:
+        List of subclasses.
+    """
     if max_level is not None and _level > max_level:
         return []
 
@@ -73,7 +82,7 @@ def get_subclasses(
         [
             s
             for c in own_subclasses
-            for s in get_subclasses(c, _level=_level + 1)
-            if c not in own_subclasses
+            for s in get_subclasses(c, max_level=max_level, _level=_level + 1)
+            if s not in own_subclasses
         ]
     )

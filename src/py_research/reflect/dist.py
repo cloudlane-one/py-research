@@ -2,6 +2,7 @@
 
 import platform
 import posixpath
+from collections.abc import Mapping
 from functools import cache, reduce
 from io import BytesIO
 from pathlib import Path
@@ -12,12 +13,21 @@ import importlib_metadata as meta
 import requests
 import sphinx.util.inventory as inv
 from git import GitError, Repo
+from sphinx.util.inventory import _InventoryItem
 
 
 @cache
 def get_distributions() -> dict[str, meta.Distribution]:
     """Get all installed Python package distributions."""
-    return {d.metadata["Name"]: d for d in meta.distributions()}
+    metadata: dict[str, meta.Distribution] = {}
+
+    for d in meta.distributions():
+        try:
+            metadata[d.metadata["Name"]] = d
+        except meta.MetadataNotFound:
+            continue
+
+    return metadata
 
 
 def get_module_file(module: ModuleType) -> Path | None:
@@ -50,9 +60,15 @@ def _file_url_to_path(file_url: str):
     return path_object
 
 
-@cache
 def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
-    """Get the distribution package of given module, if any."""
+    """Get the distribution package of given module, if any.
+
+    Args:
+        module: Module to inspect.
+
+    Returns:
+        Distribution package of the module, or ``None`` if not part of a distribution.
+    """
     mod_file = get_module_file(module)
     if mod_file is None:
         return None
@@ -77,7 +93,14 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
 
 
 def get_file_repo(path: Path) -> Repo | None:
-    """Get the Git repository of given file, if any."""
+    """Get the Git repository of given file, if any.
+
+    Args:
+        path: Path to the file.
+
+    Returns:
+        Git repository of the file, or ``None`` if not part of a Git repo.
+    """
     try:
         return Repo(path, search_parent_directories=True)
     except GitError:
@@ -85,7 +108,14 @@ def get_file_repo(path: Path) -> Repo | None:
 
 
 def get_module_repo(module: ModuleType) -> Repo | None:
-    """Get the Git repository of given module, if any."""
+    """Get the Git repository of given module, if any.
+
+    Args:
+        module: Module to inspect.
+
+    Returns:
+        Git repository of the module, or ``None`` if not part of a Git repo.
+    """
     mod_file = get_module_file(module)
     if mod_file is None:
         return None
@@ -94,7 +124,15 @@ def get_module_repo(module: ModuleType) -> Repo | None:
 
 
 def get_project_urls(dist: meta.Distribution, key: str) -> list[str]:
-    """Get the documentation URL of given distribution, if any."""
+    """Get the documentation URL of given distribution, if any.
+
+    Args:
+        dist: Distribution to inspect.
+        key: Key of the project URL to fetch.
+
+    Returns:
+        List of project URLs matching the given key.
+    """
     if dist.metadata is None:
         return []
 
@@ -111,16 +149,26 @@ def get_project_urls(dist: meta.Distribution, key: str) -> list[str]:
 
 
 @cache
-def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]] | None:
-    """Return object inventory for given documentation URL."""
+def get_py_inventory(docs_url: str) -> Mapping[str, _InventoryItem]:
+    """Return object inventory for given documentation URL.
+
+    Args:
+        docs_url: Documentation URL to fetch inventory from.
+
+    Returns:
+        Mapping of object names to inventory items.
+    """
     inv_url = f"{docs_url.rstrip('/')}/objects.inv"
 
     res = requests.get(inv_url, allow_redirects=True)
 
-    if res.status_code != 200:
-        return None
+    res.raise_for_status()
 
-    inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)  # type: ignore
+    inv_dict = inv.InventoryFile.load(
+        BytesIO(res.content),  # pyright: ignore[reportArgumentType]
+        docs_url,
+        posixpath.join,
+    )
     py_inv_dict = reduce(
         lambda a, b: {**a, **b}, [v for k, v in inv_dict.items() if k.startswith("py:")]
     )

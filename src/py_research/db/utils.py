@@ -204,7 +204,6 @@ def recursive_join_sql(
     """Recursively join and union a fromclause via loops.
 
     Args:
-        cols: Columns to select.
         fromclause: Initial fromclause.
         join_loops: Loops of joins. Must start and end in the given fromclause.
     """
@@ -227,7 +226,6 @@ def recursive_join_pl(
     """Recursively join and union a fromclause via loops.
 
     Args:
-        cols: Columns to select.
         fromclause: Initial fromclause.
         join_loops: Loops of joins. Must start and end in the given fromclause.
     """

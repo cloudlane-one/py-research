@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from copy import copy
 from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, reduce
 from inspect import get_annotations, getmodule
@@ -18,6 +17,7 @@ from typing import (
     dataclass_transform,
     get_origin,
     overload,
+    override,
 )
 
 import polars as pl
@@ -47,7 +47,7 @@ from py_research.reflect.types import (
 from py_research.storage import get_storage_types
 from py_research.storage.common import JSONDict, JSONFile
 from py_research.storage.storables import Realm, Storable, StorageTypes
-from py_research.types import Not
+from py_research.types import Not, Undefined
 
 from .data import (
     PL,
@@ -103,6 +103,8 @@ class Prop(
     Generic[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT],
 ):
     """Property definition for a model."""
+
+    _custom_prop_type: bool = False
 
     @classmethod
     def _type_matcher(
@@ -164,12 +166,12 @@ class Prop(
         """Get the initialization level of this property."""
         return 0
 
+    @override
     def _index(self) -> Expand[IdxT]:
-        """Get the index of this property."""
         raise NotImplementedError()
 
+    @override
     def _frame(self: Data[Any, Any, SxT2]) -> Frame[PL, SxT2]:
-        """Get SQL-side reference to this property."""
         raise NotImplementedError()
 
     @cached_prop
@@ -185,7 +187,7 @@ class Prop(
             Prop._set_owner(self, owner)
 
             self.typeref = copy_and_override(
-                TypeRef,
+                TypeRef[Data],
                 self.typeref or TypeRef(get_annotations(owner).get(name, object)),
             )
 
@@ -213,9 +215,9 @@ class Prop(
         """Set the owner of the property."""
         prop.context = Interface(owner)
         prop.typeref = copy_and_override(
-            TypeRef,
+            TypeRef[Data],
             prop.typeref or TypeRef(),
-            var_map=dict(prop.typeref.var_map if prop.typeref is not None else {})
+            var_subs=dict(prop.typeref.var_subs if prop.typeref is not None else {})
             | get_typevar_map(owner)
             | {OwnT: TypeRef(owner)},
         )
@@ -363,6 +365,7 @@ class Prop(
 class ModelMeta(type):
     """Metaclass for record types."""
 
+    _default_field_type: type[Prop] | None = None
     _root_class: bool = False
     _template: bool = False
     _derivate: bool = False
@@ -393,28 +396,59 @@ class ModelMeta(type):
         if cls.__class_props is not None:
             return cls.__class_props
 
-        # Construct list of Record superclasses and apply template superclasses.
+        # Construct list of Resource superclasses and apply template superclasses.
         cls._model_superclasses = []
 
         props = {}
         typevar_map = get_typevar_map(cls)
 
         for name, hint in get_annotations(cls).items():
-            if name not in cls.__dict__:
-                prop_type: type[Prop] | None = TypeRef(hint).base_type(bound=Prop)
+            if name.startswith("__"):
+                continue
 
-                if prop_type is None:
-                    continue
+            typeref = TypeRef(hint, var_subs=typevar_map, ctx_module=cls._src_mod)
 
-                default_type = Prop._get_default_class(prop_type, cls)
-                if default_type is not None and is_subtype(default_type, prop_type):
-                    prop_type = cast(type, default_type)
+            if (
+                (isinstance(hint, str) and hint.startswith("ClassVar"))
+                or (not isinstance(hint, str) and typeref.base_type is ClassVar)
+                or not is_subtype(typeref.base_type, Prop)
+            ):
+                continue
 
-                prop = prop_type()
+            prop_val = cls.__dict__.get(name, Undefined())
 
-                props[name] = prop
-                setattr(cls, name, prop)
-                prop.__set_name__(cls, name)
+            if typeref.base_type is None or not is_subtype(typeref.base_type, Prop):
+                if isinstance(prop_val, Prop) and prop_val._custom_prop_type:
+                    field_type = type(prop_val)
+                else:
+                    field_type = cls._default_field_type or Prop
+
+                typeref = TypeRef(
+                    field_type,
+                    var_subs=typevar_map,
+                    ctx_module=cls._src_mod,
+                    var_overrides={ValT: typeref},
+                )
+            else:
+                field_type = typeref.base_type
+
+            if not isinstance(prop_val, Prop):
+                field_res = field_type(typeref=typeref, default=prop_val)
+            elif not prop_val._custom_prop_type:
+                field_res = copy_and_override(
+                    TypeRef(field_type).common_type,
+                    prop_val,
+                    typeref=typeref,
+                )
+            else:
+                field_res = prop_val
+                field_res.typeref = typeref
+
+            if field_res is not prop_val:
+                setattr(cls, name, field_res)
+                field_res.__set_name__(cls, name)
+
+            props[name] = field_res
 
         for c in cls._super_types:
             # Get proper origin class of generic supertype.
@@ -426,23 +460,31 @@ class ModelMeta(type):
             # Handle typevar substitutions.
             typevar_map = get_typevar_map(c, subs=typevar_map)
 
-            # Skip root Record class and non-Record classes.
+            # Skip root Resource class and non-Resource classes.
             if not isinstance(orig, ModelMeta) or orig._root_class:
                 continue
 
             # Apply template classes.
             if orig._template or cls._derivate:
-                # Pre-collect all template props
+                # Pre-collect all template fields
                 # to prepend them in order.
-                orig_props = {}
-                for prop_name, super_prop in orig._get_class_props().items():
-                    if prop_name not in props:
-                        prop = copy(super_prop)
-                        setattr(cls, prop_name, prop)
-                        prop.__set_name__(cls, prop_name)
-                        orig_props[prop_name] = prop
+                orig_fields = {}
+                for field_name, super_field in orig._get_class_props().items():
+                    if field_name not in props:
+                        field_res = copy_and_override(
+                            type(super_field),
+                            super_field,
+                            typeref=copy_and_override(
+                                type(super_field.typeref),
+                                super_field.typeref,
+                                var_subs=typevar_map,
+                            ),
+                        )
+                        setattr(cls, field_name, field_res)
+                        field_res.__set_name__(cast(type[Model], cls), field_name)
+                        orig_fields[field_name] = field_res
 
-                props = {**orig_props, **props}  # Prepend template props.
+                props = {**orig_fields, **props}  # Prepend template fields.
             else:
                 assert orig is c  # Must be concrete class, not a generic
                 cls._model_superclasses.append(cast(type[Model], orig))
@@ -745,17 +787,20 @@ class Crawl(Data[ModTi, Idx, Tab, SQL, R, Interface[ModTi, Any, Tab]]):
 
     loops: Iterable[Data[ModTi, Any, Tab, SQL, Any, Interface[ModTi, Any, Tab]]]
 
+    @override
     def _id(self) -> str:
         """Name of the property."""
         # TODO: Implement this method for the Crawl class.
         raise NotImplementedError()
 
+    @override
     def _index(
         self,
     ) -> Idx:
         """Get the index of this data."""
         raise NotImplementedError()
 
+    @override
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:

@@ -772,11 +772,9 @@ class DataSource[Rec: Record, Dat: TreeNode](RecMap[Rec]):
                 Input for the data source
             db:
                 Database to insert the data into (and use for caching)
-            cache_with_db:
-                If True, use the database as cache
 
         Returns:
-            A Record instance
+            Keys of loaded records
         """
         db = db if db is not None else DataBase()
         in_data: InData = {((), ()): dat for dat in data}
