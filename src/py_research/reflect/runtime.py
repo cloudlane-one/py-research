@@ -2,8 +2,12 @@
 
 import inspect
 from collections.abc import Callable, Sequence
-from types import ModuleType
+from types import ModuleType, UnionType
 from typing import Any, TypeVar
+
+from typing_extensions import TypeForm
+
+from py_research.types import SingleTypeDef
 
 T = TypeVar("T")
 
@@ -38,12 +42,18 @@ def get_full_args_dict(
     arg_defaults = argspec.defaults or []
     kwdefaults = dict(zip(argspec.args[-len(arg_defaults) :], arg_defaults))
 
-    posargs = dict(zip(argspec.args[: len(args)], args))
+    posarg_names = argspec.args
+
+    # Handle bound methods
+    if posarg_names[0] == "self" and hasattr(func, "__self__"):
+        posarg_names = posarg_names[1:]
+
+    posargs = dict(zip(posarg_names[: len(args)], args))
 
     return {**kwdefaults, **posargs, **(kwargs or {})}
 
 
-def get_return_type(func: Callable) -> type | None:
+def get_return_type(func: Callable) -> TypeForm | None:
     """Get the return type annotation of given function, if any."""
     sig = inspect.signature(func)
     return (
@@ -53,8 +63,19 @@ def get_return_type(func: Callable) -> type | None:
     )
 
 
-def get_all_subclasses(cls: type[T]) -> set[type[T]]:
+def get_subclasses(
+    cls: type[T], max_level: int | None = None, _level: int = 1
+) -> list[type[T]]:
     """Return all subclasses of given class."""
-    return set(cls.__subclasses__()).union(
-        [s for c in cls.__subclasses__() for s in get_all_subclasses(c)]
+    if max_level is not None and _level > max_level:
+        return []
+
+    own_subclasses = cls.__subclasses__()
+    return own_subclasses + (
+        [
+            s
+            for c in own_subclasses
+            for s in get_subclasses(c, _level=_level + 1)
+            if c not in own_subclasses
+        ]
     )

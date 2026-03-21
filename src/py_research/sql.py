@@ -31,7 +31,7 @@ from pandas.api.types import (
 from pandas.util import hash_pandas_object
 from typing_extensions import Self
 
-from py_research.reflect.runtime import get_all_subclasses
+from py_research.reflect.runtime import get_subclasses
 
 
 def _hash_df(df: pd.DataFrame | pd.Series) -> str:
@@ -93,7 +93,7 @@ class Col(orm.MappedColumn[V]):
 
 
 def _wrap_mapped_col(
-    func: Callable[Params, orm.MappedColumn[V]]
+    func: Callable[Params, orm.MappedColumn[V]],
 ) -> Callable[Params, Col[V]]:
     @wraps(func)
     def inner(*args: Params.args, **kwargs: Params.kwargs) -> Col[V]:
@@ -288,7 +288,7 @@ def _map_foreignkey_schema(
 
     for schema_name, schema in schema_dict.items():
         if schema is not None and schema.schema_def is not None:
-            for schema_class in get_all_subclasses(schema.schema_def):
+            for schema_class in get_subclasses(schema.schema_def):
                 if (
                     hasattr(schema_class, "__table__")
                     and schema_class.__table__ is constraint.referred_table

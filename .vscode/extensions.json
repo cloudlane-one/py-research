@@ -9,7 +9,6 @@
     "ms-python.black-formatter",
     "ms-toolsai.jupyter",
     "ms-python.python",
-    "donjayamanne.python-environment-manager",
     "github.vscode-pull-request-github",
     "dotenv.dotenv-vscode",
     "ms-toolsai.datawrangler",

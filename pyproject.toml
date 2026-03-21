@@ -33,6 +33,9 @@ dependencies = [
   "ipywidgets>=8.1.1",
   "ipython>=8.21.0",
   "sphinx>=7.2.6",
+  "yarl>=1.20.1",
+  "aiohttp>=3.12.15",
+  "beartype>=0.21.0",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
