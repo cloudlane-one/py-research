@@ -13,7 +13,7 @@ from collections.abc import (
 )
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from functools import cmp_to_key, reduce
+from functools import cached_property, cmp_to_key, reduce
 from inspect import getmodule
 from pathlib import Path
 from secrets import token_hex
@@ -28,7 +28,6 @@ from typing import (
     LiteralString,
     Self,
     cast,
-    get_args,
     overload,
     override,
 )
@@ -88,7 +87,7 @@ from .data import (
     ValT2,
     frame_coalesce,
 )
-from .models import CruT, IdxT2, Model, ModelMeta, OwnT, OwnT2, Prop
+from .models import CruT, IdxT2, Local, Model, ModelMeta, OwnT, OwnT2, Prop
 from .utils import (
     get_pl_schema,
     register_sqlite_adapters,
@@ -117,6 +116,7 @@ class Attr(
     """
 
     @classmethod
+    @override
     def _type_matcher(
         cls,
         val_type: SingleTypeDef | UnionType,
@@ -127,17 +127,18 @@ class Attr(
             is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
         )
 
+    @override
     def _getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
-        """Get the value of this attribute on an instance."""
         if self.name not in instance.__dict__:
             return Not.resolved
 
         return instance.__dict__[self.name]
 
+    @override
     def _setter(self: Attr[ValT2], instance: OwnT, value: ValT2) -> None:
-        """Set the value of this attribute on an instance."""
         instance.__dict__[self.name] = value
 
+    @override
     def _index(
         self,
     ) -> Expand[Idx[()]]:
@@ -302,24 +303,27 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     def __hash__(self) -> int:  # noqa: D105
         return gen_int_hash((self.name, self.context, self.components))
 
-    def __set_name__(self, owner: type[OwnT], name: str) -> None:
-        """Return the attributes of this key."""
-        super().__set_name__(owner, name)
-        if not owner._template and len(self.attrs) == 0:
-            self.attrs = (
-                Attr(
-                    typeref=TypeRef(Attr[self.value_typeref.common_type]),
-                    context=Interface(owner),
-                ),
-            )
-            setattr(owner, name := f"{self.name}_attr", self.attrs[0])
-            self.attrs[0].__set_name__(owner, name)
-
-    @property
+    @cached_property
     def components(self) -> tuple[Attr[Any, Any, OwnT], ...]:
         """Get the components of this key."""
-        assert len(self.attrs) > 0, "Key must have at least one component."
+        if len(self.attrs) == 0:
+            return (
+                Attr(
+                    typeref=TypeRef(Attr[self.value_typeref.common_type]),
+                    context=Interface(self.owner),
+                    alias=f"{self.name}_attr",
+                ),
+            )
+
         return self.attrs
+
+    @override
+    def _render(self, owner: type[OwnT]) -> Iterable[Prop]:
+        if not owner._template and len(self.attrs) == 0:
+            # If the index components are auto-generated attrs, return them here.
+            return self.components
+
+        return ()
 
     if TYPE_CHECKING:
 
@@ -360,6 +364,7 @@ class Link(
     """Link to one or multiple records."""
 
     @classmethod
+    @override
     def _type_matcher(
         cls,
         val_type: SingleTypeDef | UnionType,
@@ -472,19 +477,17 @@ class Link(
             **kwds,
         )
 
-    def __set_name__(self, owner: type[RecT], name: str) -> None:
-        """Return the attributes of this key."""
-        super().__set_name__(owner, name)
+    @override
+    def _render(self, owner: type[OwnT]) -> Iterable[Prop]:
         if not owner._template and not self.incoming and self.on is None:
-            fks = {
-                k.name: k
+            return [
+                k
                 for join_map in self.join_maps.values()
                 for k in join_map.keys()
                 if k.owner is not None and issubclass(owner, k.owner)
-            }
-            for name, fk in fks.items():
-                setattr(owner, fk_name := f"{self.name}_fk_{name}", fk)
-                fk.__set_name__(owner, fk_name)
+            ]
+
+        return []
 
     @override
     def _index(
@@ -518,7 +521,7 @@ class Link(
                         alias=f"{rec_type._fqn}.{pk.name}",
                         typeref=pk.typeref,
                     ): pk
-                    for pk in rec_type._primary_key().components
+                    for pk in rec_type._rendered_pk().components
                 }
                 for rec_type in self.value_typeref.typeset
                 if issubclass(rec_type, Record)
@@ -656,7 +659,7 @@ def records_to_df(
             {
                 attr.name: attr.value_typeref.common_type
                 for rec in model_types
-                for attr in rec._attrs().values()
+                for attr in rec._rendered_attrs().values()
             }
         ),
     )
@@ -675,43 +678,37 @@ class Record(Model, Generic[*KeyTt]):
         UUID4: sqla.types.CHAR(36),
     }
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Initialize a new record subclass."""
-        super().__init_subclass__(**kwargs)
+    @override
+    @classmethod
+    def _render(cls) -> Iterable[Prop]:
+        props = list(super()._render())
 
-        for superclass in cls._model_superclasses:
-            if superclass in cls.__bases__ and issubclass(superclass, Record):
-                super_pk = superclass._primary_key()
-                col_map = {
-                    Attr[Hashable, Any, Self](
-                        alias=pk_attr.name,
-                        typeref=pk_attr.typeref,
-                        context=Interface(cls),
-                    ): pk_attr
-                    for pk_attr in super_pk.components
-                }
-                for col in col_map.keys():
-                    setattr(cls, col.name, col)
-                    col.__set_name__(cls, col.name)
+        super_pks = [
+            s._rendered_pk() for s in cls._model_superclasses if issubclass(s, Record)
+        ]
 
-                pk = Key[tuple[*get_args(super_pk.typeargs[ValT])], cls](
-                    cast(
-                        Data[tuple, Any, Tab, SQL],
-                        reduce(Data.__matmul__, col_map.keys()),
-                    )
-                )
-                setattr(cls, pk.name, pk)
-                pk.__set_name__(cls, pk.name)
+        if len(super_pks) > 0:
+            assert all(
+                is_subtype(cls._pk.value_typeref.typeform, p.value_typeref.typeform)
+                for p in super_pks
+            ), "Primary key type must be a subtype of all base classes' primary key types."
 
-                ln = Link[superclass, Idx[()], Any, Any, cls](on=col_map)
-                setattr(cls, ln.name, ln)
-                ln.__set_name__(cls, ln.name)
+        if "_pk" not in cls._get_defined_fields():
+            # Make sure this class dynamically renders its own primary key
+            # if there isn't a custom one defined. The rendered key is a copy
+            # of the first base class' primary key.
+            assert (
+                len(super_pks) > 0
+            ), "Primary key should have been auto-defined if there are no Record base classes."
+            props.append(copy_and_override(Key, super_pks[0]))
+
+        return props
 
     @classmethod
     def _index_components(cls) -> tuple[Data[Any, Any, Col, SQL, R, Interface], ...]:
         """Get SQL columns for this auto-indexed type."""
         """Return the components of the index for this record type."""
-        return cls._primary_key().components
+        return cls._rendered_pk().components
 
     @classmethod
     def _default_table_name(cls) -> str:
@@ -728,34 +725,36 @@ class Record(Model, Generic[*KeyTt]):
         return name
 
     @classmethod
-    def _attrs(cls) -> dict[str, Attr]:
+    def _rendered_attrs(cls) -> dict[str, Attr]:
         """Columns of this record type's table."""
         return {
             prop.name: prop
-            for prop in cls._get_class_props().values()
+            for prop in cls._rendered_fields.values()
             if isinstance(prop, Attr)
         }
 
     @classmethod
-    def _keys(cls) -> dict[str, Key]:
-        """Columns of this record type's table."""
+    def _rendered_keys(cls) -> dict[str, Key]:
+        """Keys of this record type's table."""
         return {
             prop.name: prop
-            for prop in cls._get_class_props().values()
+            for prop in cls._rendered_fields.values()
             if isinstance(prop, Key)
         }
 
     @classmethod
-    def _primary_key(cls) -> Key:
+    def _rendered_pk(cls) -> Key:
         """Primary key of this record type's table."""
-        return cls.__dict__["_pk"]
+        key = cls._rendered_fields["_pk"]
+        assert isinstance(key, Key), "Expected a Key instance"
+        return key
 
     @classmethod
-    def _links(cls) -> dict[str, Link]:
-        """Columns of this record type's table."""
+    def _rendered_links(cls) -> dict[str, Link]:
+        """Links of this record type's table."""
         return {
             prop.name: prop
-            for prop in cls._get_class_props().values()
+            for prop in cls._rendered_fields.values()
             if isinstance(prop, Link)
         }
 
@@ -781,7 +780,7 @@ class Record(Model, Generic[*KeyTt]):
         raise NotImplementedError()
 
     _published: bool = False
-    _base: Attr["DataBase"] = Attr(default_factory=lambda: DataBase())  # noqa: UP037
+    _base: Local["DataBase"] = Local(default_factory=lambda: DataBase())  # noqa: UP037
 
     _pk: Key[tuple[*KeyTt]] = Key()
 
@@ -1578,7 +1577,7 @@ class DataBase(
                 autoincrement=False,
                 nullable=has_type(None, attr.value_typeref.typeform),
             )
-            for attr in rec_type._attrs().values()
+            for attr in rec_type._rendered_attrs().values()
         }
 
     @cached_method
@@ -1590,13 +1589,13 @@ class DataBase(
                 *(col.name for col in k.components),
                 unique=True,
             )
-            for k in rec_type._keys().values()
+            for k in rec_type._rendered_keys().values()
         }
 
     @cached_method
     def _map_pk(self, rec_type: type[Record]) -> sqla.PrimaryKeyConstraint:
         """Columns of this record type's table."""
-        pk = rec_type._primary_key()
+        pk = rec_type._rendered_pk()
         return sqla.PrimaryKeyConstraint(
             *[col.name for col in pk.components],
         )
@@ -1605,7 +1604,7 @@ class DataBase(
     def _map_fks(self, rec_type: type[Record]) -> dict[Link, sqla.ForeignKeyConstraint]:
         fks: dict[Link, sqla.ForeignKeyConstraint] = {}
 
-        for link in rec_type._links().values():
+        for link in rec_type._rendered_links().values():
             target_type = cast(type[Record], link.value_typeref.common_type)
             target_table = self._get_base_table(target_type)
 

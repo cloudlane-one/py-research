@@ -96,9 +96,12 @@ class HashRec(Record[str]):
     def __post_init__(self) -> None:  # noqa: D105
         setattr(
             self,
-            self._primary_key().components[0].name,
+            self._rendered_pk().components[0].name,
             gen_str_hash(
-                {a.name: getattr(self, a.name) for a in type(self)._attrs().values()}
+                {
+                    a.name: getattr(self, a.name)
+                    for a in type(self)._rendered_attrs().values()
+                }
             ),
         )
 
@@ -121,8 +124,10 @@ class Edge(Record[str, str], Generic[RecT, TgtT]):
     _from: Link[RecT] = Link()
     _to: Link[RecT] = Link()
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
-        super().__init_subclass__(**kwargs)
+    @override
+    @classmethod
+    def _render(cls) -> Iterable[Prop]:
+        props = list(super()._render())
 
         cls._pk = Key[tuple[str, str]](
             cast(
@@ -144,8 +149,11 @@ class Edge(Record[str, str], Generic[RecT, TgtT]):
                         ),
                     ],
                 ),
-            )
+            ),
+            alias="_pk",
         )
+
+        return [*props, cls._pk]
 
 
 class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
@@ -157,8 +165,10 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
     _to: Link[RecT] = Link()
     _rel_idx: Attr[KeyT] = Attr()
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
-        super().__init_subclass__(**kwargs)
+    @override
+    @classmethod
+    def _render(cls) -> Iterable[Prop]:
+        props = list(super()._render())
 
         cls._pk = Key[tuple[str, str, KeyT]](
             cast(
@@ -181,8 +191,11 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
                         cls._rel_idx,
                     ],
                 ),
-            )
+            ),
+            alias="_pk",
         )
+
+        return [*props, cls._pk]
 
 
 RelIdxT = TypeVar("RelIdxT", bound=FullIdx, default=FullIdx[Any, *tuple[Any, ...]])
@@ -255,8 +268,10 @@ class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
     _idx: Attr[KeyT] = Attr()
     _val: Attr[ValT]
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:  # noqa: D105
-        super().__init_subclass__(**kwargs)
+    @override
+    @classmethod
+    def _render(cls) -> Iterable[Prop]:
+        props = list(super()._render())
 
         cls._pk = Key[tuple[*tuple[Any, ...], KeyT]](
             cast(
@@ -273,8 +288,11 @@ class Item(Record[KeyT], Generic[ValT, KeyT, RecT]):
                         cls._idx,
                     ],
                 ),
-            )
+            ),
+            alias="_pk",
         )
+
+        return [*props, cls._pk]
 
 
 _item_classes: dict[str, type[Item]] = {}

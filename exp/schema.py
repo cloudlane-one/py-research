@@ -24,10 +24,10 @@ class TestSchema(Schema):
     """Test schema."""
 
 
-# class SearchResult(Edge["Search", "Project"]):
-#     """Link search to a result."""
+class SearchResult(Edge["Search", "Project"]):
+    """Link search to a result."""
 
-#     score: Attr[float]
+    score: Attr[float]
 
 
 class Search(Record[str], TestSchema):
@@ -35,7 +35,7 @@ class Search(Record[str], TestSchema):
 
     term: Attr[str] = Attr()
     result_count: Attr[int]
-    # results: Rel[Project, SearchResult]
+    results: Rel[Project, SearchResult]
 
     _pk = Key(term)
 
@@ -65,10 +65,10 @@ class User(Entity):
         return all(task.status == "done" for task in self.tasks)
 
 
-# class Membership(Edge["User", "Project"]):
-#     """Link user to a project."""
+class Membership(Edge["User", "Project"]):
+    """Link user to a project."""
 
-#     role: Attr[str] = Attr(default="member")
+    role: Attr[str] = Attr(default="member")
 
 
 class Project(Record[int]):
@@ -81,7 +81,7 @@ class Project(Record[int]):
     status: Attr[Literal["planned", "started", "done"]]
     org: Link[Organization]
     tasks: Link[Task, AutoIdx] = Link(on=Task.project)
-    # members: Rel[User, Membership]
+    members: Rel[User, Membership]
 
     _pk = Key(number)
 

@@ -153,6 +153,10 @@ class Prop(
         default_factory=dict
     )
 
+    def _render(self, owner: type[OwnT]) -> Iterable[Prop]:
+        """Return props to be added to the owner class upon model rendering, if any."""
+        return ()
+
     def _getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
         """Get the value of this property."""
         return Not.resolved
@@ -204,8 +208,11 @@ class Prop(
     @property
     def owner(self: Prop[Any, Any, Any, OwnT2]) -> type[OwnT2] | None:
         """Owner of the property."""
-        owner = cast(type[OwnT2], self.typeref.args[OwnT].common_type)
-        return owner if owner is not Any else None
+        return (
+            cast(type[OwnT2], self.context.arg_type)
+            if isinstance(self.context, Interface)
+            else None
+        )
 
     @staticmethod
     def _set_owner(
@@ -292,8 +299,8 @@ class Prop(
         if owner is None or not issubclass(owner, Model):
             return self
 
-        if instance is None and owner is not self.owner:
-            return self._get_with_owner(owner)
+        if instance is None:
+            return self if owner is self.owner else self._get_with_owner(owner)
 
         res = self._getter(cast(OwnT, instance))
         if res is not Not.resolved:
@@ -362,17 +369,106 @@ class Prop(
         return None
 
 
+@dataclass(kw_only=True, eq=False)
+class Local(
+    Generic[ValT, CruT, OwnT],
+):
+    """Single-value local attribute.
+
+    Note:
+        This always serializes directly into its owner record instance,
+        which may be in form of a a Python `__dict__` entry,
+        or a JSON object property.
+    """
+
+    default: ValT | Literal[Not.defined] = Not.defined
+    default_factory: Callable[[], ValT] | None = None
+    init: bool = True
+
+    _name: str | None = None
+
+    def __set_name__(self, owner: type[OwnT], name: str) -> None:  # noqa: D105
+        if self._name is None:
+            self._name = name
+
+    @property
+    def name(self) -> str:
+        """Name of the property."""
+        assert self._name is not None
+        return self._name
+
+    def _getter(self, instance: OwnT) -> ValT | Literal[Not.resolved]:
+        """Get the value of this property."""
+        if self.name not in instance.__dict__:
+            return Not.resolved
+
+        return instance.__dict__[self.name]
+
+    def _setter(self: Local[ValT2], instance: OwnT, value: ValT2) -> None:
+        """Set the value of this property."""
+        instance.__dict__[self.name] = value
+
+    # Descriptor read/write:
+
+    @overload
+    def __get__(self, instance: OwnT2, owner: type[OwnT2]) -> ValT: ...
+
+    @overload
+    def __get__(
+        self, instance: OwnT2, owner: type[OwnT2]
+    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT2, Idx[()]], Tab]: ...
+
+    @overload
+    def __get__(self, instance: Any, owner: type | None) -> Self: ...
+
+    def __get__(self: Local, instance: Any, owner: type | None) -> Any:
+        if owner is None or not issubclass(owner, Model):
+            return self
+
+        res = self._getter(cast(OwnT, instance))
+        if res is not Not.resolved:
+            return res
+
+        if self.default is not Not.defined:
+            return self.default
+
+        assert self.default_factory is not None
+        return self.default_factory()
+
+    @overload
+    def __set__(
+        self: Local[ValT2, C, Any],
+        instance: OwnT,
+        value: Init[ValT2],
+    ) -> None: ...
+
+    @overload
+    def __set__(
+        self: Local[ValT2, U, Any],
+        instance: OwnT,
+        value: ValT2,
+    ) -> None: ...
+
+    @overload
+    def __set__(self: Local, instance: Any, value: Any) -> None: ...
+
+    def __set__(self: Local, instance: Any, value: Any) -> None:
+        if isinstance(instance, Model):
+            self._setter(instance, value)
+
+
 class ModelMeta(type):
     """Metaclass for record types."""
 
-    _default_field_type: type[Prop] | None = None
     _root_class: bool = False
     _template: bool = False
     _derivate: bool = False
 
     _src_mod: ModuleType | None = None
     _model_superclasses: list[type[Model]]
-    __class_props: dict[str, Prop] | None
+    __defined_fields: dict[str, Prop | Local] | None
+    __rendered_fields: dict[str, Prop | Local] | None
+    __all_fields: dict[str, Prop | Local] | None
 
     def __init__(cls, name, bases, dct):
         """Initialize a new record type."""
@@ -381,8 +477,11 @@ class ModelMeta(type):
         if "_src_mod" not in dct:
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
-        cls.__class_props = None
-        cls._get_class_props()
+        cls.__defined_fields = None
+        cls.__defined_props = None
+        cls._get_defined_fields()
+        cls.__rendered_fields = None
+        cls.__all_fields = None
 
     @property
     def _super_types(cls) -> Iterable[type | GenericAlias]:
@@ -392,36 +491,36 @@ class ModelMeta(type):
             else cls.__bases__
         )
 
-    def _get_class_props(cls) -> dict[str, Prop]:
-        if cls.__class_props is not None:
-            return cls.__class_props
+    def _get_defined_fields(cls) -> dict[str, Prop | Local]:
+        if cls.__defined_fields is not None:
+            return cls.__defined_fields
 
-        # Construct list of Resource superclasses and apply template superclasses.
-        cls._model_superclasses = []
-
-        props = {}
+        fields = {}
         typevar_map = get_typevar_map(cls)
 
         for name, hint in get_annotations(cls).items():
             if name.startswith("__"):
                 continue
 
-            typeref = TypeRef(hint, var_subs=typevar_map, ctx_module=cls._src_mod)
+            typeref = TypeRef[Prop | Local](
+                hint, var_subs=typevar_map, ctx_module=cls._src_mod
+            )
 
             if (
                 (isinstance(hint, str) and hint.startswith("ClassVar"))
                 or (not isinstance(hint, str) and typeref.base_type is ClassVar)
-                or not is_subtype(typeref.base_type, Prop)
+                or not is_subtype(typeref.base_type, Prop | Local)
             ):
                 continue
 
-            prop_val = cls.__dict__.get(name, Undefined())
+            field_val = cls.__dict__.get(name, Undefined())
+            field_type = cast(type[Prop | Local], typeref.base_type)
+            field_res: Prop | Local
 
-            if typeref.base_type is None or not is_subtype(typeref.base_type, Prop):
-                if isinstance(prop_val, Prop) and prop_val._custom_prop_type:
-                    field_type = type(prop_val)
-                else:
-                    field_type = cls._default_field_type or Prop
+            if issubclass(field_type, Prop):
+                if isinstance(field_val, Prop) and field_val._custom_prop_type:
+                    assert isinstance(field_val, field_type)
+                    field_type = type(field_val)
 
                 typeref = TypeRef(
                     field_type,
@@ -429,26 +528,32 @@ class ModelMeta(type):
                     ctx_module=cls._src_mod,
                     var_overrides={ValT: typeref},
                 )
-            else:
-                field_type = typeref.base_type
 
-            if not isinstance(prop_val, Prop):
-                field_res = field_type(typeref=typeref, default=prop_val)
-            elif not prop_val._custom_prop_type:
-                field_res = copy_and_override(
-                    TypeRef(field_type).common_type,
-                    prop_val,
-                    typeref=typeref,
-                )
+                if not isinstance(field_val, Prop):
+                    field_res = field_type(typeref=typeref, default=field_val)
+                elif not field_val._custom_prop_type:
+                    field_res = copy_and_override(
+                        TypeRef(field_type).common_type,
+                        field_val,
+                        typeref=typeref,
+                    )
+                else:
+                    field_res = field_val
+                    field_res.typeref = typeref
             else:
-                field_res = prop_val
-                field_res.typeref = typeref
+                if not isinstance(field_val, Local):
+                    field_res = field_type(default=field_val)
+                else:
+                    field_res = field_val
 
-            if field_res is not prop_val:
+            if field_res is not field_val:
                 setattr(cls, name, field_res)
                 field_res.__set_name__(cls, name)
 
-            props[name] = field_res
+            fields[name] = field_res
+
+        # Construct list of Resource superclasses and apply template superclasses.
+        cls._model_superclasses = []
 
         for c in cls._super_types:
             # Get proper origin class of generic supertype.
@@ -466,57 +571,123 @@ class ModelMeta(type):
 
             # Apply template classes.
             if orig._template or cls._derivate:
-                # Pre-collect all template fields
+                # Pre-collect all template props
                 # to prepend them in order.
-                orig_fields = {}
-                for field_name, super_field in orig._get_class_props().items():
-                    if field_name not in props:
-                        field_res = copy_and_override(
-                            type(super_field),
-                            super_field,
-                            typeref=copy_and_override(
-                                type(super_field.typeref),
-                                super_field.typeref,
-                                var_subs=typevar_map,
-                            ),
-                        )
-                        setattr(cls, field_name, field_res)
-                        field_res.__set_name__(cast(type[Model], cls), field_name)
-                        orig_fields[field_name] = field_res
+                orig_props = {}
+                for field_name, super_field in orig._get_defined_fields().items():
+                    if field_name not in fields:
+                        if field_name not in cls.__dict__:
+                            field_res = (
+                                copy_and_override(
+                                    type(super_field),
+                                    super_field,
+                                    typeref=copy_and_override(
+                                        type(super_field.typeref),
+                                        super_field.typeref,
+                                        var_subs=typevar_map,
+                                    ),
+                                )
+                                if isinstance(super_field, Prop)
+                                else copy_and_override(
+                                    type(super_field),
+                                    super_field,
+                                )
+                            )
+                            setattr(cls, field_name, field_res)
+                        else:
+                            field_res = cls.__dict__[field_name]
 
-                props = {**orig_fields, **props}  # Prepend template fields.
+                        field_res.__set_name__(cast(type[Model], cls), field_name)
+                        orig_props[field_name] = field_res
+
+                fields = {**orig_props, **fields}  # Prepend template props.
             else:
                 assert orig is c  # Must be concrete class, not a generic
                 cls._model_superclasses.append(cast(type[Model], orig))
 
-        cls.__class_props = props
-        return props
+        cls.__defined_fields = fields
+        return fields
+
+    def _render(cls) -> Iterable[Prop]:
+        """Render any dynamically generated properties."""
+        return []
+
+    @property
+    def _rendered_fields(cls) -> dict[str, Prop | Local]:
+        """All fields of this record type (including dynamically rendered props)."""
+        if cls.__rendered_fields is None:
+            cls.__rendered_fields = cls._get_defined_fields()
+
+            # Allow subclasses to dynamically render props:
+            cls.__rendered_fields.update({p.name: p for p in cls._render()})
+
+            # Allow class props to inject additional properties
+            # via the _render() method:
+
+            to_be_rendered = list(
+                v for v in cls.__rendered_fields.values() if isinstance(v, Prop)
+            )
+
+            # Run until no more new sub-properties are left to be rendered.
+            while len(to_be_rendered) > 0:
+                # Get the list of props to render in this round.
+                props = to_be_rendered
+                to_be_rendered = []
+                for prop in props:
+                    render_res = prop._render(cls)
+
+                    cls.__rendered_fields.update({p.name: p for p in render_res})
+                    for p in render_res:
+                        p.__set_name__(cls, p.name)
+
+                    # Add sub-props to the next rendering round.
+                    to_be_rendered.extend(render_res)
+
+        return cls.__rendered_fields
+
+    @property
+    def _fields(cls) -> dict[str, Prop | Local]:
+        """All fields of this record type (including superclasses)."""
+        if cls.__all_fields is None:
+            cls.__all_fields = reduce(
+                lambda x, y: {**x, **y},
+                (c._props for c in cls._model_superclasses),
+                cls._rendered_fields,
+            )
+
+        return cls.__all_fields
 
     @property
     def _props(cls) -> dict[str, Prop]:
-        """The statically defined properties of this record type."""
-        return reduce(
-            lambda x, y: {**x, **y},
-            (c._props for c in cls._model_superclasses),
-            cls._get_class_props(),
-        )
+        """All properties of this record type (including superclasses)."""
+        return {
+            name: field
+            for name, field in cls._fields.items()
+            if isinstance(field, Prop)
+        }
 
     @property
     def __dataclass_fields__(cls) -> dict[str, Field]:  # noqa: D105
         return {
-            p.name: Field(
-                p.default if p.default is not Not.defined else MISSING,
+            f.name: Field(
+                f.default if f.default is not Not.defined else MISSING,
                 (
-                    p.default_factory if p.default_factory is not None else MISSING
+                    f.default_factory if f.default_factory is not None else MISSING
                 ),  # pyright: ignore[reportArgumentType]
-                p.init,
+                f.init,
                 metadata={},
-                repr=p.repr,
-                hash=p.hash,
-                compare=p.compare,
                 kw_only=True,
+                **(
+                    dict(
+                        repr=f.repr,
+                        hash=f.hash,
+                        compare=f.compare,
+                    )
+                    if isinstance(f, Prop)
+                    else {}
+                ),
             )
-            for p in cls._props.values()
+            for f in cls._fields.values()
         }
 
 
@@ -557,7 +728,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 
 @dataclass_transform(
     kw_only_default=True,
-    field_specifiers=(Prop,),
+    field_specifiers=(Prop, Local),
     eq_default=False,
 )
 class Model(
@@ -581,6 +752,11 @@ class Model(
             cls._template = False
 
         cls._fqn = f"{cls.__module__}.{cls.__name__}"
+
+    @classmethod
+    def _render(cls) -> Iterable[Prop]:
+        """Render any dynamically generated properties."""
+        return []
 
     @classmethod
     def _pydantic_model(cls) -> type[BaseModel]:
@@ -640,7 +816,7 @@ class Model(
                 or a.default is not Not.defined
                 or a.default_factory is not None
             )
-            for a in cls._props.values()
+            for a in cls._fields.values()
             if a.init is not False and a.name is not None
         )
 
@@ -696,18 +872,18 @@ class Model(
         """Initialize a new record instance."""
         super().__init__()
 
-        kwargs = self._pydantic_model().model_validate(kwargs).model_dump()
+        self._pydantic_model().model_validate(kwargs)
 
         cls = type(self)
-        props = cls._props
+        fields = cls._fields
 
         init_sequence = sorted(
-            props.values(),
-            key=lambda p: p.init_level,
+            fields.values(),
+            key=lambda f: f.init_level if isinstance(f, Prop) else 0,
         )
 
-        for prop in init_sequence:
-            setattr(self, prop.name, kwargs[prop.name])
+        for f in init_sequence:
+            setattr(self, f.name, kwargs[f.name])
 
         self.__post_init__()
 

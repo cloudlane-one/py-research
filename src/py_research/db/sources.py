@@ -494,7 +494,7 @@ class RecMap[Rec: Record](DataMap[Any, Rec]):
             return [rec_idx]
         else:
             match_cols = (
-                list(self.target_type._attrs().values())
+                list(self.target_type._rendered_attrs().values())
                 if self.match_by == "all"
                 else (
                     list(self.target_type._pk.components)
