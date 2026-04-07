@@ -45,6 +45,7 @@ dependencies = [
     "networkx>=3.4.2",
     "identify>=2.6.12",
     "pillow>=11.2.1",
+    "rich>=14.3.3",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"

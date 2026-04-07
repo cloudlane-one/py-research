@@ -136,7 +136,7 @@ class Attr(
 
     @override
     def _setter(self: Attr[ValT2], instance: OwnT, value: ValT2) -> None:
-        instance.__dict__[self.name] = value
+        instance.__dict__[self.name] = value  # pyright: ignore[reportIndexIssue]
 
     @override
     def _index(
@@ -806,7 +806,9 @@ class Record(Model, Generic[*KeyTt]):
         row = result.fetchone()
 
         if row is not None:
-            self.__dict__.update(row._asdict())
+            self.__dict__.update(  # pyright: ignore[reportAttributeAccessIssue]
+                row._asdict()
+            )
 
     def sync(self) -> None:
         """Sync the record with the database."""

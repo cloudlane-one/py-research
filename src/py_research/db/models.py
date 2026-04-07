@@ -150,7 +150,7 @@ class Prop(
     compare: bool = True
 
     _owner_map: dict[type[OwnT], Prop[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT]] = field(
-        default_factory=dict
+        default_factory=dict, repr=False
     )
 
     def _render(self, owner: type[OwnT]) -> Iterable[Prop]:
@@ -224,7 +224,7 @@ class Prop(
         prop.typeref = copy_and_override(
             TypeRef[Data],
             prop.typeref or TypeRef(),
-            var_subs=dict(prop.typeref.var_subs if prop.typeref is not None else {})
+            var_subs=dict(prop.typeref.subs if prop.typeref is not None else {})
             | get_typevar_map(owner)
             | {OwnT: TypeRef(owner)},
         )
@@ -406,7 +406,7 @@ class Local(
 
     def _setter(self: Local[ValT2], instance: OwnT, value: ValT2) -> None:
         """Set the value of this property."""
-        instance.__dict__[self.name] = value
+        instance.__dict__[self.name] = value  # pyright: ignore[reportIndexIssue]
 
     # Descriptor read/write:
 
@@ -478,7 +478,6 @@ class ModelMeta(type):
             cls._src_mod = getmodule(cls if not cls._derivate else bases[0])
 
         cls.__defined_fields = None
-        cls.__defined_props = None
         cls._get_defined_fields()
         cls.__rendered_fields = None
         cls.__all_fields = None
@@ -503,7 +502,7 @@ class ModelMeta(type):
                 continue
 
             typeref = TypeRef[Prop | Local](
-                hint, var_subs=typevar_map, ctx_module=cls._src_mod
+                hint, subs=typevar_map, ctx_module=cls._src_mod
             )
 
             if (
@@ -518,16 +517,17 @@ class ModelMeta(type):
             field_res: Prop | Local
 
             if issubclass(field_type, Prop):
+                typeref = cast(TypeRef[Prop], typeref)
+
                 if isinstance(field_val, Prop) and field_val._custom_prop_type:
                     assert isinstance(field_val, field_type)
                     field_type = type(field_val)
-
-                typeref = TypeRef(
-                    field_type,
-                    var_subs=typevar_map,
-                    ctx_module=cls._src_mod,
-                    var_overrides={ValT: typeref},
-                )
+                    typeref = TypeRef(
+                        field_type,
+                        subs=typevar_map,
+                        ctx_module=cls._src_mod,
+                        overrides={ValT: typeref.args[ValT]},
+                    )
 
                 if not isinstance(field_val, Prop):
                     field_res = field_type(typeref=typeref, default=field_val)
@@ -684,7 +684,11 @@ class ModelMeta(type):
                         compare=f.compare,
                     )
                     if isinstance(f, Prop)
-                    else {}
+                    else dict(
+                        repr=False,
+                        hash=False,
+                        compare=False,
+                    )
                 ),
             )
             for f in cls._fields.values()
