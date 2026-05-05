@@ -691,7 +691,7 @@ class ResultTable:
 
         if write_to is not None:
             with (
-                open(write_to, "w") if isinstance(write_to, Path | str) else write_to
+                open(write_to, "w", encoding="utf-8") if isinstance(write_to, Path | str) else write_to
             ) as f:
                 f.write(html)
 
