@@ -345,7 +345,6 @@ def merge_geo_regions(
         geo_col: The column containing geo-regions.
         geo_regions: The geo-regions to merge.
         input_scheme: The scheme used to define the geo-regions.
-        rest_of_world: Whether to add a "Rest of World" region.
         pretty_labels: Whether to use pretty labels for regions.
 
     Returns:
@@ -355,11 +354,6 @@ def merge_geo_regions(
 
     cc_coverage = set()
     res_df = pd.DataFrame()
-
-    geo_regions = [
-        *geo_regions,
-        GeoRegion("world", GeoScheme.world, exclude_already_covered=True),
-    ]
 
     for gr in geo_regions:
         gr = gr if isinstance(gr, GeoRegion) else GeoRegion(gr)
