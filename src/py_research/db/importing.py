@@ -314,7 +314,7 @@ def _tree_to_db(  # noqa: C901
     row = None
     refs: list[tuple[str | None, _SubMap]] = []
     # If mapping is only a string, extract the target attr directly.
-    if isinstance(data, str):
+    if isinstance(data, str | int | float | datetime | bool | None):
         assert isinstance(resolved_map, str)
         row = pd.Series({resolved_map: data}, dtype=object)
     else:
