@@ -1,0 +1,551 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>py_research.db package &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = 'docs/ref-api/py/py_research.db';</script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+    <link rel="next" title="py_research.db.base module" href="py_research.db.base.html" />
+    <link rel="prev" title="py_research package" href="py_research.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+    <button class="pst-navbar-icon sidebar-toggle secondary-toggle" aria-label="On this page">
+      <span class="fa-solid fa-outdent"></span>
+    </button>
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item current active">
+  <a class="nav-link nav-internal" href="../index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+    <div class="sidebar-primary-items__start sidebar-primary__section">
+        <div class="sidebar-primary-item">
+<nav class="bd-docs-nav bd-links"
+     aria-label="Section Navigation">
+  <p class="bd-links__title" role="heading" aria-level="1">Section Navigation</p>
+  <div class="bd-toc-item navbar-nav"><ul class="current nav bd-sidenav">
+<li class="toctree-l1 current active has-children"><a class="reference internal" href="modules.html">src</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l2 current active has-children"><a class="reference internal" href="py_research.html">py_research package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul class="current">
+<li class="toctree-l3 current active has-children"><a class="current reference internal" href="#">py_research.db package</a><details open="open"><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.base.html">py_research.db.base module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.conflicts.html">py_research.db.conflicts module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.db.importing.html">py_research.db.importing module</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.plots.html">py_research.plots package</a></li>
+<li class="toctree-l3 has-children"><a class="reference internal" href="py_research.reflect.html">py_research.reflect package</a><details><summary><span class="toctree-toggle" role="presentation"><i class="fa-solid fa-chevron-down"></i></span></summary><ul>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.deps.html">py_research.reflect.deps module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.dist.html">py_research.reflect.dist module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.env.html">py_research.reflect.env module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.ref.html">py_research.reflect.ref module</a></li>
+<li class="toctree-l4"><a class="reference internal" href="py_research.reflect.runtime.html">py_research.reflect.runtime module</a></li>
+</ul>
+</details></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.caching.html">py_research.caching module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.colors.html">py_research.colors module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.data.html">py_research.data module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.enums.html">py_research.enums module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.files.html">py_research.files module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.geo.html">py_research.geo module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.hashing.html">py_research.hashing module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.intl.html">py_research.intl module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.ranking.html">py_research.ranking module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.sql.html">py_research.sql module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.stats.html">py_research.stats module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.tables.html">py_research.tables module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.telemetry.html">py_research.telemetry module</a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.time.html">py_research.time module</a></li>
+</ul>
+</details></li>
+</ul>
+</details></li>
+</ul>
+</div>
+</nav></div>
+    </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">API References</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="modules.html" class="nav-link">src</a></li>
+    
+    
+    <li class="breadcrumb-item"><a href="py_research.html" class="nav-link">py_research package</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research.db package</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <section id="module-py_research.db">
+<span id="py-research-db-package"></span><h1>py_research.db package<a class="headerlink" href="#module-py_research.db" title="Link to this heading">#</a></h1>
+<p>Easy to use relational database.</p>
+<section id="submodules">
+<h2>Submodules<a class="headerlink" href="#submodules" title="Link to this heading">#</a></h2>
+<div class="toctree-wrapper compound">
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="py_research.db.base.html">py_research.db.base module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table"><code class="docutils literal notranslate"><span class="pre">Table</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.db"><code class="docutils literal notranslate"><span class="pre">Table.db</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.df"><code class="docutils literal notranslate"><span class="pre">Table.df</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.source_map"><code class="docutils literal notranslate"><span class="pre">Table.source_map</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.indexes"><code class="docutils literal notranslate"><span class="pre">Table.indexes</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.from_excel"><code class="docutils literal notranslate"><span class="pre">Table.from_excel()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.to_excel"><code class="docutils literal notranslate"><span class="pre">Table.to_excel()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.filter"><code class="docutils literal notranslate"><span class="pre">Table.filter()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.merge"><code class="docutils literal notranslate"><span class="pre">Table.merge()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.flatten"><code class="docutils literal notranslate"><span class="pre">Table.flatten()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.extract"><code class="docutils literal notranslate"><span class="pre">Table.extract()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.keys"><code class="docutils literal notranslate"><span class="pre">Table.keys()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.get"><code class="docutils literal notranslate"><span class="pre">Table.get()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.Table.columns"><code class="docutils literal notranslate"><span class="pre">Table.columns</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable"><code class="docutils literal notranslate"><span class="pre">SingleTable</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable.source_map"><code class="docutils literal notranslate"><span class="pre">SingleTable.source_map</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable.indexes"><code class="docutils literal notranslate"><span class="pre">SingleTable.indexes</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable.filter"><code class="docutils literal notranslate"><span class="pre">SingleTable.filter()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable.trim"><code class="docutils literal notranslate"><span class="pre">SingleTable.trim()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SingleTable.extend"><code class="docutils literal notranslate"><span class="pre">SingleTable.extend()</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SourceTable"><code class="docutils literal notranslate"><span class="pre">SourceTable</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.SourceTable.df"><code class="docutils literal notranslate"><span class="pre">SourceTable.df</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DBSchema"><code class="docutils literal notranslate"><span class="pre">DBSchema</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB"><code class="docutils literal notranslate"><span class="pre">DB</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.table_dfs"><code class="docutils literal notranslate"><span class="pre">DB.table_dfs</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.relations"><code class="docutils literal notranslate"><span class="pre">DB.relations</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.join_tables"><code class="docutils literal notranslate"><span class="pre">DB.join_tables</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.schema"><code class="docutils literal notranslate"><span class="pre">DB.schema</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.updates"><code class="docutils literal notranslate"><span class="pre">DB.updates</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.backend"><code class="docutils literal notranslate"><span class="pre">DB.backend</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.load"><code class="docutils literal notranslate"><span class="pre">DB.load()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.save"><code class="docutils literal notranslate"><span class="pre">DB.save()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.describe"><code class="docutils literal notranslate"><span class="pre">DB.describe()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.copy"><code class="docutils literal notranslate"><span class="pre">DB.copy()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.extend"><code class="docutils literal notranslate"><span class="pre">DB.extend()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.trim"><code class="docutils literal notranslate"><span class="pre">DB.trim()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.filter"><code class="docutils literal notranslate"><span class="pre">DB.filter()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.to_graph"><code class="docutils literal notranslate"><span class="pre">DB.to_graph()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.keys"><code class="docutils literal notranslate"><span class="pre">DB.keys()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.values"><code class="docutils literal notranslate"><span class="pre">DB.values()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.items"><code class="docutils literal notranslate"><span class="pre">DB.items()</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.base.html#py_research.db.base.DB.get"><code class="docutils literal notranslate"><span class="pre">DB.get()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.db.conflicts.html">py_research.db.conflicts module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflictPolicy"><code class="docutils literal notranslate"><span class="pre">DataConflictPolicy</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflicts"><code class="docutils literal notranslate"><span class="pre">DataConflicts</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.conflicts.html#py_research.db.conflicts.DataConflictError"><code class="docutils literal notranslate"><span class="pre">DataConflictError</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="py_research.db.importing.html">py_research.db.importing module</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap"><code class="docutils literal notranslate"><span class="pre">TableMap</span></code></a><ul>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.table"><code class="docutils literal notranslate"><span class="pre">TableMap.table</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.map"><code class="docutils literal notranslate"><span class="pre">TableMap.map</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.ext_maps"><code class="docutils literal notranslate"><span class="pre">TableMap.ext_maps</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.link_attr"><code class="docutils literal notranslate"><span class="pre">TableMap.link_attr</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.link_type"><code class="docutils literal notranslate"><span class="pre">TableMap.link_type</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.join_table_name"><code class="docutils literal notranslate"><span class="pre">TableMap.join_table_name</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.join_table_map"><code class="docutils literal notranslate"><span class="pre">TableMap.join_table_map</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.id_type"><code class="docutils literal notranslate"><span class="pre">TableMap.id_type</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.id_attr"><code class="docutils literal notranslate"><span class="pre">TableMap.id_attr</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.hash_id_with_path"><code class="docutils literal notranslate"><span class="pre">TableMap.hash_id_with_path</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.match_by_attr"><code class="docutils literal notranslate"><span class="pre">TableMap.match_by_attr</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.TableMap.conflict_policy"><code class="docutils literal notranslate"><span class="pre">TableMap.conflict_policy</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.RelDB"><code class="docutils literal notranslate"><span class="pre">RelDB</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="py_research.db.importing.html#py_research.db.importing.tree_to_db"><code class="docutils literal notranslate"><span class="pre">tree_to_db()</span></code></a></li>
+</ul>
+</li>
+</ul>
+</div>
+</section>
+</section>
+
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+    <a class="left-prev"
+       href="py_research.html"
+       title="previous page">
+      <i class="fa-solid fa-angle-left"></i>
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">previous</p>
+        <p class="prev-next-title">py_research package</p>
+      </div>
+    </a>
+    <a class="right-next"
+       href="py_research.db.base.html"
+       title="next page">
+      <div class="prev-next-info">
+        <p class="prev-next-subtitle">next</p>
+        <p class="prev-next-title">py_research.db.base module</p>
+      </div>
+      <i class="fa-solid fa-angle-right"></i>
+    </a>
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+                <dialog id="pst-secondary-sidebar-modal"></dialog>
+                <div id="pst-secondary-sidebar" class="bd-sidebar-secondary bd-toc"><div class="sidebar-secondary-items sidebar-secondary__inner">
+
+
+  <div class="sidebar-secondary-item">
+<div
+    id="pst-page-navigation-heading-2"
+    class="page-toc tocsection onthispage">
+    <i class="fa-solid fa-list"></i> On this page
+  </div>
+  <nav class="bd-toc-nav page-toc" aria-labelledby="pst-page-navigation-heading-2">
+    <ul class="visible nav section-nav flex-column">
+<li class="toc-h2 nav-item toc-entry"><a class="reference internal nav-link" href="#submodules">Submodules</a></li>
+</ul>
+  </nav></div>
+
+  <div class="sidebar-secondary-item">
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../../../_sources/docs/ref-api/py/py_research.db.rst.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div></div>
+
+</div></div>
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>

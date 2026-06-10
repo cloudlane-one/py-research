@@ -1,0 +1,7 @@
+py\_research.db.base module
+===========================
+
+.. automodule:: py_research.db.base
+   :members:
+   :undoc-members:
+   :show-inheritance:

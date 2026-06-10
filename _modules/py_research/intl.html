@@ -1,0 +1,1298 @@
+
+<!DOCTYPE html>
+
+
+<html lang="en" data-content_root="../../" >
+
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>py_research.intl &#8212; Py-Research  documentation</title>
+  
+  
+  
+  <script data-cfasync="false">
+    document.documentElement.dataset.mode = localStorage.getItem("mode") || "";
+    document.documentElement.dataset.theme = localStorage.getItem("theme") || "";
+  </script>
+  <!--
+    this give us a css class that will be invisible only if js is disabled
+  -->
+  <noscript>
+    <style>
+      .pst-js-only { display: none !important; }
+
+    </style>
+  </noscript>
+  
+  <!-- Loaded before other Sphinx assets -->
+  <link href="../../_static/styles/theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+<link href="../../_static/styles/pydata-sphinx-theme.css?digest=8878045cc6db502f8baf" rel="stylesheet" />
+
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=8f2a1f02" />
+    <link rel="stylesheet" type="text/css" href="../../_static/autodoc_pydantic.css" />
+  
+  <!-- So that users can add custom icons -->
+  <script src="../../_static/scripts/fontawesome.js?digest=8878045cc6db502f8baf"></script>
+  <!-- Pre-loaded scripts that we'll load fully later -->
+  <link rel="preload" as="script" href="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf" />
+<link rel="preload" as="script" href="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf" />
+
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9bcbadda"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script crossorigin="anonymous" integrity="sha256-Ae2Vz/4ePdIu6ZyI/5ZGsYnb+m0JlOmKPjt6XZ9JJkA=" src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.4/require.min.js"></script>
+    <script>DOCUMENTATION_OPTIONS.pagename = '_modules/py_research/intl';</script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <meta name="docsearch:language" content="en"/>
+  <meta name="docsearch:version" content="" />
+  </head>
+  
+  
+  <body data-bs-spy="scroll" data-bs-target=".bd-toc-nav" data-offset="180" data-bs-root-margin="0px 0px -60%" data-default-mode="">
+
+  
+  
+  <div id="pst-skip-link" class="skip-link d-print-none"><a href="#main-content">Skip to main content</a></div>
+  
+  <div id="pst-scroll-pixel-helper"></div>
+  
+  <button type="button" class="btn rounded-pill" id="pst-back-to-top">
+    <i class="fa-solid fa-arrow-up"></i>Back to top</button>
+
+  
+  <dialog id="pst-search-dialog">
+    
+<form class="bd-search d-flex align-items-center"
+      action="../../search.html"
+      method="get">
+  <i class="fa-solid fa-magnifying-glass"></i>
+  <input type="search"
+         class="form-control"
+         name="q"
+         placeholder="Search the docs ..."
+         aria-label="Search the docs ..."
+         autocomplete="off"
+         autocorrect="off"
+         autocapitalize="off"
+         spellcheck="false"/>
+  <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd>K</kbd></span>
+</form>
+  </dialog>
+
+  <div class="pst-async-banner-revealer d-none">
+  <aside id="bd-header-version-warning" class="d-none d-print-none" aria-label="Version warning"></aside>
+</div>
+
+  
+    <header class="bd-header navbar navbar-expand-lg bd-navbar d-print-none">
+<div class="bd-header__inner bd-page-width">
+  <button class="pst-navbar-icon sidebar-toggle primary-toggle" aria-label="Site navigation">
+    <span class="fa-solid fa-bars"></span>
+  </button>
+  
+  
+  <div class="col-lg-3 navbar-header-items__start">
+    
+      <div class="navbar-item">
+
+  
+    
+  
+
+<a class="navbar-brand logo" href="../../README.html">
+  
+  
+  
+  
+  
+  
+    <p class="title logo__title">Py-Research  documentation</p>
+  
+</a></div>
+    
+  </div>
+  
+  <div class="col-lg-9 navbar-header-items">
+    
+    <div class="me-auto navbar-header-items__center">
+      
+        <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+      
+    </div>
+    
+    
+    <div class="navbar-header-items__end">
+      
+        <div class="navbar-item navbar-persistent--container">
+          
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+        </div>
+      
+      
+        <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+      
+    </div>
+    
+  </div>
+  
+  
+    <div class="navbar-persistent--mobile">
+
+<button class="btn search-button-field search-button__button pst-js-only" title="Search" aria-label="Search" data-bs-placement="bottom" data-bs-toggle="tooltip">
+ <i class="fa-solid fa-magnifying-glass"></i>
+ <span class="search-button__default-text">Search</span>
+ <span class="search-button__kbd-shortcut"><kbd class="kbd-shortcut__modifier">Ctrl</kbd>+<kbd class="kbd-shortcut__modifier">K</kbd></span>
+</button>
+    </div>
+  
+
+  
+</div>
+
+    </header>
+  
+
+  <div class="bd-container">
+    <div class="bd-container__inner bd-page-width">
+      
+      
+      
+        
+      
+      <dialog id="pst-primary-sidebar-modal"></dialog>
+      <div id="pst-primary-sidebar" class="bd-sidebar-primary bd-sidebar hide-on-wide">
+        
+
+  
+  <div class="sidebar-header-items sidebar-primary__section">
+    
+    
+      <div class="sidebar-header-items__center">
+        
+          
+          
+            <div class="navbar-item">
+<nav>
+  <ul class="bd-navbar-elements navbar-nav">
+    
+<li class="nav-item ">
+  <a class="nav-link nav-internal" href="../../docs/ref-api/index.html">
+    API References
+  </a>
+</li>
+
+  </ul>
+</nav></div>
+          
+        
+      </div>
+    
+    
+    
+      <div class="sidebar-header-items__end">
+        
+          <div class="navbar-item">
+
+<button class="btn btn-sm nav-link pst-navbar-icon theme-switch-button pst-js-only" aria-label="Color mode" data-bs-title="Color mode"  data-bs-placement="bottom" data-bs-toggle="tooltip">
+  <i class="theme-switch fa-solid fa-sun                fa-lg" data-mode="light" title="Light"></i>
+  <i class="theme-switch fa-solid fa-moon               fa-lg" data-mode="dark"  title="Dark"></i>
+  <i class="theme-switch fa-solid fa-circle-half-stroke fa-lg" data-mode="auto"  title="System Settings"></i>
+</button></div>
+        
+      </div>
+    
+  </div>
+  
+  
+  <div class="sidebar-primary-items__end sidebar-primary__section">
+      <div class="sidebar-primary-item">
+<div id="ethical-ad-placement"
+      class="flat"
+      data-ea-publisher="readthedocs"
+      data-ea-type="readthedocs-sidebar"
+      data-ea-manual="true">
+</div></div>
+  </div>
+
+
+      </div>
+      
+      <main id="main-content" class="bd-main" role="main">
+        
+        
+          <div class="bd-content">
+            <div class="bd-article-container">
+              
+              <div class="bd-header-article d-print-none">
+<div class="header-article-items header-article__inner">
+  
+    <div class="header-article-items__start">
+      
+        <div class="header-article-item">
+
+<nav aria-label="Breadcrumb" class="d-print-none">
+  <ul class="bd-breadcrumbs">
+    
+    <li class="breadcrumb-item breadcrumb-home">
+      <a href="../../README.html" class="nav-link" aria-label="Home">
+        <i class="fa-solid fa-home"></i>
+      </a>
+    </li>
+    
+    <li class="breadcrumb-item"><a href="../index.html" class="nav-link">Module code</a></li>
+    
+    <li class="breadcrumb-item active" aria-current="page"><span class="ellipsis">py_research.intl</span></li>
+  </ul>
+</nav>
+</div>
+      
+    </div>
+  
+  
+</div>
+</div>
+              
+              
+              
+                
+<div id="searchbox"></div>
+                <article class="bd-article">
+                  
+  <h1>Source code for py_research.intl</h1><div class="highlight"><pre>
+<span></span><span class="sd">&quot;&quot;&quot;Simple &amp; semi-automatic intl. + localization of data analysis functions.&quot;&quot;&quot;</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Generator</span><span class="p">,</span> <span class="n">Iterable</span><span class="p">,</span> <span class="n">Mapping</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">contextvars</span><span class="w"> </span><span class="kn">import</span> <span class="n">ContextVar</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">asdict</span><span class="p">,</span> <span class="n">dataclass</span><span class="p">,</span> <span class="n">field</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">datetime</span><span class="w"> </span><span class="kn">import</span> <span class="n">date</span><span class="p">,</span> <span class="n">datetime</span><span class="p">,</span> <span class="n">time</span><span class="p">,</span> <span class="n">timedelta</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">decimal</span><span class="w"> </span><span class="kn">import</span> <span class="n">Decimal</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">functools</span><span class="w"> </span><span class="kn">import</span> <span class="n">partial</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">locale</span><span class="w"> </span><span class="kn">import</span> <span class="n">LC_ALL</span><span class="p">,</span> <span class="n">getlocale</span><span class="p">,</span> <span class="n">normalize</span><span class="p">,</span> <span class="n">setlocale</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">os</span><span class="w"> </span><span class="kn">import</span> <span class="n">environ</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Literal</span><span class="p">,</span> <span class="n">ParamSpec</span><span class="p">,</span> <span class="n">TypeVar</span><span class="p">,</span> <span class="n">cast</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">babel</span><span class="w"> </span><span class="kn">import</span> <span class="n">Locale</span><span class="p">,</span> <span class="n">UnknownLocaleError</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">babel.dates</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">format_date</span><span class="p">,</span>
+    <span class="n">format_datetime</span><span class="p">,</span>
+    <span class="n">format_interval</span><span class="p">,</span>
+    <span class="n">format_time</span><span class="p">,</span>
+    <span class="n">format_timedelta</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">babel.numbers</span><span class="w"> </span><span class="kn">import</span> <span class="n">format_decimal</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">deep_translator</span><span class="w"> </span><span class="kn">import</span> <span class="n">GoogleTranslator</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">pydantic.dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span> <span class="k">as</span> <span class="n">pydantic_dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing_extensions</span><span class="w"> </span><span class="kn">import</span> <span class="n">Self</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">yaml</span><span class="w"> </span><span class="kn">import</span> <span class="n">CLoader</span><span class="p">,</span> <span class="n">load</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.caching</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_cache</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.enums</span><span class="w"> </span><span class="kn">import</span> <span class="n">StrEnum</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.geo</span><span class="w"> </span><span class="kn">import</span> <span class="n">Country</span><span class="p">,</span> <span class="n">CountryScheme</span><span class="p">,</span> <span class="n">GeoScheme</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">py_research.hashing</span><span class="w"> </span><span class="kn">import</span> <span class="n">gen_int_hash</span>
+
+<span class="n">cache</span> <span class="o">=</span> <span class="n">get_cache</span><span class="p">()</span>
+
+<span class="n">K</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;K&quot;</span><span class="p">)</span>
+<span class="n">V</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s2">&quot;V&quot;</span><span class="p">)</span>
+<span class="n">P</span> <span class="o">=</span> <span class="n">ParamSpec</span><span class="p">(</span><span class="s2">&quot;P&quot;</span><span class="p">)</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_merge_ordered_dicts</span><span class="p">(</span><span class="n">d</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="n">K</span><span class="p">,</span> <span class="n">V</span><span class="p">]:</span>
+    <span class="n">d</span> <span class="o">=</span> <span class="n">d</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">d</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="p">[{}]</span>
+    <span class="n">merged</span> <span class="o">=</span> <span class="n">d</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+
+    <span class="k">for</span> <span class="n">di</span> <span class="ow">in</span> <span class="n">d</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">di</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">merged</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="n">v</span>
+
+    <span class="k">return</span> <span class="n">merged</span>
+
+
+<div class="viewcode-block" id="DtUnit">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.DtUnit">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DtUnit</span><span class="p">(</span><span class="n">StrEnum</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Common datetime units with their LDML pattern strings.&quot;&quot;&quot;</span>
+
+    <span class="n">year</span> <span class="o">=</span> <span class="s2">&quot;yyyy&quot;</span>
+    <span class="n">quarter</span> <span class="o">=</span> <span class="s2">&quot;QQQ&quot;</span>
+    <span class="n">month</span> <span class="o">=</span> <span class="s2">&quot;MM&quot;</span>
+    <span class="n">week</span> <span class="o">=</span> <span class="s2">&quot;ww&quot;</span>
+    <span class="n">week_of_month</span> <span class="o">=</span> <span class="s2">&quot;W&quot;</span>
+    <span class="n">day</span> <span class="o">=</span> <span class="s2">&quot;dd&quot;</span>
+    <span class="n">day_of_year</span> <span class="o">=</span> <span class="s2">&quot;DD&quot;</span>
+    <span class="n">hour</span> <span class="o">=</span> <span class="s2">&quot;HH&quot;</span>
+    <span class="n">minute</span> <span class="o">=</span> <span class="s2">&quot;mm&quot;</span>
+    <span class="n">second</span> <span class="o">=</span> <span class="s2">&quot;ss&quot;</span>
+    <span class="n">millisecond</span> <span class="o">=</span> <span class="s2">&quot;SSS&quot;</span></div>
+
+
+
+<div class="viewcode-block" id="Format">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Format">[docs]</a>
+<span class="nd">@pydantic_dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Format</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom options for localized formatting.&quot;&quot;&quot;</span>
+
+    <span class="n">decimal_notation</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;plain&quot;</span><span class="p">,</span> <span class="s2">&quot;scientific&quot;</span><span class="p">,</span> <span class="s2">&quot;percent&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How to format decimals.&quot;&quot;&quot;</span>
+
+    <span class="n">decimal_digits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How many digits to show after the decimal point.&quot;&quot;&quot;</span>
+
+    <span class="n">decimal_min_digits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Minimum number of digits to show after the decimal point.&quot;&quot;&quot;</span>
+
+    <span class="n">decimal_max_digits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Maximum number of digits to show after the decimal point.&quot;&quot;&quot;</span>
+
+    <span class="n">decimal_group_separator</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether to use decimal group separators.&quot;&quot;&quot;</span>
+
+    <span class="n">datetime_auto_format</span><span class="p">:</span> <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How to auto-format datetimes.&quot;&quot;&quot;</span>
+
+    <span class="n">datetime_format</span><span class="p">:</span> <span class="n">DtUnit</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;`ldml pattern`_ for formatting datetime objects.</span>
+<span class="sd">    .. _ldml pattern: https://www.unicode.org/reports/tr35/tr35-dates.html#Date_Field_Symbol_Table</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="n">timedelta_auto_format</span><span class="p">:</span> <span class="p">(</span>
+        <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;narrow&quot;</span><span class="p">,</span> <span class="s2">&quot;short&quot;</span><span class="p">,</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span> <span class="s2">&quot;long&quot;</span><span class="p">,</span> <span class="s2">&quot;raw&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How to auto-format timedeltas.&quot;&quot;&quot;</span>
+
+    <span class="n">timedelta_resolution</span><span class="p">:</span> <span class="p">(</span>
+        <span class="n">Literal</span><span class="p">[</span><span class="s2">&quot;year&quot;</span><span class="p">,</span> <span class="s2">&quot;month&quot;</span><span class="p">,</span> <span class="s2">&quot;week&quot;</span><span class="p">,</span> <span class="s2">&quot;day&quot;</span><span class="p">,</span> <span class="s2">&quot;hour&quot;</span><span class="p">,</span> <span class="s2">&quot;minute&quot;</span><span class="p">,</span> <span class="s2">&quot;second&quot;</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Unit to use for formatting timedeltas. Has no effect for auto-format &#39;raw&#39;.&quot;&quot;&quot;</span>
+
+    <span class="n">country_format</span><span class="p">:</span> <span class="n">CountryScheme</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;How to format countries.&quot;&quot;&quot;</span>
+
+    <span class="n">fallback_to_translation</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether to fallback to text translation if no other formatting method matches.&quot;&quot;&quot;</span>
+
+    <span class="n">na_representation</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;&quot;</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;String to use for NaN or None values.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="Format.merge">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Format.merge">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">merge</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Merge and override ``self`` with ``other``.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span>
+            <span class="n">Self</span><span class="p">,</span>
+            <span class="n">Format</span><span class="p">(</span>
+                <span class="o">**</span><span class="p">{</span>
+                    <span class="o">**</span><span class="n">asdict</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span>
+                    <span class="o">**</span><span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">v</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">asdict</span><span class="p">(</span><span class="n">other</span><span class="p">)</span><span class="o">.</span><span class="n">items</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">},</span>
+                <span class="p">}</span>
+            <span class="p">),</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Format.spec">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Format.spec">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">spec</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">t</span><span class="p">:</span> <span class="nb">type</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Generate format-spec matching this format usign current locale.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">get_localization</span><span class="p">()</span><span class="o">.</span><span class="n">format_spec</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Format.auto_digits">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Format.auto_digits">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">auto_digits</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">series</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">float</span><span class="p">],</span> <span class="n">min_sig</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span> <span class="n">fixed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Copy and change options according to numbers in ``sample``.</span>
+
+<span class="sd">        Change such that all given numbers have minimum ``min_sig`` significant digits.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            series: Series of numbers to use for determining options.</span>
+<span class="sd">            min_sig: Minimum number of significant digits.</span>
+<span class="sd">            fixed: Whether to fix the number of digits after the decimal point.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            New instance with changed options.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">minimum</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="nb">abs</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">series</span><span class="p">)</span>
+        <span class="n">min_int_digits</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="p">(</span>
+                <span class="nb">len</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">))</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="n">i</span> <span class="o">:=</span> <span class="nb">int</span><span class="p">(</span>
+                        <span class="n">minimum</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">decimal_notation</span> <span class="o">==</span> <span class="s2">&quot;plain&quot;</span> <span class="k">else</span> <span class="n">minimum</span> <span class="o">*</span> <span class="mi">100</span>
+                    <span class="p">)</span>
+                <span class="p">)</span>
+                <span class="o">!=</span> <span class="mi">0</span>
+                <span class="k">else</span> <span class="mi">0</span>
+            <span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">decimal_notation</span> <span class="ow">in</span> <span class="p">(</span><span class="s2">&quot;plain&quot;</span><span class="p">,</span> <span class="s2">&quot;percent&quot;</span><span class="p">)</span>
+            <span class="k">else</span> <span class="mi">1</span>
+        <span class="p">)</span>
+        <span class="n">min_after_comma</span> <span class="o">=</span> <span class="n">min_sig</span> <span class="o">-</span> <span class="n">min_int_digits</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span>
+            <span class="n">Self</span><span class="p">,</span>
+            <span class="n">Format</span><span class="p">(</span>
+                <span class="o">**</span><span class="p">{</span>
+                    <span class="o">**</span><span class="n">asdict</span><span class="p">(</span><span class="bp">self</span><span class="p">),</span>
+                    <span class="o">**</span><span class="nb">dict</span><span class="p">(</span>
+                        <span class="n">decimal_min_digits</span><span class="o">=</span><span class="n">min_after_comma</span><span class="p">,</span>
+                        <span class="n">decimal_max_digits</span><span class="o">=</span><span class="p">(</span><span class="n">min_after_comma</span> <span class="k">if</span> <span class="n">fixed</span> <span class="k">else</span> <span class="kc">None</span><span class="p">),</span>
+                    <span class="p">),</span>
+                <span class="p">}</span>
+            <span class="p">),</span>
+        <span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="Args">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Args">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Args</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Match for args of a text template.&quot;&quot;&quot;</span>
+
+    <span class="n">values</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="nb">all</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__hash__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="k">return</span> <span class="n">gen_int_hash</span><span class="p">(</span><span class="n">asdict</span><span class="p">(</span><span class="bp">self</span><span class="p">))</span>
+
+<div class="viewcode-block" id="Args.match">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Args.match">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">match</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Check whether given args match this match.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">all</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mi">1</span>
+
+        <span class="n">values</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">values</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">values</span><span class="p">,</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="nb">list</span><span class="p">)</span> <span class="k">else</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">values</span><span class="p">]</span>
+
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">!=</span> <span class="nb">len</span><span class="p">(</span><span class="n">values</span><span class="p">):</span>
+            <span class="k">return</span> <span class="mi">0</span>
+
+        <span class="n">matchers</span> <span class="o">=</span> <span class="p">[</span><span class="n">v</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">set</span><span class="p">)</span> <span class="k">else</span> <span class="p">{</span><span class="n">v</span><span class="p">}</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">values</span><span class="p">]</span>
+
+        <span class="k">return</span> <span class="nb">max</span><span class="p">(</span>
+            <span class="p">(</span><span class="mi">1</span> <span class="o">/</span> <span class="nb">len</span><span class="p">(</span><span class="n">matcher</span><span class="p">)</span> <span class="k">if</span> <span class="n">arg</span> <span class="ow">in</span> <span class="n">matcher</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">arg</span><span class="p">,</span> <span class="n">matcher</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">matchers</span><span class="p">)</span>
+        <span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="Template">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Template">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Template</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Override for a text template.&quot;&quot;&quot;</span>
+
+    <span class="n">replace</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace template with this template string.&quot;&quot;&quot;</span>
+
+    <span class="n">wrap</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Wrap template with this template string.&quot;&quot;&quot;</span>
+
+    <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Replace (some) args.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="Template.apply_tmpl">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Template.apply_tmpl">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">apply_tmpl</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tmpl</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Apply this template to given template string and args.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">wrap</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">tmpl</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">wrap</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">replace</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">replace</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Template.apply_args">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Template.apply_args">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">apply_args</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Apply this template to given args.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">args</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span>
+            <span class="k">else</span> <span class="p">(</span>
+                <span class="nb">tuple</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">args</span> <span class="k">else</span> <span class="n">a</span> <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">a</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">args</span><span class="p">))</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+                <span class="k">else</span> <span class="kc">None</span>
+            <span class="p">)</span>
+        <span class="p">)</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="Overrides">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Overrides">[docs]</a>
+<span class="nd">@pydantic_dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Overrides</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Custom, language-dependent text overrides.&quot;&quot;&quot;</span>
+
+    <span class="n">templates</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span>
+        <span class="nb">str</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Template</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span> <span class="o">|</span> <span class="nb">tuple</span> <span class="o">|</span> <span class="n">Args</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Template</span><span class="p">]</span>
+    <span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Template overrides by name.&quot;&quot;&quot;</span>
+
+    <span class="n">vocabulary</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="nb">dict</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Term overrides.&quot;&quot;&quot;</span>
+
+    <span class="nb">format</span><span class="p">:</span> <span class="n">Format</span> <span class="o">=</span> <span class="n">field</span><span class="p">(</span><span class="n">default_factory</span><span class="o">=</span><span class="n">Format</span><span class="p">)</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Overrides for formatting.&quot;&quot;&quot;</span>
+
+<div class="viewcode-block" id="Overrides.merge">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Overrides.merge">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">merge</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">Self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Merge and override ``self`` with ``other``.&quot;&quot;&quot;</span>
+        <span class="n">texts</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">keys</span><span class="p">())</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">keys</span><span class="p">()):</span>
+            <span class="n">self_texts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="p">{})</span>
+            <span class="n">other_texts</span> <span class="o">=</span> <span class="n">other</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="p">{})</span>
+
+            <span class="n">texts</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">_merge_ordered_dicts</span><span class="p">(</span>
+                <span class="p">[</span>
+                    <span class="p">(</span>
+                        <span class="n">self_texts</span>
+                        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">self_texts</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+                        <span class="k">else</span> <span class="p">{</span>
+                            <span class="n">Args</span><span class="p">(</span><span class="nb">all</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span> <span class="p">(</span>
+                                <span class="n">Template</span><span class="p">(</span><span class="n">self_texts</span><span class="p">)</span>
+                                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">self_texts</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                                <span class="k">else</span> <span class="n">self_texts</span>
+                            <span class="p">)</span>
+                        <span class="p">}</span>
+                    <span class="p">),</span>
+                    <span class="p">(</span>
+                        <span class="n">other_texts</span>
+                        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other_texts</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+                        <span class="k">else</span> <span class="p">{</span>
+                            <span class="n">Args</span><span class="p">(</span><span class="nb">all</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span> <span class="p">(</span>
+                                <span class="n">Template</span><span class="p">(</span><span class="n">other_texts</span><span class="p">)</span>
+                                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other_texts</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                                <span class="k">else</span> <span class="n">other_texts</span>
+                            <span class="p">)</span>
+                        <span class="p">}</span>
+                    <span class="p">),</span>
+                <span class="p">]</span>
+            <span class="p">)</span>
+
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span>
+            <span class="n">Self</span><span class="p">,</span>
+            <span class="n">Overrides</span><span class="p">(</span>
+                <span class="n">vocabulary</span><span class="o">=</span><span class="n">_merge_ordered_dicts</span><span class="p">([</span><span class="bp">self</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">,</span> <span class="n">other</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">]),</span>
+                <span class="n">templates</span><span class="o">=</span><span class="n">texts</span><span class="p">,</span>
+                <span class="nb">format</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">format</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">other</span><span class="o">.</span><span class="n">format</span><span class="p">),</span>
+            <span class="p">),</span>
+        <span class="p">)</span></div>
+</div>
+
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_get_default_locale</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Locale</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get default locale, falling back to English.&quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Locale</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">normalize</span><span class="p">(</span><span class="n">getlocale</span><span class="p">()[</span><span class="mi">0</span><span class="p">]</span> <span class="ow">or</span> <span class="s2">&quot;en_US&quot;</span><span class="p">),</span> <span class="n">sep</span><span class="o">=</span><span class="s2">&quot;_&quot;</span><span class="p">)</span>
+    <span class="k">except</span> <span class="n">UnknownLocaleError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Locale</span><span class="p">(</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="s2">&quot;US&quot;</span><span class="p">)</span>
+
+
+<span class="n">_ldml_to_posix</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="s2">&quot;a&quot;</span><span class="p">:</span> <span class="s2">&quot;%p&quot;</span><span class="p">,</span>  <span class="c1"># AM or PM</span>
+    <span class="s2">&quot;dd&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%d</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># day of month, padded</span>
+    <span class="s2">&quot;d&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%e</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># day of month, unpadded</span>
+    <span class="s2">&quot;DDD&quot;</span><span class="p">:</span> <span class="s2">&quot;%j&quot;</span><span class="p">,</span>  <span class="c1"># day of year, padded</span>
+    <span class="s2">&quot;DD&quot;</span><span class="p">:</span> <span class="s2">&quot;%-j&quot;</span><span class="p">,</span>  <span class="c1"># day of year, unpadded</span>
+    <span class="s2">&quot;D&quot;</span><span class="p">:</span> <span class="s2">&quot;%-j&quot;</span><span class="p">,</span>  <span class="c1"># day of year, unpadded</span>
+    <span class="s2">&quot;EEEE&quot;</span><span class="p">:</span> <span class="s2">&quot;%A&quot;</span><span class="p">,</span>  <span class="c1"># weekday</span>
+    <span class="s2">&quot;hh&quot;</span><span class="p">:</span> <span class="s2">&quot;%I&quot;</span><span class="p">,</span>  <span class="c1"># 12-hour time, padded</span>
+    <span class="s2">&quot;h&quot;</span><span class="p">:</span> <span class="s2">&quot;%-I&quot;</span><span class="p">,</span>  <span class="c1"># 12-hour time, unpadded</span>
+    <span class="s2">&quot;HH&quot;</span><span class="p">:</span> <span class="s2">&quot;%H&quot;</span><span class="p">,</span>  <span class="c1"># 24-hour time, padded</span>
+    <span class="s2">&quot;H&quot;</span><span class="p">:</span> <span class="s2">&quot;%-H&quot;</span><span class="p">,</span>  <span class="c1"># 24-hour time, unpadded</span>
+    <span class="s2">&quot;MMMM&quot;</span><span class="p">:</span> <span class="s2">&quot;%B&quot;</span><span class="p">,</span>  <span class="c1"># month: name, full</span>
+    <span class="s2">&quot;MMM&quot;</span><span class="p">:</span> <span class="s2">&quot;%b&quot;</span><span class="p">,</span>  <span class="c1"># month name, short</span>
+    <span class="s2">&quot;MM&quot;</span><span class="p">:</span> <span class="s2">&quot;%m&quot;</span><span class="p">,</span>  <span class="c1"># month, padded</span>
+    <span class="s2">&quot;M&quot;</span><span class="p">:</span> <span class="s2">&quot;%-m&quot;</span><span class="p">,</span>  <span class="c1"># month, unpadded</span>
+    <span class="s2">&quot;mm&quot;</span><span class="p">:</span> <span class="s2">&quot;%M&quot;</span><span class="p">,</span>  <span class="c1"># minute, padded</span>
+    <span class="s2">&quot;m&quot;</span><span class="p">:</span> <span class="s2">&quot;%-M&quot;</span><span class="p">,</span>  <span class="c1"># minute, unpadded</span>
+    <span class="s2">&quot;ss&quot;</span><span class="p">:</span> <span class="s2">&quot;%S&quot;</span><span class="p">,</span>  <span class="c1"># second, padded</span>
+    <span class="s2">&quot;s&quot;</span><span class="p">:</span> <span class="s2">&quot;%-S&quot;</span><span class="p">,</span>  <span class="c1"># second, unpadded</span>
+    <span class="s2">&quot;yyyy&quot;</span><span class="p">:</span> <span class="s2">&quot;%Y&quot;</span><span class="p">,</span>  <span class="c1"># year, full</span>
+    <span class="s2">&quot;yy&quot;</span><span class="p">:</span> <span class="s2">&quot;%y&quot;</span><span class="p">,</span>  <span class="c1"># year, two-digit</span>
+    <span class="s2">&quot;y&quot;</span><span class="p">:</span> <span class="s2">&quot;%Y&quot;</span><span class="p">,</span>  <span class="c1"># year, full</span>
+    <span class="s2">&quot;Z&quot;</span><span class="p">:</span> <span class="s2">&quot;%Z&quot;</span><span class="p">,</span>  <span class="c1"># timezone</span>
+    <span class="s2">&quot;zzzz&quot;</span><span class="p">:</span> <span class="s2">&quot;%Z&quot;</span><span class="p">,</span>  <span class="c1"># timezone</span>
+    <span class="s2">&quot;z&quot;</span><span class="p">:</span> <span class="s2">&quot;%Z&quot;</span><span class="p">,</span>  <span class="c1"># timezone</span>
+    <span class="s2">&quot;SSSSSS&quot;</span><span class="p">:</span> <span class="s2">&quot;</span><span class="si">%f</span><span class="s2">&quot;</span><span class="p">,</span>  <span class="c1"># microseconds</span>
+<span class="p">}</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_match_ldml_to_posix</span><span class="p">(</span><span class="n">ldml</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">_ldml_to_posix</span><span class="p">:</span>
+        <span class="n">pos</span> <span class="o">=</span> <span class="n">ldml</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">k</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pos</span> <span class="o">!=</span> <span class="o">-</span><span class="mi">1</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">pos</span><span class="p">,</span> <span class="n">k</span>
+
+    <span class="k">return</span> <span class="kc">None</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ldml_to_posix_format</span><span class="p">(</span><span class="n">ldml</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">res</span> <span class="o">=</span> <span class="n">_match_ldml_to_posix</span><span class="p">(</span><span class="n">ldml</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">res</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">ldml</span>
+
+    <span class="n">pos</span><span class="p">,</span> <span class="n">k</span> <span class="o">=</span> <span class="n">res</span>
+
+    <span class="k">return</span> <span class="p">(</span>
+        <span class="n">_ldml_to_posix_format</span><span class="p">(</span><span class="n">ldml</span><span class="p">[:</span><span class="n">pos</span><span class="p">])</span>
+        <span class="o">+</span> <span class="n">_ldml_to_posix</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+        <span class="o">+</span> <span class="n">_ldml_to_posix_format</span><span class="p">(</span><span class="n">ldml</span><span class="p">[</span><span class="n">pos</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="p">:])</span>
+    <span class="p">)</span>
+
+
+<span class="nd">@cache</span><span class="o">.</span><span class="n">function</span><span class="p">(</span><span class="n">id_arg_subset</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;lang&quot;</span><span class="p">,</span> <span class="s2">&quot;text&quot;</span><span class="p">])</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_cached_translate</span><span class="p">(</span><span class="n">lang</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">translator</span><span class="p">:</span> <span class="n">GoogleTranslator</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">translator</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="n">translator</span>
+        <span class="k">if</span> <span class="n">translator</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="ow">and</span> <span class="n">translator</span><span class="o">.</span><span class="n">source</span> <span class="o">==</span> <span class="s2">&quot;en&quot;</span>
+        <span class="ow">and</span> <span class="n">translator</span><span class="o">.</span><span class="n">target</span> <span class="o">==</span> <span class="n">lang</span>
+        <span class="k">else</span> <span class="n">GoogleTranslator</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="n">lang</span><span class="p">)</span>
+    <span class="p">)</span>
+    <span class="k">return</span> <span class="n">translator</span><span class="o">.</span><span class="n">translate</span><span class="p">(</span><span class="n">text</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="Localization">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization">[docs]</a>
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">Localization</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Locale config, which can be used as a context manager to activate the locale.&quot;&quot;&quot;</span>
+
+    <span class="n">loc</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Locale to use for this localization. If None, use parent context&#39;s locale.&quot;&quot;&quot;</span>
+
+    <span class="n">overrides</span><span class="p">:</span> <span class="n">Overrides</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Locale</span><span class="p">,</span> <span class="n">Overrides</span><span class="p">]</span> <span class="o">|</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Overrides</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Optional translation overrides for the current or other locales.&quot;&quot;&quot;</span>
+
+    <span class="n">show_raw</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Whether to show raw function calls instead of localized text, for debugging.&quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_machine_translate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_cached_translate</span><span class="p">(</span>
+            <span class="n">locale</span><span class="o">.</span><span class="n">language</span> <span class="k">if</span> <span class="n">locale</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="o">.</span><span class="n">language</span><span class="p">,</span>
+            <span class="n">text</span><span class="p">,</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">__translator</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">locale</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Locale</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return first locale found up the parent tree or default locale.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">loc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">loc</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">loc</span><span class="p">,</span> <span class="n">Locale</span><span class="p">)</span> <span class="k">else</span> <span class="n">Locale</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">loc</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span><span class="o">.</span><span class="n">locale</span>
+
+        <span class="k">return</span> <span class="n">_get_default_locale</span><span class="p">()</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">override_dict</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="n">Locale</span><span class="p">,</span> <span class="n">Overrides</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return dict of all overrides, keyed by locale string.&quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="p">{</span>
+                <span class="p">(</span>
+                    <span class="n">Locale</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="n">sep</span><span class="o">=</span><span class="p">(</span><span class="s2">&quot;_&quot;</span> <span class="k">if</span> <span class="s2">&quot;_&quot;</span> <span class="ow">in</span> <span class="n">k</span> <span class="k">else</span> <span class="s2">&quot;-&quot;</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                    <span class="k">else</span> <span class="n">k</span>
+                <span class="p">):</span> <span class="n">v</span>
+                <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">overrides</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+            <span class="p">}</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">)</span>
+            <span class="k">else</span> <span class="p">{</span><span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">overrides</span> <span class="ow">or</span> <span class="n">Overrides</span><span class="p">()}</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="Localization.get_overrides">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.get_overrides">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_overrides</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Overrides</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return merger of all the parents&#39; and self&#39;s overrides for given locale.&quot;&quot;&quot;</span>
+        <span class="n">parent_overrd</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">locale</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="bp">self</span>
+            <span class="k">else</span> <span class="n">Overrides</span><span class="p">()</span>
+        <span class="p">)</span>
+        <span class="n">self_overrd</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">override_dict</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">locale</span><span class="p">,</span> <span class="n">Overrides</span><span class="p">())</span>
+
+        <span class="k">return</span> <span class="n">parent_overrd</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">self_overrd</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">__post_init__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__translator</span> <span class="o">=</span> <span class="n">GoogleTranslator</span><span class="p">(</span><span class="n">source</span><span class="o">=</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="o">.</span><span class="n">language</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Localization.activate">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.activate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">activate</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Set this the as current localization.&quot;&quot;&quot;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="o">=</span> <span class="n">active_localization</span><span class="o">.</span><span class="n">get</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="o">=</span> <span class="n">active_localization</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="n">setlocale</span><span class="p">(</span><span class="n">LC_ALL</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">))</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">activate</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+<div class="viewcode-block" id="Localization.deactivate">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.deactivate">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">deactivate</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Reset locale to previous value.&quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">__token</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">active_localization</span><span class="o">.</span><span class="n">reset</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">__token</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">__parent</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">setlocale</span><span class="p">(</span><span class="n">LC_ALL</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">__parent</span><span class="o">.</span><span class="n">locale</span><span class="p">))</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">_</span><span class="p">):</span>  <span class="c1"># noqa: D105</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">deactivate</span><span class="p">()</span>
+
+    <span class="c1"># Define custom deepcopy to avoid error when copying `self.__token`.</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">__deepcopy__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">memo</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Self</span><span class="p">:</span>  <span class="c1"># noqa: D105</span>
+        <span class="n">c</span> <span class="o">=</span> <span class="n">Localization</span><span class="p">(</span>
+            <span class="n">loc</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">loc</span><span class="p">,</span>
+            <span class="n">overrides</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">overrides</span><span class="p">,</span>
+            <span class="n">show_raw</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">show_raw</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="n">memo</span><span class="p">[</span><span class="nb">id</span><span class="p">(</span><span class="bp">self</span><span class="p">)]</span> <span class="o">=</span> <span class="n">c</span>
+        <span class="k">return</span> <span class="n">cast</span><span class="p">(</span><span class="n">Self</span><span class="p">,</span> <span class="n">c</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Localization.term">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.term">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">term</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">term</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Localize given term.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            term: Term to localize.</span>
+<span class="sd">            locale:</span>
+<span class="sd">                Locale to use for localization.</span>
+<span class="sd">                Defaults to the currently activated locale.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Localized term.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_raw</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;term(&#39;</span><span class="si">{</span><span class="n">term</span><span class="si">}</span><span class="s2">&#39;)&quot;</span>
+
+        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">Locale</span><span class="p">(</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="s2">&quot;US&quot;</span><span class="p">))</span>
+        <span class="n">translation</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">term</span> <span class="ow">in</span> <span class="n">translation</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">translation</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">[</span><span class="n">term</span><span class="p">]</span>
+        <span class="k">elif</span> <span class="n">term</span> <span class="ow">in</span> <span class="n">base</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_machine_translate</span><span class="p">(</span><span class="n">base</span><span class="o">.</span><span class="n">vocabulary</span><span class="p">[</span><span class="n">term</span><span class="p">],</span> <span class="n">locale</span><span class="p">)</span>
+
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_machine_translate</span><span class="p">(</span><span class="n">term</span><span class="p">,</span> <span class="n">locale</span><span class="p">)</span></div>
+
+
+    <span class="nd">@staticmethod</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">_get_template</span><span class="p">(</span><span class="n">overrides</span><span class="p">:</span> <span class="n">Overrides</span><span class="p">,</span> <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">args</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Template</span><span class="p">:</span>
+        <span class="n">texts</span> <span class="o">=</span> <span class="n">overrides</span><span class="o">.</span><span class="n">templates</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="p">{})</span>
+        <span class="n">texts</span> <span class="o">=</span> <span class="n">texts</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">texts</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span> <span class="k">else</span> <span class="p">{</span><span class="n">Args</span><span class="p">(</span><span class="nb">all</span><span class="o">=</span><span class="kc">True</span><span class="p">):</span> <span class="n">texts</span><span class="p">}</span>
+
+        <span class="n">matches</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">float</span><span class="p">,</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">Template</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">match</span><span class="p">,</span> <span class="n">tmpl</span> <span class="ow">in</span> <span class="n">texts</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="n">matcher</span> <span class="o">=</span> <span class="p">(</span>
+                <span class="k">match</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">match</span><span class="p">,</span> <span class="n">Args</span><span class="p">)</span>
+                <span class="k">else</span> <span class="n">Args</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">match</span><span class="p">)</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">match</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)</span> <span class="k">else</span> <span class="n">match</span><span class="p">)</span>
+            <span class="p">)</span>
+            <span class="n">score</span> <span class="o">=</span> <span class="n">matcher</span><span class="o">.</span><span class="n">match</span><span class="p">(</span><span class="n">args</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">score</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">matches</span><span class="p">[</span><span class="n">score</span><span class="p">]</span> <span class="o">=</span> <span class="n">tmpl</span>
+
+        <span class="n">template</span> <span class="o">=</span> <span class="n">matches</span><span class="p">[</span><span class="nb">max</span><span class="p">(</span><span class="n">matches</span><span class="o">.</span><span class="n">keys</span><span class="p">())]</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">matches</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="kc">None</span>
+
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="n">template</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">template</span><span class="p">,</span> <span class="n">Template</span><span class="p">)</span>
+            <span class="k">else</span> <span class="n">Template</span><span class="p">(</span><span class="n">template</span><span class="p">)</span> <span class="k">if</span> <span class="n">template</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">Template</span><span class="p">()</span>
+        <span class="p">)</span>
+
+<div class="viewcode-block" id="Localization.text">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.text">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">text</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">context</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">content</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="o">*</span><span class="n">args</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Localize given text.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            context: Label indentifying the context of the text to localize.</span>
+<span class="sd">            content: Text to localize.</span>
+<span class="sd">            args: Extra args to pass, if given text content is a template string.</span>
+<span class="sd">            locale:</span>
+<span class="sd">                Locale to use for localization.</span>
+<span class="sd">                Defaults to the currently activated locale.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Localized text.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_raw</span><span class="p">:</span>
+            <span class="n">arg_str</span> <span class="o">=</span> <span class="p">(</span><span class="s2">&quot;, &quot;</span> <span class="o">+</span> <span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">args</span><span class="p">))</span> <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">args</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="s2">&quot;&quot;</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;text(&#39;</span><span class="si">{</span><span class="n">content</span><span class="si">}</span><span class="s2">&#39;&quot;</span> <span class="o">+</span> <span class="n">arg_str</span> <span class="o">+</span> <span class="sa">f</span><span class="s2">&quot;, context=</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">Locale</span><span class="p">(</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="s2">&quot;US&quot;</span><span class="p">))</span>
+        <span class="n">translation</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">)</span>
+
+        <span class="n">tmpl</span> <span class="o">=</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_machine_translate</span><span class="p">(</span><span class="n">content</span><span class="p">,</span> <span class="n">locale</span><span class="p">)</span> <span class="k">if</span> <span class="n">content</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="s2">&quot;</span><span class="si">{0}</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+        <span class="n">tmpl_args</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">args</span><span class="p">]</span>
+
+        <span class="n">transl_template</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_template</span><span class="p">(</span><span class="n">translation</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+        <span class="n">base_template</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_get_template</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="n">context</span><span class="p">,</span> <span class="n">args</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">replace</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">tmpl</span> <span class="o">=</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">replace</span>
+        <span class="k">elif</span> <span class="n">base_template</span><span class="o">.</span><span class="n">replace</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">tmpl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_machine_translate</span><span class="p">(</span><span class="n">base_template</span><span class="o">.</span><span class="n">replace</span><span class="p">,</span> <span class="n">locale</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">wrap</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">tmpl</span> <span class="o">=</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">wrap</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">tmpl</span><span class="p">)</span>
+        <span class="k">elif</span> <span class="n">base_template</span><span class="o">.</span><span class="n">wrap</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">tmpl</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_machine_translate</span><span class="p">(</span><span class="n">base_template</span><span class="o">.</span><span class="n">wrap</span><span class="p">,</span> <span class="n">locale</span><span class="p">)</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="n">tmpl</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">args</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">transl_template</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+                <span class="n">tmpl_args</span> <span class="o">=</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">args</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">transl_template</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">tmpl_args</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">i</span><span class="p">:</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">]</span> <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">transl_template</span><span class="o">.</span><span class="n">args</span> <span class="k">else</span> <span class="n">a</span>
+                    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">a</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">tmpl_args</span><span class="p">)</span>
+                <span class="p">}</span>
+        <span class="k">elif</span> <span class="n">base_template</span><span class="o">.</span><span class="n">args</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">base_template</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+                <span class="n">tmpl_args</span> <span class="o">=</span> <span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">base_template</span><span class="o">.</span><span class="n">args</span><span class="p">]</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">base_template</span><span class="o">.</span><span class="n">args</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+                <span class="n">tmpl_args</span> <span class="o">=</span> <span class="p">{</span>
+                    <span class="n">i</span><span class="p">:</span> <span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">(</span><span class="n">base_template</span><span class="o">.</span><span class="n">args</span><span class="p">[</span><span class="n">i</span><span class="p">],</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span>
+                        <span class="k">if</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">base_template</span><span class="o">.</span><span class="n">args</span>
+                        <span class="k">else</span> <span class="n">a</span>
+                    <span class="p">)</span>
+                    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">a</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">tmpl_args</span><span class="p">)</span>
+                <span class="p">}</span>
+
+        <span class="k">return</span> <span class="n">tmpl</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="o">*</span><span class="n">tmpl_args</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Localization.label">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.label">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">label</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">label</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+        <span class="n">context</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Localize given label.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            label: Label to localize.</span>
+<span class="sd">            context: Context in which the label is used.</span>
+<span class="sd">            locale:</span>
+<span class="sd">                Locale to use for localization.</span>
+<span class="sd">                Defaults to the currently activated locale.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Localized label.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_raw</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;label(&#39;</span><span class="si">{</span><span class="n">label</span><span class="si">}</span><span class="s2">&#39;, context=</span><span class="si">{</span><span class="n">context</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+        <span class="k">return</span> <span class="p">(</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">text</span><span class="p">(</span><span class="n">context</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">label</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">context</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+            <span class="k">else</span> <span class="bp">self</span><span class="o">.</span><span class="n">term</span><span class="p">(</span><span class="n">label</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span>
+        <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Localization.value">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.value">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">value</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span>
+        <span class="n">v</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+        <span class="n">options</span><span class="p">:</span> <span class="n">Format</span> <span class="o">=</span> <span class="n">Format</span><span class="p">(),</span>
+        <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return localized string represention of given value.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            v: Value to localize.</span>
+<span class="sd">            options: Options for formatting.</span>
+<span class="sd">            context: Context in which the value is used.</span>
+<span class="sd">            locale: Locale to use for localization.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Localized value.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">show_raw</span><span class="p">:</span>
+            <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;value(</span><span class="si">{</span><span class="n">v</span><span class="si">}</span><span class="s2">)&quot;</span>
+
+        <span class="n">locale</span> <span class="o">=</span> <span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span>
+
+        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">Locale</span><span class="p">(</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="s2">&quot;US&quot;</span><span class="p">))</span>
+        <span class="n">translation</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">)</span>
+
+        <span class="n">options</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">translation</span><span class="p">)</span><span class="o">.</span><span class="n">format</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">options</span><span class="p">)</span>
+
+        <span class="k">match</span> <span class="p">(</span><span class="n">v</span><span class="p">):</span>
+            <span class="k">case</span><span class="w"> </span><span class="k">_</span> <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">pd</span><span class="o">.</span><span class="n">isna</span><span class="p">(</span><span class="n">v</span><span class="p">):</span>
+                <span class="k">return</span> <span class="n">options</span><span class="o">.</span><span class="n">na_representation</span>
+            <span class="k">case</span> <span class="nb">float</span><span class="p">()</span> <span class="o">|</span> <span class="n">Decimal</span><span class="p">()</span> <span class="o">|</span> <span class="nb">int</span><span class="p">():</span>
+                <span class="n">fixed_digits</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">decimal_digits</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">decimal_min_digits</span> <span class="ow">or</span> <span class="mi">0</span>
+                <span class="n">max_digits</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">decimal_digits</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">decimal_max_digits</span> <span class="ow">or</span> <span class="mi">6</span>
+                <span class="n">group_sep</span> <span class="o">=</span> <span class="p">(</span>
+                    <span class="n">options</span><span class="o">.</span><span class="n">decimal_group_separator</span>
+                    <span class="k">if</span> <span class="n">options</span><span class="o">.</span><span class="n">decimal_group_separator</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                    <span class="k">else</span> <span class="kc">False</span>
+                <span class="p">)</span>
+
+                <span class="k">match</span> <span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_notation</span><span class="p">):</span>
+                    <span class="k">case</span> <span class="s2">&quot;percent&quot;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="n">format_decimal</span><span class="p">(</span>
+                            <span class="n">v</span><span class="p">,</span>
+                            <span class="nb">format</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;#,##0.</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;0&#39;</span><span class="p">]</span><span class="o">*</span><span class="n">fixed_digits</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;#&#39;</span><span class="p">]</span><span class="o">*</span><span class="p">(</span><span class="n">max_digits</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">fixed_digits</span><span class="p">))</span><span class="si">}</span><span class="s2">%&quot;</span><span class="p">,</span>
+                            <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                            <span class="n">group_separator</span><span class="o">=</span><span class="n">group_sep</span><span class="p">,</span>
+                        <span class="p">)</span>
+                    <span class="k">case</span> <span class="s2">&quot;scientific&quot;</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="n">format_decimal</span><span class="p">(</span>
+                            <span class="n">v</span><span class="p">,</span>
+                            <span class="nb">format</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;#,##0.</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;0&#39;</span><span class="p">]</span><span class="o">*</span><span class="n">fixed_digits</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;#&#39;</span><span class="p">]</span><span class="o">*</span><span class="p">(</span><span class="n">max_digits</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">fixed_digits</span><span class="p">))</span><span class="si">}</span><span class="s2">E00&quot;</span><span class="p">,</span>
+                            <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                            <span class="n">group_separator</span><span class="o">=</span><span class="n">group_sep</span><span class="p">,</span>
+                        <span class="p">)</span>
+                    <span class="k">case</span><span class="w"> </span><span class="s2">&quot;plain&quot;</span> <span class="o">|</span> <span class="k">_</span><span class="p">:</span>
+                        <span class="k">return</span> <span class="n">format_decimal</span><span class="p">(</span>
+                            <span class="n">v</span><span class="p">,</span>
+                            <span class="nb">format</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;#,##0.</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;0&#39;</span><span class="p">]</span><span class="o">*</span><span class="n">fixed_digits</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span>
+                            <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="s1">&#39;&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">([</span><span class="s1">&#39;#&#39;</span><span class="p">]</span><span class="o">*</span><span class="p">(</span><span class="n">max_digits</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">fixed_digits</span><span class="p">))</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span>
+                            <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                            <span class="n">group_separator</span><span class="o">=</span><span class="n">group_sep</span><span class="p">,</span>
+                        <span class="p">)</span>
+            <span class="k">case</span> <span class="n">datetime</span><span class="p">()</span> <span class="o">|</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">():</span>
+                <span class="k">return</span> <span class="n">format_datetime</span><span class="p">(</span>
+                    <span class="n">v</span><span class="p">,</span>
+                    <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span>
+                    <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">date</span><span class="p">():</span>
+                <span class="k">return</span> <span class="n">format_date</span><span class="p">(</span>
+                    <span class="n">v</span><span class="p">,</span>
+                    <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;short&quot;</span><span class="p">,</span>
+                    <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">time</span><span class="p">():</span>
+                <span class="k">return</span> <span class="n">format_time</span><span class="p">(</span>
+                    <span class="n">v</span><span class="p">,</span>
+                    <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span> <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;medium&quot;</span><span class="p">,</span>
+                    <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">timedelta</span><span class="p">()</span> <span class="o">|</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timedelta</span><span class="p">()</span> <span class="k">if</span> <span class="n">options</span><span class="o">.</span><span class="n">timedelta_auto_format</span> <span class="o">!=</span> <span class="s2">&quot;raw&quot;</span><span class="p">:</span>
+                <span class="k">return</span> <span class="n">format_timedelta</span><span class="p">(</span>
+                    <span class="n">v</span><span class="p">,</span>
+                    <span class="nb">format</span><span class="o">=</span><span class="p">(</span>
+                        <span class="n">options</span><span class="o">.</span><span class="n">timedelta_auto_format</span>
+                        <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span>
+                        <span class="ow">or</span> <span class="s2">&quot;short&quot;</span>
+                    <span class="p">),</span>
+                    <span class="n">granularity</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">timedelta_resolution</span> <span class="ow">or</span> <span class="s2">&quot;second&quot;</span><span class="p">,</span>
+                    <span class="n">threshold</span><span class="o">=</span><span class="mf">0.99</span><span class="p">,</span>
+                    <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">pd</span><span class="o">.</span><span class="n">Interval</span><span class="p">()</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">left</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">isinstance</span><span class="p">(</span>
+                <span class="n">v</span><span class="o">.</span><span class="n">right</span><span class="p">,</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span>
+            <span class="p">):</span>
+                <span class="c1"># Only do locale-aware formatting for datetime intervals.</span>
+                <span class="k">return</span> <span class="n">format_interval</span><span class="p">(</span>
+                    <span class="n">v</span><span class="o">.</span><span class="n">left</span><span class="p">,</span> <span class="n">v</span><span class="o">.</span><span class="n">right</span><span class="p">,</span> <span class="n">skeleton</span><span class="o">=</span><span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span>
+                <span class="p">)</span>
+            <span class="k">case</span> <span class="n">Country</span><span class="p">():</span>
+                <span class="k">if</span> <span class="p">(</span>
+                    <span class="n">options</span><span class="o">.</span><span class="n">country_format</span> <span class="o">==</span> <span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span>
+                    <span class="ow">or</span> <span class="n">options</span><span class="o">.</span><span class="n">country_format</span> <span class="ow">is</span> <span class="kc">None</span>
+                <span class="p">):</span>
+                    <span class="k">return</span> <span class="n">locale</span><span class="o">.</span><span class="n">territories</span><span class="o">.</span><span class="n">get</span><span class="p">(</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">GeoScheme</span><span class="o">.</span><span class="n">cc_iso2</span><span class="p">))</span>
+                    <span class="p">)</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">term</span><span class="p">(</span>
+                        <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">GeoScheme</span><span class="o">.</span><span class="n">country_name</span><span class="p">)),</span>
+                        <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">,</span>
+                    <span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">country_format</span><span class="p">))</span>
+            <span class="k">case</span><span class="w"> </span><span class="k">_</span><span class="p">:</span>
+                <span class="k">return</span> <span class="p">(</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">term</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">),</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">options</span><span class="o">.</span><span class="n">fallback_to_translation</span>
+                    <span class="k">else</span> <span class="nb">str</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+                <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Localization.formatter">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.formatter">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">formatter</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">Format</span> <span class="o">=</span> <span class="n">Format</span><span class="p">(),</span> <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return a formatting function bound to this locale.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            options: Options for formatting.</span>
+<span class="sd">            locale: Locale to use for localization.</span>
+
+<span class="sd">        Returns:</span>
+<span class="sd">            Formatting function for generating localized values.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="n">partial</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">options</span><span class="o">=</span><span class="n">options</span><span class="p">,</span> <span class="n">locale</span><span class="o">=</span><span class="n">locale</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Localization.format_spec">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.Localization.format_spec">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">format_spec</span><span class="p">(</span>
+        <span class="bp">self</span><span class="p">,</span> <span class="n">typ</span><span class="p">:</span> <span class="nb">type</span><span class="p">,</span> <span class="n">options</span><span class="p">:</span> <span class="n">Format</span> <span class="o">=</span> <span class="n">Format</span><span class="p">(),</span> <span class="n">locale</span><span class="p">:</span> <span class="n">Locale</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Return locale-aware format-string for given type, if applicable.</span>
+
+<span class="sd">        Args:</span>
+<span class="sd">            typ: Type to get format-string for.</span>
+<span class="sd">            options: Options for formatting.</span>
+<span class="sd">            locale: Locale to use for localization.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">locale</span> <span class="o">=</span> <span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span>
+
+        <span class="n">base</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">Locale</span><span class="p">(</span><span class="s2">&quot;en&quot;</span><span class="p">,</span> <span class="s2">&quot;US&quot;</span><span class="p">))</span>
+        <span class="n">translation</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">get_overrides</span><span class="p">(</span><span class="n">locale</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">locale</span><span class="p">)</span>
+
+        <span class="n">options</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">translation</span><span class="p">)</span><span class="o">.</span><span class="n">format</span><span class="o">.</span><span class="n">merge</span><span class="p">(</span><span class="n">options</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">typ</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+            <span class="k">match</span> <span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_notation</span><span class="p">):</span>
+                <span class="k">case</span> <span class="s2">&quot;percent&quot;</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="s2">&quot;.0%&quot;</span>
+                <span class="k">case</span> <span class="s2">&quot;scientific&quot;</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_min_digits</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="mi">6</span><span class="si">}</span><span class="s2">e&quot;</span>
+                <span class="k">case</span><span class="w"> </span><span class="s2">&quot;plain&quot;</span> <span class="o">|</span> <span class="k">_</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="s2">&quot;n&quot;</span>
+        <span class="k">elif</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">typ</span><span class="p">,</span> <span class="nb">float</span> <span class="o">|</span> <span class="n">Decimal</span><span class="p">):</span>
+            <span class="k">match</span> <span class="p">(</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_notation</span><span class="p">):</span>
+                <span class="k">case</span> <span class="s2">&quot;percent&quot;</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_min_digits</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="mi">2</span><span class="si">}</span><span class="s2">%&quot;</span>
+                <span class="k">case</span> <span class="s2">&quot;scientific&quot;</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_min_digits</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="mi">6</span><span class="si">}</span><span class="s2">e&quot;</span>
+                <span class="k">case</span><span class="w"> </span><span class="s2">&quot;plain&quot;</span> <span class="o">|</span> <span class="k">_</span><span class="p">:</span>
+                    <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;.</span><span class="si">{</span><span class="n">options</span><span class="o">.</span><span class="n">decimal_min_digits</span><span class="w"> </span><span class="ow">or</span><span class="w"> </span><span class="mi">3</span><span class="si">}</span><span class="s2">f&quot;</span>
+        <span class="k">elif</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">typ</span><span class="p">,</span> <span class="n">datetime</span> <span class="o">|</span> <span class="n">pd</span><span class="o">.</span><span class="n">Timestamp</span><span class="p">):</span>
+            <span class="n">opt</span> <span class="o">=</span> <span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;medium&quot;</span>
+            <span class="k">return</span> <span class="n">_ldml_to_posix_format</span><span class="p">(</span>
+                <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span>
+                <span class="ow">or</span> <span class="nb">str</span><span class="o">.</span><span class="n">format</span><span class="p">(</span>
+                    <span class="n">locale</span><span class="o">.</span><span class="n">datetime_formats</span><span class="p">[</span><span class="n">opt</span><span class="p">],</span>
+                    <span class="n">locale</span><span class="o">.</span><span class="n">date_formats</span><span class="p">[</span><span class="n">opt</span><span class="p">],</span>
+                    <span class="n">locale</span><span class="o">.</span><span class="n">time_formats</span><span class="p">[</span><span class="n">opt</span><span class="p">],</span>
+                <span class="p">)</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">typ</span><span class="p">,</span> <span class="n">date</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">_ldml_to_posix_format</span><span class="p">(</span>
+                <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span>
+                <span class="ow">or</span> <span class="n">locale</span><span class="o">.</span><span class="n">date_formats</span><span class="p">[</span><span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;medium&quot;</span><span class="p">]</span>
+            <span class="p">)</span>
+        <span class="k">elif</span> <span class="nb">issubclass</span><span class="p">(</span><span class="n">typ</span><span class="p">,</span> <span class="n">time</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">_ldml_to_posix_format</span><span class="p">(</span>
+                <span class="n">options</span><span class="o">.</span><span class="n">datetime_format</span>
+                <span class="ow">or</span> <span class="n">locale</span><span class="o">.</span><span class="n">time_formats</span><span class="p">[</span><span class="n">options</span><span class="o">.</span><span class="n">datetime_auto_format</span> <span class="ow">or</span> <span class="s2">&quot;medium&quot;</span><span class="p">]</span>
+            <span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s2">&quot;&quot;</span></div>
+</div>
+
+
+
+<span class="n">active_localization</span><span class="p">:</span> <span class="n">ContextVar</span><span class="p">[</span><span class="n">Localization</span><span class="p">]</span> <span class="o">=</span> <span class="n">ContextVar</span><span class="p">(</span>
+    <span class="s2">&quot;active_localization&quot;</span><span class="p">,</span> <span class="n">default</span><span class="o">=</span><span class="n">Localization</span><span class="p">()</span>
+<span class="p">)</span>
+
+
+<div class="viewcode-block" id="get_localization">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.get_localization">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_localization</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">Localization</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Get currently active localization.&quot;&quot;&quot;</span>
+    <span class="k">return</span> <span class="n">active_localization</span><span class="o">.</span><span class="n">get</span><span class="p">()</span></div>
+
+
+
+<div class="viewcode-block" id="iter_locales">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.iter_locales">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">iter_locales</span><span class="p">(</span>
+    <span class="n">locales</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">overrides</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Overrides</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Generator</span><span class="p">[</span><span class="n">Localization</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Iterate over localizations for given locales w/ optional overrides.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        locales:</span>
+<span class="sd">            Locales to iterate over.</span>
+<span class="sd">            If None, iterates over all locales, for which overrides are defined.</span>
+<span class="sd">        overrides: Optional text overrides for the localizations.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Generator of localizations.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">if</span> <span class="n">locales</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">current_loc</span> <span class="o">=</span> <span class="n">get_localization</span><span class="p">()</span>
+        <span class="n">locales</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">current_loc</span><span class="o">.</span><span class="n">override_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">()]</span>
+        <span class="k">if</span> <span class="n">overrides</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">ovrd_locz</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">k</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="n">overrides</span><span class="o">.</span><span class="n">keys</span><span class="p">()]</span>
+            <span class="n">locales</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="nb">set</span><span class="p">(</span><span class="n">locales</span><span class="p">)</span><span class="o">.</span><span class="n">union</span><span class="p">(</span><span class="n">ovrd_locz</span><span class="p">))</span>
+
+    <span class="k">for</span> <span class="n">loc</span> <span class="ow">in</span> <span class="n">locales</span><span class="p">:</span>
+        <span class="n">locz</span> <span class="o">=</span> <span class="n">Localization</span><span class="p">(</span><span class="n">loc</span><span class="o">=</span><span class="n">loc</span><span class="p">,</span> <span class="n">overrides</span><span class="o">=</span><span class="n">overrides</span><span class="p">)</span>
+        <span class="k">with</span> <span class="n">locz</span><span class="p">:</span>
+            <span class="k">yield</span> <span class="n">locz</span></div>
+
+
+
+<span class="n">default_file_path</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">&quot;TEXTS_FILE_PATH&quot;</span><span class="p">)</span> <span class="ow">or</span> <span class="p">(</span><span class="n">Path</span><span class="o">.</span><span class="n">cwd</span><span class="p">()</span> <span class="o">/</span> <span class="s2">&quot;texts.yaml&quot;</span><span class="p">))</span>
+<span class="sd">&quot;&quot;&quot;Default path to text overrides file.&quot;&quot;&quot;</span>
+
+
+<div class="viewcode-block" id="load_from_file">
+<a class="viewcode-back" href="../../docs/ref-api/py/py_research.intl.html#py_research.intl.load_from_file">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_from_file</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="n">Path</span> <span class="o">|</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Path</span> <span class="o">|</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Load text overrides from file.</span>
+
+<span class="sd">    Args:</span>
+<span class="sd">        path: Path to file. If None, the default file path is used.</span>
+
+<span class="sd">    Returns:</span>
+<span class="sd">        Path to the loaded file, if not given as argument.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">res_path</span> <span class="o">=</span> <span class="n">path</span> <span class="ow">or</span> <span class="n">default_file_path</span>
+
+    <span class="k">with</span> <span class="nb">open</span><span class="p">(</span><span class="n">default_file_path</span><span class="p">,</span> <span class="n">encoding</span><span class="o">=</span><span class="s2">&quot;utf-8&quot;</span><span class="p">)</span> <span class="k">as</span> <span class="n">f</span><span class="p">:</span>
+        <span class="n">override_dict</span> <span class="o">=</span> <span class="n">load</span><span class="p">(</span><span class="n">f</span><span class="p">,</span> <span class="n">Loader</span><span class="o">=</span><span class="n">CLoader</span><span class="p">)</span>
+        <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">override_dict</span><span class="p">,</span> <span class="nb">dict</span><span class="p">)</span>
+        <span class="n">overrides</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="nb">str</span><span class="p">(</span><span class="n">loc</span><span class="p">):</span> <span class="n">Overrides</span><span class="p">(</span><span class="o">**</span><span class="n">overrides</span><span class="p">)</span> <span class="k">for</span> <span class="n">loc</span><span class="p">,</span> <span class="n">overrides</span> <span class="ow">in</span> <span class="n">override_dict</span><span class="o">.</span><span class="n">items</span><span class="p">()</span>
+        <span class="p">}</span>
+        <span class="n">active_localization</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">Localization</span><span class="p">(</span><span class="n">overrides</span><span class="o">=</span><span class="n">overrides</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">path</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">Path</span><span class="p">(</span><span class="n">res_path</span><span class="p">)</span></div>
+
+</pre></div>
+
+                </article>
+              
+              
+              
+              
+              
+                <footer class="prev-next-footer d-print-none">
+                  
+<div class="prev-next-area">
+</div>
+                </footer>
+              
+            </div>
+            
+            
+              
+            
+          </div>
+          <footer class="bd-footer-content">
+            
+          </footer>
+        
+      </main>
+    </div>
+  </div>
+  
+  <!-- Scripts loaded after <body> so the DOM is not blocked -->
+  <script defer src="../../_static/scripts/bootstrap.js?digest=8878045cc6db502f8baf"></script>
+<script defer src="../../_static/scripts/pydata-sphinx-theme.js?digest=8878045cc6db502f8baf"></script>
+
+  <footer class="bd-footer">
+<div class="bd-footer__inner bd-page-width">
+  
+    <div class="footer-items__start">
+      
+        <div class="footer-item">
+
+  <p class="copyright">
+    
+      © Copyright 2023, Lorenzo Wormer.
+      <br/>
+    
+  </p>
+</div>
+      
+        <div class="footer-item">
+
+  <p class="sphinx-version">
+    Created using <a href="https://www.sphinx-doc.org/">Sphinx</a> 8.1.3.
+    <br/>
+  </p>
+</div>
+      
+    </div>
+  
+  
+  
+    <div class="footer-items__end">
+      
+        <div class="footer-item">
+<p class="theme-version">
+  <!-- # L10n: Setting the PST URL as an argument as this does not need to be localized -->
+  Built with the <a href="https://pydata-sphinx-theme.readthedocs.io/en/stable/index.html">PyData Sphinx Theme</a> 0.16.1.
+</p></div>
+      
+    </div>
+  
+</div>
+
+  </footer>
+  </body>
+</html>
