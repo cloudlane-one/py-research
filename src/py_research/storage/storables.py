@@ -15,7 +15,6 @@ from py_research.caching import cached_method
 from py_research.reflect.types import (
     SingleTypeDef,
     TypeRef,
-    get_typevar_map,
     is_subtype,
 )
 
@@ -124,7 +123,7 @@ class StorageDriver(ABC, Generic[V, T, B]):
     @classmethod
     def typeargs(cls) -> dict[TypeVar, TypeRef]:
         """Return the type arguments for this converter."""
-        return get_typevar_map(cls)
+        return TypeRef(cls).typevar_map
 
     @classmethod
     @cached_method

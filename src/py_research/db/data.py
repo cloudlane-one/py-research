@@ -653,7 +653,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
     @cached_prop
     def value_typeref(self) -> TypeRef[ValT]:
         """Target typeform of this prop."""
-        return self.typeref.args[ValT]
+        return self.typeref.typevar_map[ValT]
 
     # Context:
 
@@ -809,7 +809,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
             case Idx():
                 full_idx = tuple(self[c] for c in index.components)
             case SelfIdx():
-                assert self.typeref.args[DxT] is Col
+                assert self.typeref.typevar_map[DxT] is Col
                 full_idx = (
                     cast(Data[Any, Any, Col, Any, R, CtxT, *tuple[Any, ...]], self),
                 )
@@ -1481,7 +1481,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, RwxT, CtxT, *CtxTt], ABC):
                 ):
                     key = key if isinstance(key, tuple) else (key,)
                     if len(key) == len(self._idx_components()) and is_subtype(
-                        self.typeref.args[CtxT].typeform, Root
+                        self.typeref.typevar_map[CtxT].typeform, Root
                     ):
                         rooted = True
 

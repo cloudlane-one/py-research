@@ -41,7 +41,6 @@ from py_research.reflect.types import (
     GenericAlias,
     SingleTypeDef,
     TypeRef,
-    get_typevar_map,
     is_subtype,
 )
 from py_research.storage import get_storage_types
@@ -119,7 +118,7 @@ class Prop(
     @staticmethod
     def _get_default_class(typedef: SingleTypeDef, owner: type) -> type[Prop] | None:
         """Get the default subclass for this property."""
-        typevars = get_typevar_map(typedef)
+        typevars = TypeRef(typedef).typevar_map
         subclasses = reversed(get_subclasses(Prop))
 
         matching = [
@@ -224,8 +223,8 @@ class Prop(
         prop.typeref = copy_and_override(
             TypeRef[Data],
             prop.typeref or TypeRef(),
-            var_subs=dict(prop.typeref.subs if prop.typeref is not None else {})
-            | get_typevar_map(owner)
+            subs=dict(prop.typeref.subs if prop.typeref is not None else {})
+            | TypeRef(owner).typevar_map
             | {OwnT: TypeRef(owner)},
         )
 
@@ -495,7 +494,7 @@ class ModelMeta(type):
             return cls.__defined_fields
 
         fields = {}
-        typevar_map = get_typevar_map(cls)
+        typevar_map = TypeRef(cls).typevar_map
 
         for name, hint in get_annotations(cls).items():
             if name.startswith("__"):
@@ -526,7 +525,7 @@ class ModelMeta(type):
                         field_type,
                         subs=typevar_map,
                         ctx_module=cls._src_mod,
-                        overrides={ValT: typeref.args[ValT]},
+                        overrides={ValT: typeref.typevar_map[ValT]},
                     )
 
                 if not isinstance(field_val, Prop):
@@ -563,7 +562,7 @@ class ModelMeta(type):
                 continue
 
             # Handle typevar substitutions.
-            typevar_map = get_typevar_map(c, subs=typevar_map)
+            typevar_map = TypeRef(c, subs=typevar_map).typevar_map
 
             # Skip root Resource class and non-Resource classes.
             if not isinstance(orig, ModelMeta) or orig._root_class:
@@ -584,7 +583,7 @@ class ModelMeta(type):
                                     typeref=copy_and_override(
                                         type(super_field.typeref),
                                         super_field.typeref,
-                                        var_subs=typevar_map,
+                                        subs=typevar_map,
                                     ),
                                 )
                                 if isinstance(super_field, Prop)

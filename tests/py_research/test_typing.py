@@ -94,14 +94,14 @@ def test_typedef_to_typeset_for_union_and_alias() -> None:
     assert issubclass(alias_cls, list)
 
 
-def test_get_typevar_map_on_generic_and_union() -> None:
-    """get_typevar_map maps type variables across generics and unions."""
+def test_typevar_map_on_generic_and_union() -> None:
+    """typevar_map maps type variables across generics and unions."""
     T_co = TypeVar("T_co")
 
     class Box(Generic[T_co]): ...
 
-    mapping = ftyping.get_typevar_map(Box[int])
-    union_mapping = ftyping.get_typevar_map(int | str)
+    mapping = ftyping.TypeRef(Box[int]).typevar_map
+    union_mapping = ftyping.TypeRef(int | str).typevar_map
 
     assert mapping[T_co].typedef is int
     assert union_mapping == {}
