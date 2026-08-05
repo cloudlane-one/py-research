@@ -29,17 +29,17 @@ from py_research.types import UUID4
 
 from .data import (
     SQL,
+    Acc,
     Col,
-    Ctx,
+    CrudT,
     Data,
-    Expand,
     ExT,
-    FullIdx,
+    ExtIdx,
     Idx,
     Interface,
     KeyT,
     R,
-    RwxT,
+    RwT,
     SxT,
     Tab,
     ValT,
@@ -60,11 +60,11 @@ from .records import (
 
 @dataclass
 class Ref(
-    Prop[ValT, IdxT, R, OwnT, SxT, ExT, RwxT],
+    Prop[ValT, IdxT, RwT, OwnT, SxT, ExT, R],
 ):
     """Dynamic property reference."""
 
-    data: Data[ValT, Expand[IdxT], SxT, ExT, RwxT, Interface[OwnT]]
+    data: Data[ValT, IdxT, SxT, ExT, Acc[Any, RwT], Interface[OwnT]]
     converter: Callable[[Iterable[ValT]], ValT] | None = None
 
     def __post_init__(self):  # noqa: D105
@@ -198,16 +198,16 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
         return [*props, cls._pk]
 
 
-RelIdxT = TypeVar("RelIdxT", bound=FullIdx, default=FullIdx[Any, *tuple[Any, ...]])
+RelIdxT = TypeVar("RelIdxT", bound=Idx, default=ExtIdx[Any, *tuple[Any, ...]])
 EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
 
 
 @dataclass(kw_only=True, eq=False)
 class Rel(
-    Prop[LnT, RelIdxT, CruT, RecT, Tab, SQL, RwxT],
-    Generic[LnT, EdgeT, RelIdxT, CruT, RwxT, RecT],
+    Prop[LnT, RelIdxT, RwT, RecT, Tab, SQL, CrudT],
+    Generic[LnT, EdgeT, RelIdxT, RwT, CrudT, RecT],
 ):
-    """Backlink record set."""
+    """Relational record set."""
 
     @classmethod
     def _type_matcher(
@@ -218,7 +218,7 @@ class Rel(
     ) -> bool:
         return (
             is_subtype(val_type, Record)
-            and not is_subtype(index_type, Idx[()])
+            and not is_subtype(index_type, ExtIdx[()])
             and issubclass(owner_type, Record)
         )
 
@@ -231,24 +231,24 @@ class Rel(
         self,
     ) -> type[EdgeT]:
         """Return the type of the edge record."""
-        return self.typeref.args[EdgeT].common_type
+        return self.typeref.typevar_map[EdgeT].common_type
 
     if TYPE_CHECKING:
 
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Rel[LnT, EdgeT, IdxT, CruT, RwxT, RecT2]: ...
+        ) -> Rel[LnT, EdgeT, IdxT, CruT, CrudT, RecT2]: ...
 
         @overload
         def __get__(
-            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+            self: Prop[Any, ExtIdx[()]], instance: RecT2, owner: type[RecT2]
         ) -> LnT: ...
 
         @overload
         def __get__(
             self, instance: RecT2, owner: type[RecT2]
-        ) -> Data[LnT, RelIdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+        ) -> Data[LnT, RelIdxT, Tab, SQL, Acc[CrudT, RwT], DataBase]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -300,8 +300,8 @@ _item_classes: dict[str, type[Item]] = {}
 
 @dataclass(eq=False)
 class Array(
-    Prop[ValT, IdxT, CruT, RecT, Col, SQL, RwxT],
-    Generic[ValT, IdxT, CruT, RwxT, RecT],
+    Prop[ValT, IdxT, RwT, RecT, Col, SQL, CrudT],
+    Generic[ValT, IdxT, RwT, CrudT, RecT],
 ):
     """Set / array of scalar values."""
 
@@ -314,7 +314,7 @@ class Array(
     ) -> bool:
         return (
             not is_subtype(val_type, Record)
-            and not is_subtype(index_type, Idx[()])
+            and not is_subtype(index_type, ExtIdx[()])
             and issubclass(owner_type, Record)
         )
 
@@ -326,7 +326,7 @@ class Array(
     @cached_prop
     def key_type(self) -> type:
         """Return the dynamic key type for this array."""
-        idx_type = self.typeref.args[KeyT].args
+        idx_type = self.typeref.typevar_map[KeyT].args
         key_tuple = get_args(idx_type)
         return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
 
@@ -354,17 +354,17 @@ class Array(
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Array[ValT, IdxT, CruT, RwxT, RecT2]: ...
+        ) -> Array[ValT, IdxT, CruT, CrudT, RecT2]: ...
 
         @overload
         def __get__(
-            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+            self: Prop[Any, ExtIdx[()]], instance: RecT2, owner: type[RecT2]
         ) -> ValT: ...
 
         @overload
         def __get__(
             self, instance: RecT2, owner: type[RecT2]
-        ) -> Data[ValT, IdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+        ) -> Data[ValT, IdxT, Col, SQL, Acc[CrudT, RwT], DataBase]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...

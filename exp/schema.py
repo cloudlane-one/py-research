@@ -11,7 +11,7 @@ from py_research.db import (
     AutoIdx,
     Edge,
     Entity,
-    Idx,
+    ExtIdx,
     Key,
     Link,
     Record,
@@ -98,4 +98,4 @@ class Organization(Entity):
     address: Attr[str]
     city: Attr[str]
     projects: Link[Project, AutoIdx] = Link(on=Project.org)
-    countries: Array[str, Idx[int]]
+    countries: Array[str, ExtIdx[int]]

@@ -53,19 +53,19 @@ from py_research.types import UUID4, Not, SupportsItems
 from .data import (
     PL,
     SQL,
+    Acc,
     Align,
-    AnyIdx,
     AutoIdx,
     AutoIndexable,
     Base,
     C,
     Col,
-    Ctx,
+    CrudT,
+    CrudT2,
     D,
     Data,
-    Expand,
+    ExtIdx,
     Frame,
-    FullIdx,
     Idx,
     InputData,
     InputFrame,
@@ -77,8 +77,7 @@ from .data import (
     R,
     Registry,
     Root,
-    RwxT,
-    RwxT2,
+    RwT,
     SxT2,
     Tab,
     Tabs,
@@ -104,7 +103,7 @@ RecT2 = TypeVar("RecT2", bound="Record")
 
 @dataclass(kw_only=True, eq=False)
 class Attr(
-    Prop[ValT, Idx[()], CruT, OwnT, Col, SQL, CruT],
+    Prop[ValT, ExtIdx[()], CruT, OwnT, Col, SQL, CruT],
     Generic[ValT, CruT, OwnT],
 ):
     """Single-value attribute or column.
@@ -124,7 +123,7 @@ class Attr(
         owner_type: type[Model],
     ) -> bool:
         return not is_subtype(val_type, Record) and (
-            is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
+            is_subtype(index_type, ExtIdx[()]) or not issubclass(owner_type, Record)
         )
 
     @override
@@ -141,14 +140,14 @@ class Attr(
     @override
     def _index(
         self,
-    ) -> Expand[Idx[()]]:
+    ) -> ExtIdx[()]:
         """Get the index of this data."""
         raise NotImplementedError()
 
     @override
     def _frame(
         self: Data[
-            Any, Any, Col, Any, Any, Root, Ctx[Any, Any, Tab]
+            Any, Any, Col, Any, Any, Root
         ],  # needs such specific typing to get getitem to work.
     ) -> Frame[PL, Col]:
         parent = self.parent()
@@ -187,7 +186,7 @@ TupT = TypeVar("TupT", bound=tuple)
 
 
 @dataclass(eq=False)
-class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
+class Key(Prop[TupT, ExtIdx[()], R, OwnT, Tab, SQL, R]):
     """Index property for a record type."""
 
     init: bool = False
@@ -195,7 +194,7 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     @overload
     def __init__(  # noqa: D107
         self: Key[tuple[*KeyTt2], OwnT2],
-        attrs: Data[tuple[*KeyTt2], AnyIdx[()], Tab, SQL, Any, Interface[OwnT2]],
+        attrs: Data[tuple[*KeyTt2], Idx[()], Tab, SQL, Any, Interface[OwnT2]],
         alias: str | None = ...,
         default: tuple[*KeyTt2] | Literal[Not.defined] = ...,
         default_factory: Callable[[], tuple[*KeyTt2]] | None = ...,
@@ -209,7 +208,7 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     @overload
     def __init__(  # noqa: D107
         self: Key[tuple[KeyT2], OwnT2],
-        attrs: Data[KeyT2, AnyIdx[()], Any, SQL, Any, Interface[OwnT2]],
+        attrs: Data[KeyT2, Idx[()], Any, SQL, Any, Interface[OwnT2]],
         alias: str | None = ...,
         default: KeyT2 | Literal[Not.defined] = ...,
         default_factory: Callable[[], KeyT2] | None = ...,
@@ -236,7 +235,7 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
 
     def __init__(  # noqa: D107
         self,
-        attrs: Data[Any, AnyIdx[()], Tab, SQL, Any, Interface] | None = None,
+        attrs: Data[Any, Idx[()], Tab, SQL, Any, Interface] | None = None,
         alias: str | None = None,
         default: Any | Literal[Not.defined] = Not.defined,
         default_factory: Callable[[], Any] | None = None,
@@ -271,7 +270,7 @@ class Key(Prop[TupT, Idx[()], R, OwnT, Tab, SQL, R]):
     @override
     def _index(
         self,
-    ) -> Expand[Idx[()]]:
+    ) -> ExtIdx[()]:
         raise NotImplementedError()
 
     @override
@@ -354,12 +353,12 @@ LnT = TypeVar(
     default=Any,
 )
 
-LnIdxT = TypeVar("LnIdxT", bound=FullIdx, default=Idx[()], covariant=True)
+LnIdxT = TypeVar("LnIdxT", bound=Idx, default=ExtIdx[()], covariant=True)
 
 
 class Link(
-    Prop[LnT, LnIdxT, CruT, RecT, Tab, SQL, RwxT],
-    Generic[LnT, LnIdxT, CruT, RwxT, RecT],
+    Prop[LnT, LnIdxT, RwT, RecT, Tab, SQL, CruT],
+    Generic[LnT, LnIdxT, CruT, RwT, RecT],
 ):
     """Link to one or multiple records."""
 
@@ -372,15 +371,15 @@ class Link(
         owner_type: type[Model],
     ) -> bool:
         return is_subtype(val_type, Record) and (
-            is_subtype(index_type, Idx[()]) or not issubclass(owner_type, Record)
+            is_subtype(index_type, ExtIdx[()]) or not issubclass(owner_type, Record)
         )
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
         self: Link[Rec2, AutoIdx[Rec2], Any, Any, Rec],
         on: (
-            Link[Rec, FullIdx[()], Any, Any, Rec2]
-            | Set[Link[Rec, Idx[()], Any, Any, Rec2]]
+            Link[Rec, ExtIdx[()], Any, Any, Rec2]
+            | Set[Link[Rec, ExtIdx[()], Any, Any, Rec2]]
         ),
         incoming: bool = ...,
         alias: str | None = ...,
@@ -395,7 +394,7 @@ class Link(
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, Idx[()], Any, Any, Rec],
+        self: Link[Rec2, ExtIdx[()], Any, Any, Rec],
         on: (
             SingleJoinMap[Rec2, Rec]
             | SupportsItems[type[Record], SingleJoinMap[Rec2, Rec]]
@@ -413,7 +412,7 @@ class Link(
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, Idx[()], Any, Any, Rec],
+        self: Link[Rec2, ExtIdx[()], Any, Any, Rec],
         on: (
             SingleJoinMap[Rec, Rec2]
             | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
@@ -492,7 +491,7 @@ class Link(
     @override
     def _index(
         self,
-    ) -> Expand[LnIdxT]:
+    ) -> LnIdxT:
         raise NotImplementedError()
 
     @override
@@ -621,17 +620,17 @@ class Link(
         @overload
         def __get__(
             self, instance: None, owner: type[RecT2]
-        ) -> Link[LnT, LnIdxT, CruT, RwxT, RecT2]: ...
+        ) -> Link[LnT, LnIdxT, CruT, CrudT, RecT2]: ...
 
         @overload
         def __get__(
-            self: Prop[Any, FullIdx[()]], instance: RecT2, owner: type[RecT2]
+            self: Prop[Any, ExtIdx[()]], instance: RecT2, owner: type[RecT2]
         ) -> LnT: ...
 
         @overload
         def __get__(
             self, instance: RecT2, owner: type[RecT2]
-        ) -> Data[LnT, LnIdxT, Tab, SQL, RwxT, DataBase, Ctx[RecT2, Idx[()]], Tab]: ...
+        ) -> Data[LnT, LnIdxT, Tab, SQL, Acc[CruT, RwT], DataBase]: ...
 
         @overload
         def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -665,7 +664,7 @@ def records_to_df(
     )
 
 
-class Record(Model, Generic[*KeyTt]):
+class Record(Model, AutoIndexable[*KeyTt]):
     """Schema for a table in a database."""
 
     _template = True
@@ -705,7 +704,9 @@ class Record(Model, Generic[*KeyTt]):
         return props
 
     @classmethod
-    def _index_components(cls) -> tuple[Data[Any, Any, Col, SQL, R, Interface], ...]:
+    def _index_components(
+        cls,
+    ) -> tuple[Data[Any, Any, Col, SQL, Acc[R, R], Interface], ...]:
         """Get SQL columns for this auto-indexed type."""
         """Return the components of the index for this record type."""
         return cls._rendered_pk().components
@@ -790,11 +791,11 @@ class Record(Model, Generic[*KeyTt]):
         return self._base.table(type(self))
 
     @cached_method
-    def _data(self) -> Data[Self, Idx[()], Tab, SQL, R | U, Base]:
+    def _data(self) -> Data[Self, ExtIdx[()], Tab, SQL, Acc[R | U, Any], Base]:
         """Return the singleton class for this record."""
         registry = cast(Registry[Record[*tuple[Any, ...]]], self._table)
         single_rec = registry[KeySelect(self._pk)]
-        return cast(Data[Self, Idx[()], Tab, SQL, R | U, Base], single_rec)
+        return cast(Data[Self, ExtIdx[()], Tab, SQL, Acc[R | U, Any], Base], single_rec)
 
     def _load_dict(self) -> None:
         if not self._published or self._pk in self._table._instance_map:
@@ -994,7 +995,7 @@ TabT = TypeVar("TabT", bound=Record)
 
 
 @dataclass
-class Table(Registry[TabT, RwxT, "DataBase"]):
+class Table(Registry[TabT, CrudT, RwT, "DataBase"]):
     """Table matching a table model, may be filtered."""
 
     input_data: InputData | None = None
@@ -1012,15 +1013,15 @@ class Table(Registry[TabT, RwxT, "DataBase"]):
 
     @override
     def _frame(
-        self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
+        self: Data[Any, Any, SxT2, Any, Any, Root],
     ) -> Frame[PL, SxT2]:
         raise NotImplementedError()
 
     @override
     def _mutation(
-        self: Table[Any, RwxT2],
+        self: Table[Any, CrudT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RwxT2]] = {C, U},
+        mode: Set[type[CrudT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         tables = {rec: table for rec, (table, _) in self._base_table_map.items()}
         base = self.root()
@@ -1245,9 +1246,16 @@ BackT = TypeVar("BackT", bound=LiteralString | None, default=None)
 
 @dataclass(eq=False)
 class DataBase(
-    Data[Record, Idx[*tuple[Any, ...]], Tabs, SQL, RwxT, Base[Record, RwxT]],
-    Base[DbT, RwxT],
-    Generic[BackT, RwxT, DbT],
+    Data[
+        Record,
+        ExtIdx[*tuple[Any, ...]],
+        Tabs,
+        SQL,
+        Acc[CrudT, Any],
+        Base[Record, CrudT],
+    ],
+    Base[DbT, CrudT],
+    Generic[BackT, CrudT, DbT],
 ):
     """Database connection."""
 
@@ -1331,20 +1339,20 @@ class DataBase(
     @override
     def _index(
         self,
-    ) -> Idx:
+    ) -> ExtIdx:
         raise NotImplementedError()
 
     @override
     def _frame(
-        self: Data[Any, Any, SxT2, Any, Any, Root, *tuple[Any, ...]],
+        self: Data[Any, Any, SxT2, Any, Any, Root],
     ) -> Frame[PL, SxT2]:
         raise NotImplementedError()
 
     @override
     def _mutation(
-        self: Data[Any, Any, Any, Any, RwxT2],
+        self: Data[Any, Any, Any, Any, Acc[CrudT2, Any]],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[RwxT2]] = {C, U},
+        mode: Set[type[CrudT2]] = {C, U},
     ) -> Sequence[sqla.Executable]:
         raise NotImplementedError()
 
@@ -1422,11 +1430,11 @@ class DataBase(
 
     def registry[T: AutoIndexable](
         self: Base[T], value_type: type[T]
-    ) -> Registry[T, RwxT, Base[T, RwxT]]:
+    ) -> Registry[T, CrudT, CrudT, Base[T, CrudT]]:
         """Get the registry for a type in this base."""
         ...
 
-    def table[T: Record](self, value_type: type[T]) -> Table[T, RwxT]:
+    def table[T: Record](self, value_type: type[T]) -> Table[T, CrudT]:
         """Get the registry for a type in this base."""
         ...
 
@@ -1450,11 +1458,11 @@ class DataBase(
     @contextmanager
     def edit(
         self: DataBase[Any, C | U | D], overlay_type: OverlayType = "transaction"
-    ) -> Generator[DataBase[BackT, RwxT]]:
+    ) -> Generator[DataBase[BackT, CrudT]]:
         """Context manager to create temp overlay of base and auto-commit on exit."""
         assert self.overlay is None, "Cannot edit base with already active overlay."
         edit_base = copy_and_override(
-            DataBase[BackT, RwxT], self, overlay=True, backend=self.backend
+            DataBase[BackT, CrudT], self, overlay=True, backend=self.backend
         )
 
         try:

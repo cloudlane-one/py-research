@@ -20,13 +20,13 @@ from lxml.etree import _ElementTree as ElementTree
 
 from py_research.async_tools import sliding_batch_map
 from py_research.data import copy_and_override
-from py_research.db.data import SQL, Data, Filter, FullIdx, Interface
-from py_research.db.models import Prop
 from py_research.hashing import gen_int_hash, gen_str_hash
 from py_research.reflect.types import has_type
 from py_research.telemetry import tqdm
 from py_research.types import SupportsItems
 
+from .data import SQL, Data, ExtIdx, Filter, Idx, Interface
+from .models import Prop
 from .records import Attr, DataBase, Link, Record, Table
 
 type TreeNode = Mapping[str | int, Any] | ElementTree | Hashable
@@ -358,7 +358,7 @@ class DataMap[Ldd, Tgt]:
     async def map(
         self,
         db: DataBase,
-        tgt: type[Tgt] | Data[Tgt, FullIdx[*tuple[Any, ...]], Any, Any, Any, Interface],
+        tgt: type[Tgt] | Data[Tgt, ExtIdx[*tuple[Any, ...]], Any, Any, Any, Interface],
         in_data: InData,
         rest_data: RestData,
         injects: Mapping[tuple[tuple, DirectPath], dict[str, Any]] | None = None,
@@ -554,7 +554,7 @@ class RecMap[Rec: Record](DataMap[Any, Rec]):
 
     async def _load_record(
         self,
-        table: Data[Any, FullIdx[*tuple[Any, ...]]],
+        table: Data[Any, Idx[*tuple[Any, ...]]],
         path_idx: DirectPath,
         data: TreeNode,
         injections: dict[str, Hashable] | None,
@@ -608,7 +608,7 @@ class RecMap[Rec: Record](DataMap[Any, Rec]):
     async def map(
         self,
         db: DataBase,
-        tgt: type[Rec] | Data[Rec, FullIdx[*tuple[Any, ...]], Any, Any, Any, Interface],
+        tgt: type[Rec] | Data[Rec, ExtIdx[*tuple[Any, ...]], Any, Any, Any, Interface],
         in_data: InData,
         rest_data: RestData,
         injects: Mapping[tuple[tuple, DirectPath], dict[str, Any]] | None = None,

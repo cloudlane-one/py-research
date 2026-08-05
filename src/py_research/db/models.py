@@ -51,25 +51,27 @@ from py_research.types import Not, Undefined
 from .data import (
     PL,
     SQL,
+    Acc,
+    AccT2,
     AutoIndexable,
     C,
-    Ctx,
-    CtxTt2,
+    CrudT,
+    CrudT2,
     Data,
     DxT,
     DxT2,
-    Expand,
     ExT,
     ExT2,
+    ExtIdx,
     Frame,
-    FullIdx,
-    Idx,
+    IdxT,
+    IdxT2,
     Interface,
     KeyTt2,
     R,
     Root,
-    RwxT,
-    RwxT2,
+    RwT,
+    RwT2,
     SxT2,
     Tab,
     U,
@@ -80,9 +82,6 @@ from .utils import get_pl_schema
 
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
-
-IdxT = TypeVar("IdxT", bound=FullIdx, default=Any, covariant=True)
-IdxT2 = TypeVar("IdxT2", bound=FullIdx)
 
 AutoT = TypeVar("AutoT", bound=AutoIndexable)
 CruT = TypeVar("CruT", bound=C | R | U, default=Any)
@@ -98,8 +97,8 @@ class Init(Generic[ValT]):
 
 @dataclass(kw_only=True)
 class Prop(
-    Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT], *tuple[()]],
-    Generic[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT],
+    Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Interface[OwnT]],
+    Generic[ValT, IdxT, RwT, OwnT, DxT, ExT, CrudT],
 ):
     """Property definition for a model."""
 
@@ -148,7 +147,7 @@ class Prop(
     hash: bool = True
     compare: bool = True
 
-    _owner_map: dict[type[OwnT], Prop[ValT, IdxT, CruT, OwnT, DxT, ExT, RwxT]] = field(
+    _owner_map: dict[type[OwnT], Prop[ValT, IdxT, RwT, OwnT, DxT, ExT, CrudT]] = field(
         default_factory=dict, repr=False
     )
 
@@ -170,7 +169,7 @@ class Prop(
         return 0
 
     @override
-    def _index(self) -> Expand[IdxT]:
+    def _index(self) -> IdxT:
         raise NotImplementedError()
 
     @override
@@ -231,16 +230,16 @@ class Prop(
     @overload
     @staticmethod
     def _with_new_root_owner(
-        data: Prop[ValT2, IdxT2, CruT2, Any, DxT2, ExT2, RwxT2],
+        data: Prop[ValT2, IdxT2, RwT2, Any, DxT2, ExT2, CrudT2],
         owner: type[OwnT2],
-    ) -> Prop[ValT2, IdxT2, CruT2, OwnT2, DxT2, ExT2, RwxT2]: ...
+    ) -> Prop[ValT2, IdxT2, RwT2, OwnT2, DxT2, ExT2, CrudT2]: ...
 
     @overload
     @staticmethod
     def _with_new_root_owner(
-        data: Data[ValT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[Any], *CtxTt2],
+        data: Data[ValT2, IdxT2, DxT2, ExT2, AccT2, Interface[Any]],
         owner: type[OwnT2],
-    ) -> Data[ValT2, Expand[IdxT2], DxT2, ExT2, RwxT2, Interface[OwnT2], *CtxTt2]: ...
+    ) -> Data[ValT2, IdxT2, DxT2, ExT2, AccT2, Interface[OwnT2]]: ...
 
     @staticmethod
     def _with_new_root_owner(
@@ -260,7 +259,7 @@ class Prop(
 
     def _get_with_owner(
         self, owner: type[OwnT2]
-    ) -> Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[OwnT2]]:
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Interface[OwnT2]]:
         """Get the property from the owner map."""
         matching = [p for o, p in self._owner_map.items() if issubclass(owner, o)]
 
@@ -270,7 +269,7 @@ class Prop(
             matching = [prop]
 
         return cast(
-            Data[ValT, Expand[IdxT], DxT, ExT, RwxT, Interface[Any]],
+            Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Interface[Any]],
             matching[0],
         )
 
@@ -279,17 +278,17 @@ class Prop(
     @overload
     def __get__(
         self, instance: None, owner: type[OwnT2]
-    ) -> Prop[ValT, IdxT, CruT, OwnT2, DxT, ExT, RwxT]: ...
+    ) -> Prop[ValT, IdxT, RwT, OwnT2, DxT, ExT, CrudT]: ...
 
     @overload
     def __get__(
-        self: Prop[Any, FullIdx[()]], instance: OwnT2, owner: type[OwnT2]
+        self: Prop[Any, ExtIdx[()]], instance: OwnT2, owner: type[OwnT2]
     ) -> ValT: ...
 
     @overload
     def __get__(
         self, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT2, Idx[()]], Tab]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Root]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -415,7 +414,7 @@ class Local(
     @overload
     def __get__(
         self, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, RwxT, Root, Ctx[OwnT2, Idx[()]], Tab]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CruT, RwT], Root]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -703,7 +702,7 @@ class Memory(Root["Model"]):
 
 
 @dataclass(kw_only=True)
-class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
+class Singleton(Data[ModT, ExtIdx[()], Tab, PL, Acc[R, R], Memory]):
     """Local, in-memory singleton model instance."""
 
     context: Memory | Data[Any, Any, Any, Any, Any, Memory] = field(
@@ -718,7 +717,7 @@ class Singleton(Data[ModT, Idx[()], Tab, PL, R, Memory]):
 
     def _index(
         self,
-    ) -> Idx[()]:
+    ) -> ExtIdx[()]:
         """Get the index of this data."""
         raise NotImplementedError()
 
@@ -930,7 +929,7 @@ class Model(
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
     @cached_method
-    def _data(self) -> Data[Self, Idx[()], Tab, Any, Any, Root]:
+    def _data(self) -> Data[Self, ExtIdx[()], Tab, Any, Any, Root]:
         """Return the singleton class for this record."""
         return Singleton(model=self)
 
@@ -938,21 +937,20 @@ class Model(
         self,
         prop: Prop[
             ValT2,
-            Idx[*KeyTt2],
-            Any,
+            ExtIdx[*KeyTt2],
+            RwT2,
             Self,
             DxT2,
             ExT2,
-            RwxT2,
+            CrudT2,
         ],
     ) -> Data[
         ValT2,
-        Idx[*KeyTt2],
+        ExtIdx[*KeyTt2],
         DxT2,
         ExT2,
-        RwxT2,
+        Acc[CrudT2, RwT2],
         Root,
-        Ctx[Self],
     ]:
         """Get the data representation of a prop."""
         return self._data()[prop]
@@ -961,7 +959,7 @@ class Model(
 ModTi = TypeVar("ModTi", bound=Model, default=Any)
 
 
-class Crawl(Data[ModTi, Idx, Tab, SQL, R, Interface[ModTi, Any, Tab]]):
+class Crawl(Data[ModTi, ExtIdx, Tab, SQL, Acc[R, R], Interface[ModTi, Any, Tab]]):
     """Perform recursive union through prop loops."""
 
     loops: Iterable[Data[ModTi, Any, Tab, SQL, Any, Interface[ModTi, Any, Tab]]]
@@ -975,7 +973,7 @@ class Crawl(Data[ModTi, Idx, Tab, SQL, R, Interface[ModTi, Any, Tab]]):
     @override
     def _index(
         self,
-    ) -> Idx:
+    ) -> ExtIdx:
         """Get the index of this data."""
         raise NotImplementedError()
 
