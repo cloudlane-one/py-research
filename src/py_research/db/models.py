@@ -53,7 +53,6 @@ from .data import (
     SQL,
     Acc,
     AccT2,
-    AutoIndexable,
     C,
     CrudT,
     CrudT2,
@@ -66,9 +65,11 @@ from .data import (
     Frame,
     IdxT,
     IdxT2,
+    Indexable,
     Interface,
     KeyTt2,
     R,
+    RdxT,
     Root,
     RwT,
     RwT2,
@@ -83,7 +84,7 @@ from .utils import get_pl_schema
 OwnT = TypeVar("OwnT", bound="Model", contravariant=True, default=Any)
 OwnT2 = TypeVar("OwnT2", bound="Model")
 
-AutoT = TypeVar("AutoT", bound=AutoIndexable)
+AutoT = TypeVar("AutoT", bound=Indexable)
 CruT = TypeVar("CruT", bound=C | R | U, default=Any)
 CruT2 = TypeVar("CruT2", bound=C | R | U)
 
@@ -97,8 +98,8 @@ class Init(Generic[ValT]):
 
 @dataclass(kw_only=True)
 class Prop(
-    Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Interface[OwnT]],
-    Generic[ValT, IdxT, RwT, OwnT, DxT, ExT, CrudT],
+    Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Interface[OwnT], RdxT],
+    Generic[ValT, IdxT, RwT, OwnT, DxT, ExT, CrudT, RdxT],
 ):
     """Property definition for a model."""
 

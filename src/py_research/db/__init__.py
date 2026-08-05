@@ -1,7 +1,7 @@
 """Universal relational database interface for python."""
 
-from .data import AutoIdx as AutoIdx
 from .data import ExtIdx as ExtIdx
+from .data import MainIdx as MainIdx
 from .models import Prop as Prop
 from .records import Attr as Attr
 from .records import DataBase as DataBase

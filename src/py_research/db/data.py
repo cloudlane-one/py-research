@@ -164,7 +164,7 @@ class HashIdx(Generic[*HashKeyTt]):
     """Index by hash of self."""
 
 
-class AutoIndexable(Protocol[*KeyTt]):
+class Indexable(Protocol[*KeyTt]):
     """Base class for auto-indexable objects."""
 
     @classmethod
@@ -175,26 +175,34 @@ class AutoIndexable(Protocol[*KeyTt]):
         ...
 
 
-AutoIdxT = TypeVar(
-    "AutoIdxT",
-    bound=AutoIndexable,
+IdxblT = TypeVar(
+    "IdxblT",
+    bound=Indexable,
     covariant=True,
-    default=AutoIndexable[*tuple[Any, *tuple[Any, ...]]],
+    default=Indexable[*tuple[Any, *tuple[Any, ...]]],
 )
-AutoIdxT2 = TypeVar(
-    "AutoIdxT2",
-    bound=AutoIndexable,
+IdxblT2 = TypeVar(
+    "IdxblT2",
+    bound=Indexable,
 )
 
 
 @final
-class AutoIdx(Generic[AutoIdxT]):
-    """Index by custom value derived from self."""
+class MainIdx(Generic[IdxblT]):
+    """Index by custom pk derived from provided value type."""
 
-    value_type: type[AutoIdxT]
+    value_type: type[IdxblT]
 
 
-type Idx[*K] = ExtIdx[*K] | SelfIdx[*K] | HashIdx[*K] | AutoIdx[AutoIndexable[*K]]
+@final
+@dataclass
+class RichIdx(Generic[*KeyTt]):
+    """Index by custom pk derived from value type itself."""
+
+    components: tuple[Data[Any, Any, Col, SQL, Acc[R, R], Interface], ...]
+
+
+type Idx[*K] = ExtIdx[*K] | SelfIdx[*K] | HashIdx[*K] | MainIdx[Indexable[*K]]
 
 IdxT = TypeVar(
     "IdxT",
@@ -209,6 +217,13 @@ IdxT2 = TypeVar(
 IdxT3 = TypeVar(
     "IdxT3",
     bound=Idx,
+)
+
+RdxT = TypeVar(
+    "RdxT",
+    covariant=True,
+    bound=RichIdx | None,
+    default=Any,
 )
 
 
@@ -294,7 +309,7 @@ class Base(Root[ArgT], Generic[ArgT, CrudT]):
         """SQLAlchemy connection to the database."""
         ...
 
-    def registry[T: AutoIndexable](
+    def registry[T: Indexable](
         self: Base[T], value_type: type[T]
     ) -> Registry[T, CrudT, CrudT, Base[T, CrudT]]:
         """Get the registry for a type in this base."""
@@ -572,7 +587,7 @@ class Node(Protocol):
 
 
 @dataclass(kw_only=True)
-class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
+class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     """Base class for all data objects."""
 
     # Core attributes:
@@ -658,7 +673,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
     # Index:
 
     def _idx_components(
-        self: Data,
+        self: Data, rich: bool = False
     ) -> tuple[Data[Any, IdxT, Col, ExT, Acc[R, R], CtxT], ...]:
         """Get the index components of this dataset."""
         index = self._index()
@@ -667,34 +682,45 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
         parent_idx = parent._idx_components()
 
         full_idx: tuple[Data[Any, Any, Col, Any, Acc[R, R], CtxT], ...]
-        match index:
-            case ExtIdx():
-                full_idx = tuple(self[c] for c in index.components)
-            case SelfIdx():
-                assert self.typeref.typevar_map[DxT] is Col
-                full_idx = (cast(Data[Any, Any, Col, Any, Acc[R, R], CtxT], self),)
-            case HashIdx():
-                hashed = cast(Data[Any, Any, Col, Any, Acc[R, R], CtxT], self)[
-                    unstable_hash
-                ]
-                full_idx = (hashed,)
-            case AutoIdx():
-                components = cast(
-                    AutoIdx[AutoIndexable], index
-                ).value_type._index_components()
-                full_idx = tuple(self[c] for c in components)
-            case _:
-                raise ValueError(f"Unsupported index type: {type(index)}")
+
+        if rich:
+            rich_idx: type[RichIdx | None] = self.typeref.typevar_map[RdxT].common_type
+            assert not issubclass(rich_idx, type(None))
+            full_idx = cast(
+                tuple[Data[Any, IdxT, Col, ExT, Acc[R, R], CtxT], ...],
+                rich_idx.components,
+            )
+        else:
+            match index:
+                case ExtIdx():
+                    full_idx = tuple(self[c] for c in index.components)
+                case SelfIdx():
+                    assert self.typeref.typevar_map[DxT] is Col
+                    full_idx = (cast(Data[Any, Any, Col, Any, Acc[R, R], CtxT], self),)
+                case HashIdx():
+                    hashed = cast(Data[Any, Any, Col, Any, Acc[R, R], CtxT], self)[
+                        unstable_hash
+                    ]
+                    full_idx = (hashed,)
+                case MainIdx():
+                    components = cast(
+                        MainIdx[Indexable], index
+                    ).value_type._index_components()
+                    full_idx = tuple(self[c] for c in components)
+                case _:
+                    raise ValueError(f"Unsupported index type: {type(index)}")
 
         return parent_idx + full_idx
 
     @overload
     def index(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, ExtIdx[()], Any, ExT2],
+        self: Data[Any, ExtIdx[()], Any, ExT2], rich: Literal[False] = ...
     ) -> None: ...
 
     @overload
-    def index(self: Data[Any, Idx[*KeyTt2], Any, ExT2]) -> Data[
+    def index(
+        self: Data[Any, Idx[*KeyTt2], Any, ExT2], rich: Literal[False] = ...
+    ) -> Data[
         tuple[*KeyTt2],
         SelfIdx[*KeyTt2],
         Tab,
@@ -703,10 +729,29 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
         CtxT,
     ]: ...
 
-    def index(self: Data[Any, Idx[*KeyTt2], Any, ExT2]) -> (
+    @overload
+    def index(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Any, ExT2, Any, Any, RichIdx[()] | None],
+        rich: Literal[True],
+    ) -> None: ...
+
+    @overload
+    def index(
+        self: Data[Any, Any, Any, ExT2, Any, Any, RichIdx[*KeyTt2] | None],
+        rich: Literal[True],
+    ) -> Data[
+        tuple[*KeyTt2],
+        SelfIdx[*KeyTt2],
+        Tab,
+        ExT2,
+        Acc[R, R],
+        CtxT,
+    ]: ...
+
+    def index(self: Data[Any, Any, Any, ExT2, Any, Any, Any], rich: bool = False) -> (
         Data[
-            tuple[*KeyTt2],
-            SelfIdx[*KeyTt2],
+            tuple,
+            SelfIdx,
             Tab,
             ExT2,
             Acc[R, R],
@@ -715,7 +760,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
         | None
     ):
         """Get the index of this data."""
-        idx_comp = self._idx_components()
+        idx_comp = self._idx_components(rich)
 
         if len(idx_comp) == 0:
             return None
@@ -723,8 +768,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
         alignment = reduce(Data.__matmul__, idx_comp)
         return cast(
             Data[
-                tuple[*KeyTt2],
-                SelfIdx[*KeyTt2],
+                tuple,
+                SelfIdx,
                 Tab,
                 ExT2,
                 Acc[R, R],
@@ -736,7 +781,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
     def _map_index_filters(
         self, sel: list | slice | tuple[list | slice, ...]
     ) -> Mapping[Data[Any, IdxT, Col, ExT, Acc[R, R], CtxT], list | slice]:
-        idx = self._idx_components()
+        idx = self._idx_components(rich=False)
 
         match sel:
             case list() | slice():
@@ -897,60 +942,98 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root],
+        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[KeyT2]], rich: Literal[True]
     ) -> Sequence[KeyT2]: ...
 
     @overload
     def keys(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root],
+        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]], rich: Literal[True]
+    ) -> Sequence[tuple[*KeyTt2]]: ...
+
+    @overload
+    def keys(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root], rich: bool = ...
+    ) -> Sequence[KeyT2]: ...
+
+    @overload
+    def keys(
+        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root], rich: bool = ...
     ) -> Sequence[tuple[*KeyTt2]]: ...
 
     def keys(
-        self: Data[Any, Any, Any, Any, Any, Root],
+        self: (
+            Data[Any, IdxT, Any, Any, Any, Root]
+            | Data[Any, Any, Any, Any, Any, Root, RdxT]
+        ),
+        rich: bool = False,
     ) -> Sequence[Hashable]:
         """Iterable over index keys."""
-        idx = self.index()
+        idx = self.index(rich)
+        assert idx is not None
         return idx.values() if idx is not None else [tuple()] * len(self)
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root],
+        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root], rich: Literal[False] = ...
     ) -> Iterable[tuple[KeyT2, ValT]]: ...
 
     @overload
     def items(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root],
+        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root], rich: Literal[False] = ...
+    ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
+
+    @overload
+    def items(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[KeyT2]], rich: Literal[True]
+    ) -> Iterable[tuple[KeyT2, ValT]]: ...
+
+    @overload
+    def items(
+        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]], rich: Literal[True]
     ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
 
     def items(
-        self: Data[Any, Any, Any, Any, Any, Root],
+        self: (
+            Data[Any, IdxT, Any, Any, Any, Root]
+            | Data[Any, Any, Any, Any, Any, Root, RdxT]
+        ),
+        rich: bool = False,
     ) -> Iterable[tuple[Any, ValT]]:
         """Iterable over index keys."""
-        return zip(self.keys(), self.values())
+        return zip(self.keys(rich), self.values())
 
     @overload
     def get(
-        self: Data[Any, ExtIdx[()], Any, Any, Any, Root],
+        self: (
+            Data[Any, ExtIdx[()], Any, Any, Any, Root]
+            | Data[Any, Any, Any, Any, Any, Root, RichIdx[()]]
+        ),
         key: None = ...,
         default: ValTo = ...,
     ) -> ValT | ValTo: ...
 
     @overload
     def get(
-        self: Data[ValT2, Idx[KeyT2], Any, Any, Any, Root],
+        self: (
+            Data[ValT2, Idx[KeyT2], Any, Any, Any, Root]
+            | Data[ValT2, Any, Any, Any, Any, Root, RichIdx[KeyT2]]
+        ),
         key: KeyT2 | tuple[KeyT2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     @overload
     def get(
-        self: Data[ValT2, Idx[*KeyTt2], Any, Any, Any, Root],
+        self: (
+            Data[ValT2, Idx[*KeyTt2], Any, Any, Any, Root]
+            | Data[ValT2, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]]
+        ),
         key: tuple[*KeyTt2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     def get(
-        self: Data[Any, Any, Any, Any, Any, Root],
+        self: Data[Any, Any, Any, Any, Any, Root, Any],
         key: Hashable = None,
         default: ValTo = None,
     ) -> ValT | ValTo:
@@ -986,7 +1069,100 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
 
     # Context Application:
 
-    # 1. Context application, kept value + DxT
+    # 1. Context application, kept value + DxT, rich index
+    @overload
+    def __getitem__(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[
+            ValT2,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            Any,
+            RichIdx[*KeyTt2],
+        ],
+        key: Data[
+            Keep,
+            Idx[*KeyTt3],
+            Keep,
+            ExT2,
+            Acc[CrudT3, RwT2],
+            Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
+            RichIdx[*KeyTt3],
+        ],
+    ) -> Data[
+        ValT2,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT,
+        RichIdx[*KeyTt2, *KeyTt3],
+    ]: ...
+
+    # 2. Context application, kept value, rich index
+    @overload
+    def __getitem__(
+        self: Data[
+            ValT2,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            Any,
+            RichIdx[*KeyTt2],
+        ],
+        key: Data[
+            Keep,
+            Idx[*KeyTt3],
+            DxT3,
+            ExT2,
+            Acc[CrudT3, RwT2],
+            Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
+            RichIdx[*KeyTt3],
+        ],
+    ) -> Data[
+        ValT2,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT3,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT,
+        RichIdx[*KeyTt2, *KeyTt3],
+    ]: ...
+
+    # 3. Context application, new value, rich index
+    @overload
+    def __getitem__(
+        self: Data[
+            ValT2,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            Any,
+            RichIdx[*KeyTt2],
+        ],
+        key: Data[
+            ValT3,
+            Idx[*KeyTt3],
+            DxT3,
+            ExT2,
+            Acc[CrudT3, RwT2],
+            Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
+            RichIdx[*KeyTt3],
+        ],
+    ) -> Data[
+        ValT3,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT3,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT,
+        RichIdx[*KeyTt2, *KeyTt3],
+    ]: ...
+
+    # 4. Context application, kept value + DxT
     @overload
     def __getitem__(
         self: Data[ValT2, Idx[*KeyTt2], DxT2, ExT2, Acc[Any, CrudT3 | RwT2]],
@@ -998,9 +1174,11 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
             Acc[CrudT3, RwT2],
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
         ],
-    ) -> Data[ValT2, ExtIdx[*KeyTt2, *KeyTt3], DxT2, ExT2, Acc[CrudT3, RwT2], CtxT]: ...
+    ) -> Data[
+        ValT2, ExtIdx[*KeyTt2, *KeyTt3], DxT2, ExT2, Acc[CrudT3, RwT2], CtxT, None
+    ]: ...
 
-    # 2. Context application, kept value
+    # 5. Context application, kept value
     @overload
     def __getitem__(
         self: Data[ValT2, Idx[*KeyTt2], DxT2, ExT2, Acc[Any, CrudT3 | RwT2]],
@@ -1013,15 +1191,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
         ],
     ) -> Data[
-        ValT2,
-        ExtIdx[*KeyTt2, *KeyTt3],
-        DxT3,
-        ExT2,
-        Acc[CrudT3, RwT2],
-        CtxT,
+        ValT2, ExtIdx[*KeyTt2, *KeyTt3], DxT3, ExT2, Acc[CrudT3, RwT2], CtxT, None
     ]: ...
 
-    # 3. Context application, new value
+    # 6. Context application, new value
     @overload
     def __getitem__(
         self: Data[ValT2, Idx[*KeyTt2], DxT2, ExT2, Acc[Any, CrudT3 | RwT2]],
@@ -1034,74 +1207,73 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
         ],
     ) -> Data[
-        ValT3,
-        ExtIdx[*KeyTt2, *KeyTt3],
-        DxT3,
-        ExT2,
-        Acc[CrudT3, RwT2],
-        CtxT,
+        ValT3, ExtIdx[*KeyTt2, *KeyTt3], DxT3, ExT2, Acc[CrudT3, RwT2], CtxT, None
     ]: ...
 
-    # 4. Base type selection
+    # 7. Base type selection
     @overload
     def __getitem__(
         self: Base,
-        key: type[AutoIdxT2],
-    ) -> Data[AutoIdxT2, AutoIdx[AutoIdxT2], DxT, ExT, AccT, CtxT]: ...
+        key: type[IdxblT2],
+    ) -> Data[IdxblT2, MainIdx[IdxblT2], DxT, ExT, AccT, CtxT, RdxT]: ...
 
-    # 5. Key list / slice filtering, scalar index type
+    # 8. Key list / slice filtering, scalar index type
     @overload
     def __getitem__(
-        self: Data[Any, Idx[KeyT2], Any, Any, Acc[RuT2]],
+        self: (
+            Data[Any, Idx[KeyT2], Any, Any, Acc[RuT2]]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[KeyT2]]
+        ),
         key: list[KeyT2] | slice,
-    ) -> Data[ValT, IdxT, DxT, ExT, Acc[RuT2], CtxT]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[RuT2], CtxT, RdxT]: ...
 
-    # 6. Key list / slice filtering
+    # 9. Key list / slice filtering
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Acc[RuT2]],
+        self: (
+            Data[Any, Idx[*KeyTt2], Any, Any, Acc[RuT2]]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[*KeyTt2]]
+        ),
         key: list[tuple[*KeyTt2]] | tuple[slice, ...],
-    ) -> Data[ValT, IdxT, DxT, ExT, Acc[RuT2], CtxT]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[RuT2], CtxT, RdxT]: ...
 
-    # 7. Key selection
+    # 10. Key selection
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt3, *KeyTt2], SxT2],
+        self: (
+            Data[Any, Idx[*KeyTt3, *KeyTt2], SxT2]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[*KeyTt3, *KeyTt2]]
+        ),
         key: tuple[*KeyTt3],
-    ) -> Data[
-        ValT,
-        ExtIdx[*KeyTt2],
-        DxT,
-        ExT,
-        AccT,
-        CtxT,
-    ]: ...
+    ) -> Data[ValT, ExtIdx[*KeyTt2], DxT, ExT, AccT, CtxT, RdxT]: ...
 
-    # 8. Key selection, scalar
+    # 11. Key selection, scalar
     @overload
     def __getitem__(
-        self: Data[Any, Idx[KeyT3, *KeyTt2], SxT2],
+        self: (
+            Data[Any, Idx[KeyT3, *KeyTt2], SxT2]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[KeyT3, *KeyTt2]]
+        ),
         key: KeyT3,
-    ) -> Data[
-        ValT,
-        ExtIdx[*KeyTt2],
-        DxT,
-        ExT,
-        AccT,
-        CtxT,
-    ]: ...
+    ) -> Data[ValT, ExtIdx[*KeyTt2], DxT, ExT, AccT, CtxT, RdxT]: ...
 
-    # 9. Key selection, fully rooted
+    # 12. Key selection, fully rooted
     @overload
     def __getitem__(
-        self: Data[Any, Idx[*KeyTt3], Any, Any, Any, Root],
+        self: (
+            Data[Any, Idx[*KeyTt3], Any, Any, Any, Root]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[*KeyTt3]]
+        ),
         key: tuple[*KeyTt3],
     ) -> ValT: ...
 
-    # 10. Key selection, fully rooted, scalar
+    # 13. Key selection, fully rooted, scalar
     @overload
     def __getitem__(
-        self: Data[Any, Idx[KeyT3], Any, Any, Any, Root],
+        self: (
+            Data[Any, Idx[KeyT3], Any, Any, Any, Root]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[KeyT3]]
+        ),
         key: KeyT3,
     ) -> ValT: ...
 
@@ -1738,11 +1910,13 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT], ABC):
         raise NotImplementedError()
 
 
-RegT = TypeVar("RegT", covariant=True, bound=AutoIndexable)
+RegT = TypeVar("RegT", covariant=True, bound=Indexable)
 
 
 @dataclass(kw_only=True)
-class Registry(Data[RegT, AutoIdx[RegT], Tab, SQL, Acc[CrudT, RwT], RootT], ABC):
+class Registry(
+    Data[RegT, MainIdx[RegT], Tab, SQL, Acc[CrudT, RwT], RootT, RichIdx[RegT]], ABC
+):
     """Represent a base data type collection."""
 
     _instance_map: dict[Hashable, RegT] = field(default_factory=dict)

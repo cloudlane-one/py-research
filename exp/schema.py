@@ -8,12 +8,12 @@ from typing import Literal
 from py_research.db import (
     Array,
     Attr,
-    AutoIdx,
     Edge,
     Entity,
     ExtIdx,
     Key,
     Link,
+    MainIdx,
     Record,
     Rel,
     Schema,
@@ -80,7 +80,7 @@ class Project(Record[int]):
     end: Attr[date]
     status: Attr[Literal["planned", "started", "done"]]
     org: Link[Organization]
-    tasks: Link[Task, AutoIdx] = Link(on=Task.project)
+    tasks: Link[Task, MainIdx] = Link(on=Task.project)
     members: Rel[User, Membership]
 
     _pk = Key(number)
@@ -97,5 +97,5 @@ class Organization(Entity):
     name: Attr[str]
     address: Attr[str]
     city: Attr[str]
-    projects: Link[Project, AutoIdx] = Link(on=Project.org)
+    projects: Link[Project, MainIdx] = Link(on=Project.org)
     countries: Array[str, ExtIdx[int]]

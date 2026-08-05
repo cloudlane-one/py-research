@@ -55,8 +55,6 @@ from .data import (
     SQL,
     Acc,
     Align,
-    AutoIdx,
-    AutoIndexable,
     Base,
     C,
     Col,
@@ -67,6 +65,7 @@ from .data import (
     ExtIdx,
     Frame,
     Idx,
+    Indexable,
     InputData,
     InputFrame,
     Interface,
@@ -74,8 +73,10 @@ from .data import (
     KeyT2,
     KeyTt,
     KeyTt2,
+    MainIdx,
     R,
     Registry,
+    RichIdx,
     Root,
     RwT,
     SxT2,
@@ -354,11 +355,12 @@ LnT = TypeVar(
 )
 
 LnIdxT = TypeVar("LnIdxT", bound=Idx, default=ExtIdx[()], covariant=True)
+LnRdxT = TypeVar("LnRdxT", bound=RichIdx, default=RichIdx[()], covariant=True)
 
 
 class Link(
-    Prop[LnT, LnIdxT, RwT, RecT, Tab, SQL, CruT],
-    Generic[LnT, LnIdxT, CruT, RwT, RecT],
+    Prop[LnT, LnIdxT, RwT, RecT, Tab, SQL, CruT, LnRdxT],
+    Generic[LnT, LnIdxT, CruT, RwT, RecT, LnRdxT],
 ):
     """Link to one or multiple records."""
 
@@ -376,7 +378,7 @@ class Link(
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, AutoIdx[Rec2], Any, Any, Rec],
+        self: Link[Rec2, MainIdx[Rec2], Any, Any, Rec, RichIdx[Rec2]],
         on: (
             Link[Rec, ExtIdx[()], Any, Any, Rec2]
             | Set[Link[Rec, ExtIdx[()], Any, Any, Rec2]]
@@ -394,7 +396,7 @@ class Link(
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, ExtIdx[()], Any, Any, Rec],
+        self: Link[Rec2, ExtIdx[()], Any, Any, Rec, RichIdx[()]],
         on: (
             SingleJoinMap[Rec2, Rec]
             | SupportsItems[type[Record], SingleJoinMap[Rec2, Rec]]
@@ -412,7 +414,7 @@ class Link(
 
     @overload
     def __init__[Rec: Record, Rec2: Record](
-        self: Link[Rec2, ExtIdx[()], Any, Any, Rec],
+        self: Link[Rec2, ExtIdx[()], Any, Any, Rec, RichIdx[()]],
         on: (
             SingleJoinMap[Rec, Rec2]
             | SupportsItems[type[Record], SingleJoinMap[Rec, Rec2]]
@@ -664,7 +666,7 @@ def records_to_df(
     )
 
 
-class Record(Model, AutoIndexable[*KeyTt]):
+class Record(Model, Indexable[*KeyTt]):
     """Schema for a table in a database."""
 
     _template = True
@@ -1008,7 +1010,7 @@ class Table(Registry[TabT, CrudT, RwT, "DataBase"]):
     @override
     def _index(
         self,
-    ) -> AutoIdx[TabT]:
+    ) -> MainIdx[TabT]:
         raise NotImplementedError()
 
     @override
@@ -1253,6 +1255,7 @@ class DataBase(
         SQL,
         Acc[CrudT, Any],
         Base[Record, CrudT],
+        RichIdx[()],
     ],
     Base[DbT, CrudT],
     Generic[BackT, CrudT, DbT],
@@ -1428,7 +1431,7 @@ class DataBase(
             else self.engine.connect()
         )
 
-    def registry[T: AutoIndexable](
+    def registry[T: Indexable](
         self: Base[T], value_type: type[T]
     ) -> Registry[T, CrudT, CrudT, Base[T, CrudT]]:
         """Get the registry for a type in this base."""

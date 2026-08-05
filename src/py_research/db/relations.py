@@ -38,7 +38,11 @@ from .data import (
     Idx,
     Interface,
     KeyT,
+    KeyT2,
+    KeyTt2,
     R,
+    RdxT,
+    RichIdx,
     RwT,
     SxT,
     Tab,
@@ -60,11 +64,11 @@ from .records import (
 
 @dataclass
 class Ref(
-    Prop[ValT, IdxT, RwT, OwnT, SxT, ExT, R],
+    Prop[ValT, IdxT, RwT, OwnT, SxT, ExT, R, RdxT],
 ):
     """Dynamic property reference."""
 
-    data: Data[ValT, IdxT, SxT, ExT, Acc[Any, RwT], Interface[OwnT]]
+    data: Data[ValT, IdxT, SxT, ExT, Acc[Any, RwT], Interface[OwnT], RdxT]
     converter: Callable[[Iterable[ValT]], ValT] | None = None
 
     def __post_init__(self):  # noqa: D105
@@ -204,7 +208,7 @@ EdgeT = TypeVar("EdgeT", bound=Edge | LabelEdge, default=Any)
 
 @dataclass(kw_only=True, eq=False)
 class Rel(
-    Prop[LnT, RelIdxT, RwT, RecT, Tab, SQL, CrudT],
+    Prop[LnT, RelIdxT, RwT, RecT, Tab, SQL, CrudT, RichIdx[EdgeT]],
     Generic[LnT, EdgeT, RelIdxT, RwT, CrudT, RecT],
 ):
     """Relational record set."""
@@ -300,7 +304,7 @@ _item_classes: dict[str, type[Item]] = {}
 
 @dataclass(eq=False)
 class Array(
-    Prop[ValT, IdxT, RwT, RecT, Col, SQL, CrudT],
+    Prop[ValT, IdxT, RwT, RecT, Col, SQL, CrudT, RichIdx[Item[ValT, Any, RecT]]],
     Generic[ValT, IdxT, RwT, CrudT, RecT],
 ):
     """Set / array of scalar values."""
@@ -324,14 +328,21 @@ class Array(
         return 1
 
     @cached_prop
-    def key_type(self) -> type:
+    def key_type(
+        self: Array[Any, Idx[KeyT2] | Idx[*KeyTt2], Any, Any, Any],
+    ) -> type[KeyT2 | tuple[*KeyTt2]]:
         """Return the dynamic key type for this array."""
-        idx_type = self.typeref.typevar_map[KeyT].args
+        idx_type = self.typeref.typevar_map[IdxT].args
         key_tuple = get_args(idx_type)
-        return key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple]
+        return cast(
+            type[KeyT2 | tuple[*KeyTt2]],
+            key_tuple[0] if len(key_tuple) == 1 else tuple[*key_tuple],
+        )
 
     @cached_prop
-    def item_type(self) -> type[Item[ValT, KeyT, RecT]]:
+    def item_type(
+        self: Array[Any, Idx[KeyT2] | Idx[*KeyTt2], Any, Any, Any],
+    ) -> type[Item[ValT, KeyT2 | tuple[*KeyTt2], RecT]]:
         """Return the dynamic item record type."""
         assert self.owner is not None
         base_array_fqn = self.fqn
