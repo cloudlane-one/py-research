@@ -1670,14 +1670,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         Acc[R, R],
         CtxT2,
     ]:
-        """Union two databases, right overriding left."""
+        """Upsert / union with right preference."""
         alignment = self @ other
-        reduction = Transform(
-            func=operator.or_,
-            frame_func=partial(frame_coalesce, coalesce="left"),
-            reduce=True,
-        )
-
         return cast(
             Data[
                 ValT2 | ValT3,
@@ -1687,7 +1681,48 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
                 Acc[R, R],
                 CtxT2,
             ],
-            alignment[reduction],
+            alignment[
+                Transform(
+                    func=operator.or_,
+                    frame_func=partial(frame_coalesce, coalesce="right"),
+                    reduce=True,
+                )
+            ],
+        )
+
+    def __and__(
+        self: Data[Any, Any, DxT2, ExT2, Any, CtxT2],
+        other: Data[ValT3, Any, DxT2, ExT2, Any, CtxT2],
+    ) -> Data[
+        ValT3,
+        Any,
+        DxT2,
+        ExT2,
+        Acc[R, R],
+        CtxT2,
+    ]:
+        """Intersection with right preference."""
+        alignment = Align(
+            context=self.root(),
+            data=(self, other),
+            join="inner",
+        )
+        return cast(
+            Data[
+                ValT3,
+                Any,
+                DxT2,
+                ExT2,
+                Acc[R, R],
+                CtxT2,
+            ],
+            alignment[
+                Transform(
+                    func=operator.and_,
+                    frame_func=partial(frame_coalesce, coalesce="right"),
+                    reduce=True,
+                )
+            ],
         )
 
     def __xor__(
@@ -1701,25 +1736,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         Acc[R, R],
         CtxT2,
     ]:
-        """Union two databases, right overriding left."""
-        alignment = self @ other
-        return cast(
-            Data[
-                ValT2 | ValT3,
-                Any,
-                DxT2,
-                ExT2,
-                Acc[R, R],
-                CtxT2,
-            ],
-            alignment[
-                Transform(
-                    func=operator.xor,
-                    frame_func=partial(frame_coalesce, coalesce="right"),
-                    reduce=True,
-                )
-            ],
-        )
+        """XOR."""
+        raise NotImplementedError()
 
     def __lshift__(
         self: Data[ValT2, Any, DxT2, ExT2, Any, CtxT2],
@@ -1732,7 +1750,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         Acc[R, R],
         CtxT2,
     ]:
-        """Union two databases, right overriding left."""
+        """Take only left index, but update from right."""
         alignment = Align(
             context=self.root(),
             data=(self, other),
@@ -1749,12 +1767,235 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ],
             alignment[
                 Transform(
-                    func=operator.and_,
+                    func=lambda _, x: x,
                     frame_func=partial(frame_coalesce, coalesce="right"),
                     reduce=True,
                 )
             ],
         )
+
+    def __rshift__(
+        self: Data[ValT2, Any, DxT2, ExT2, Any, CtxT2],
+        other: Data[ValT3, Any, DxT2, ExT2, Any, CtxT2],
+    ) -> Data[
+        ValT2 | ValT3,
+        Any,
+        DxT2,
+        ExT2,
+        Acc[R, R],
+        CtxT2,
+    ]:
+        """Take only right index, but update from left."""
+        alignment = Align(
+            context=self.root(),
+            data=(self, other),
+            join="right",
+        )
+        return cast(
+            Data[
+                ValT2 | ValT3,
+                Any,
+                DxT2,
+                ExT2,
+                Acc[R, R],
+                CtxT2,
+            ],
+            alignment[
+                Transform(
+                    func=lambda _, x: x,
+                    frame_func=partial(frame_coalesce, coalesce="left"),
+                    reduce=True,
+                )
+            ],
+        )
+
+    def __floordiv__(
+        self: Data[ValT2, Any, DxT2, ExT2, Any, CtxT2],
+        other: Data[Any, Any, DxT2, ExT2, Any, CtxT2],
+    ) -> Data[
+        ValT2,
+        Any,
+        DxT2,
+        ExT2,
+        Acc[R, R],
+        CtxT2,
+    ]:
+        """Remove overlapping elements of right from left."""
+        raise NotImplementedError()
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Col, SQL, Acc[C], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Col, Any, Acc[C], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Tab, SQL, Acc[C], Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Tab, Any, Acc[C], Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Tabs, SQL, Acc[C], Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Tabs, Any, Acc[C], Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Any, SQL, Acc[C], Base],
+        input_data: InputData[ValT, Not, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ipow__(
+        self: Data[Any, Any, Any, Any, Acc[C], Base],
+        input_data: InputData[ValT, Not, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __ipow__(
+        self: Data[Any, Any, Any, Any, Acc[C], Base],
+        input_data: InputData[ValT, Any, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
+        """Insert / union with left preference."""
+        mutations = self._mutation(input_data, mode={C})
+
+        for mutation in mutations:
+            self.root().connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Col, SQL, Acc[U], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Col, Any, Acc[U], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tab, SQL, Acc[U], Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tab, Any, Acc[U], Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tabs, SQL, Acc[U], Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ilshift__(
+        self: Data[Any, Any, Tabs, Any, Acc[U], Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __ilshift__(
+        self: Data[Any, Any, Any, Any, Acc[U], Base],
+        input_data: InputData[ValT, Any, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
+        """Update self from input, no insert."""
+        mutations = self._mutation(input_data, mode={U})
+
+        for mutation in mutations:
+            self.root().connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Col, SQL, Acc[D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Col, Any, Acc[D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Tab, SQL, Acc[D], Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Tab, Any, Acc[D], Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Tabs, SQL, Acc[D], Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __ifloordiv__(
+        self: Data[Any, Any, Tabs, Any, Acc[D], Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __ifloordiv__(
+        self: Data[Any, Any, Any, Any, Acc[D], Base],
+        input_data: InputData[ValT, Any, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
+        """Remove overlapping elements of input from self."""
+        mutations = self._mutation(input_data, mode={D})
+
+        for mutation in mutations:
+            self.root().connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
 
     @overload
     def __ior__(
@@ -1814,7 +2055,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         self: Data[Any, Any, Any, Any, Acc[C | U], Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
-        """Union two data objects on their index, right overriding left, with insert."""
+        """Upsert / union with right preference."""
         mutations = self._mutation(input_data, mode={C, U})
 
         for mutation in mutations:
@@ -1823,20 +2064,20 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Col, SQL, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Col, SQL, Acc[U | D], Base],
         input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Col, Any, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Col, Any, Acc[U | D], Base],
         input_data: InputData[ValT, pl.Series | pd.Series, Not],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Tab, SQL, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Tab, SQL, Acc[U | D], Base],
         input_data: InputData[
             ValT,
             pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
@@ -1845,31 +2086,43 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Tab, Any, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Tab, Any, Acc[U | D], Base],
         input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Tabs, SQL, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Tabs, SQL, Acc[U | D], Base],
         input_data: InputData[
             ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
         ],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ixor__(
-        self: Data[Any, Any, Tabs, Any, Acc[C], Base],
+    def __iand__(
+        self: Data[Any, Any, Tabs, Any, Acc[U | D], Base],
         input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
-    def __ixor__(
-        self: Data[Any, Any, Any, Any, Acc[C], Base],
+    @overload
+    def __iand__(
+        self: Data[Any, Any, Any, SQL, Acc[U | D], Base],
+        input_data: InputData[ValT, Not, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __iand__(
+        self: Data[Any, Any, Any, Any, Acc[U | D], Base],
+        input_data: InputData[ValT, Not, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __iand__(
+        self: Data[Any, Any, Any, Any, Acc[U | D], Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
-        """Union two data objects on their index, left overriding right."""
-        mutations = self._mutation(input_data, mode={C})
+        """Intersection with right preference."""
+        mutations = self._mutation(input_data, mode={U, D})
 
         for mutation in mutations:
             self.root().connection.execute(mutation)
@@ -1877,20 +2130,20 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Col, SQL, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Col, SQL, Acc[C | D], Base],
         input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Col, Any, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Col, Any, Acc[C | D], Base],
         input_data: InputData[ValT, pl.Series | pd.Series, Not],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Tab, SQL, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Tab, SQL, Acc[C | D], Base],
         input_data: InputData[
             ValT,
             pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
@@ -1899,31 +2152,139 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Tab, Any, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Tab, Any, Acc[C | D], Base],
         input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Tabs, SQL, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Tabs, SQL, Acc[C | D], Base],
         input_data: InputData[
             ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
         ],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
     @overload
-    def __ilshift__(
-        self: Data[Any, Any, Tabs, Any, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Tabs, Any, Acc[C | D], Base],
         input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
 
-    def __ilshift__(
-        self: Data[Any, Any, Any, Any, Acc[U], Base],
+    def __ixor__(
+        self: Data[Any, Any, Any, Any, Acc[C | D], Base],
         input_data: InputData[ValT, Any, Any],
     ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
-        """Union two data objects on their index, right overriding left, no insert."""
-        mutations = self._mutation(input_data, mode={U})
+        """XOR."""
+        mutations = self._mutation(input_data, mode={C, D})
+
+        for mutation in mutations:
+            self.root().connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Col, SQL, Acc[C | D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Col, Any, Acc[C | D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Tab, SQL, Acc[C | D], Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Tab, Any, Acc[C | D], Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Tabs, SQL, Acc[C | D], Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __irshift__(
+        self: Data[Any, Any, Tabs, Any, Acc[C | D], Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __irshift__(
+        self: Data[Any, Any, Any, Any, Acc[C | D], Base],
+        input_data: InputData[ValT, Any, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
+        """Keep index of input and update from self."""
+        mutations = self._mutation(input_data, mode={C, D})
+
+        for mutation in mutations:
+            self.root().connection.execute(mutation)
+
+        return cast(Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT], self)
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Col, SQL, Acc[C | U | D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series | sqla.ColumnElement, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Col, Any, Acc[C | U | D], Base],
+        input_data: InputData[ValT, pl.Series | pd.Series, Not],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Tab, SQL, Acc[C | U | D], Base],
+        input_data: InputData[
+            ValT,
+            pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause,
+            pl.Series | pd.Series | sqla.ColumnElement,
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Tab, Any, Acc[C | U | D], Base],
+        input_data: InputData[ValT, pl.DataFrame | pd.DataFrame, pl.Series | pd.Series],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Tabs, SQL, Acc[C | U | D], Base],
+        input_data: InputData[
+            ValT, Not, pl.DataFrame | pd.DataFrame | sqla.Select | sqla.FromClause
+        ],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    @overload
+    def __imatmul__(
+        self: Data[Any, Any, Tabs, Any, Acc[C | U | D], Base],
+        input_data: InputData[ValT, Not, pl.DataFrame | pd.DataFrame],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]: ...
+
+    def __imatmul__(
+        self: Data[Any, Any, Any, Any, Acc[C | U | D], Base],
+        input_data: InputData[ValT, Any, Any],
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT], CtxT]:
+        """Aligned assignment -> override left with right, including deletion."""
+        mutations = self._mutation(input_data, mode={C, U, D})
 
         for mutation in mutations:
             self.root().connection.execute(mutation)
