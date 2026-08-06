@@ -586,6 +586,19 @@ class Node(Protocol):
     """Base class for graphable objects."""
 
 
+ColT = TypeVar("ColT", bound=int | slice | Iterable[int] | None, default=None)
+
+
+@dataclass
+class ColSel(Generic[ColT]):
+    """Select columns from a dataset with tuple values."""
+
+    sel: ColT = None  # pyright: ignore[reportAssignmentType]
+
+    def __getitem__(self, key: ColT) -> ColSel[ColT]:
+        return copy_and_override(ColSel, self, sel=key)
+
+
 @dataclass(kw_only=True)
 class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     """Base class for all data objects."""
@@ -1262,7 +1275,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     def __getitem__(
         self: (
             Data[Any, Idx[*KeyTt3], Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[*KeyTt3]]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Root, RichIdx[*KeyTt3]]
         ),
         key: tuple[*KeyTt3],
     ) -> ValT: ...
@@ -1272,14 +1285,28 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     def __getitem__(
         self: (
             Data[Any, Idx[KeyT3], Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Acc[RuT2], Any, RichIdx[KeyT3]]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Root, RichIdx[KeyT3]]
         ),
         key: KeyT3,
     ) -> ValT: ...
 
+    # 14. Positional item (column) selection, multiple
+    @overload
+    def __getitem__(
+        self: Data[tuple[*tuple[ValT2, ...]]],
+        key: ColSel[slice | Iterable[int]],
+    ) -> Data[tuple[ValT2, ...], IdxT, DxT, ExT, AccT, CtxT, RdxT]: ...
+
+    # 15. Positional item (column) selection, single
+    @overload
+    def __getitem__(
+        self: Data[tuple[*tuple[ValT2, ...]]],
+        key: ColSel[int],
+    ) -> Data[ValT2, IdxT, DxT, ExT, AccT, CtxT, RdxT]: ...
+
     def __getitem__(
         self: Data | Base,
-        key: Data | list | slice | tuple[slice, ...] | Hashable | type,
+        key: Data | list | slice | tuple[slice, ...] | Hashable | type | ColSel[Any],
     ) -> Data | ValT:
         """Expand the relational-computational graph."""
         match key:
@@ -1324,6 +1351,16 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
 
                 keymap = self._map_index_filters(key)
                 return self[Filter.from_keymap(keymap)]
+            case ColSel(col_sel):
+                assert isinstance(
+                    self, Align
+                ), "Column selection is only supported for aligned datasets."
+                assert col_sel is not None
+
+                col_sel = (
+                    col_sel if isinstance(col_sel, Iterable | slice) else (col_sel,)
+                )
+                return self._get_subset(col_sel)
 
     # Alignment:
 
@@ -1966,6 +2003,12 @@ class Align(Data[TupT, IdxT, DxT, ExT, AccT, CtxT]):
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
+        raise NotImplementedError()
+
+    def _get_subset(
+        self, subset: Iterable[int] | slice
+    ) -> Align[Any, IdxT, DxT, ExT, AccT, CtxT]:
+        """Get a subset of the aligned data."""
         raise NotImplementedError()
 
 

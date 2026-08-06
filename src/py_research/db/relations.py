@@ -186,12 +186,6 @@ class LabelEdge(Record[str, str, KeyT], Generic[RecT, TgtT, KeyT]):
                             for a in fk_map.keys()
                             if isinstance(a, Attr)
                         ),
-                        *(
-                            a
-                            for fk_map in cls._to.join_maps.values()
-                            for a in fk_map.keys()
-                            if isinstance(a, Attr)
-                        ),
                         cls._rel_idx,
                     ],
                 ),
