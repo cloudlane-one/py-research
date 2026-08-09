@@ -1092,7 +1092,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[Any, CrudT3 | RwT2],
             Any,
-            RichIdx[*KeyTt2],
+            RichIdx[*KeyTt4],
         ],
         key: Data[
             Keep,
@@ -1101,7 +1101,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[CrudT3, RwT2],
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
-            RichIdx[*KeyTt3],
+            RichIdx[*KeyTt5],
         ],
     ) -> Data[
         ValT2,
@@ -1110,7 +1110,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         ExT2,
         Acc[CrudT3, RwT2],
         CtxT,
-        RichIdx[*KeyTt2, *KeyTt3],
+        RichIdx[*KeyTt4, *KeyTt5],
     ]: ...
 
     # 2. Context application, kept value, rich index
@@ -1123,7 +1123,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[Any, CrudT3 | RwT2],
             Any,
-            RichIdx[*KeyTt2],
+            RichIdx[*KeyTt4],
         ],
         key: Data[
             Keep,
@@ -1132,7 +1132,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[CrudT3, RwT2],
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
-            RichIdx[*KeyTt3],
+            RichIdx[*KeyTt5],
         ],
     ) -> Data[
         ValT2,
@@ -1141,7 +1141,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         ExT2,
         Acc[CrudT3, RwT2],
         CtxT,
-        RichIdx[*KeyTt2, *KeyTt3],
+        RichIdx[*KeyTt4, *KeyTt5],
     ]: ...
 
     # 3. Context application, new value, rich index
@@ -1154,7 +1154,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[Any, CrudT3 | RwT2],
             Any,
-            RichIdx[*KeyTt2],
+            RichIdx[*KeyTt4],
         ],
         key: Data[
             ValT3,
@@ -1163,7 +1163,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             ExT2,
             Acc[CrudT3, RwT2],
             Ctx[ValT2, ExtIdx[*KeyTt2], SxT2],
-            RichIdx[*KeyTt3],
+            RichIdx[*KeyTt5],
         ],
     ) -> Data[
         ValT3,
@@ -1172,7 +1172,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         ExT2,
         Acc[CrudT3, RwT2],
         CtxT,
-        RichIdx[*KeyTt2, *KeyTt3],
+        RichIdx[*KeyTt4, *KeyTt5],
     ]: ...
 
     # 4. Context application, kept value + DxT

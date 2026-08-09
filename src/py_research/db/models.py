@@ -56,6 +56,8 @@ from .data import (
     C,
     CrudT,
     CrudT2,
+    CrudT3,
+    CtxT2,
     Data,
     DxT,
     DxT2,
@@ -63,13 +65,18 @@ from .data import (
     ExT2,
     ExtIdx,
     Frame,
+    Idx,
     IdxT,
     IdxT2,
     Indexable,
     Interface,
     KeyTt2,
+    KeyTt3,
+    KeyTt4,
+    KeyTt5,
     R,
     RdxT,
+    RichIdx,
     Root,
     RwT,
     RwT2,
@@ -366,6 +373,87 @@ class Prop(
             }
 
         return None
+
+    @overload
+    def __rtruediv__(
+        self: Prop[Any, Idx[*KeyTt3], RwT2, Any, Any, ExT2, Any, RichIdx[*KeyTt5]],
+        left: Data[
+            OwnT,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            CtxT2,
+            RichIdx[*KeyTt4],
+        ],
+    ) -> Data[
+        ValT,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT2,
+        RichIdx[*KeyTt4, *KeyTt5],
+    ]: ...
+
+    @overload
+    def __rtruediv__(
+        self: Prop[Any, Idx[*KeyTt3], RwT2, Any, Any, ExT2, Any, None],
+        left: Data[
+            OwnT,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            CtxT2,
+        ],
+    ) -> Data[
+        ValT,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT2,
+        None,
+    ]: ...
+
+    @overload
+    def __rtruediv__(
+        self: Prop[Any, Idx[*KeyTt3], RwT2, Any, Any, ExT2, Any],
+        left: Data[
+            OwnT, Idx[*KeyTt2], DxT2, ExT2, Acc[Any, CrudT3 | RwT2], CtxT2, None
+        ],
+    ) -> Data[
+        ValT,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT2,
+        None,
+    ]: ...
+
+    def __rtruediv__(
+        self: Prop[ValT, Idx[*KeyTt3], RwT2, Any, Any, ExT2, Any],
+        left: Data[
+            OwnT,
+            Idx[*KeyTt2],
+            DxT2,
+            ExT2,
+            Acc[Any, CrudT3 | RwT2],
+            CtxT2,
+        ],
+    ) -> Data[
+        ValT,
+        ExtIdx[*KeyTt2, *KeyTt3],
+        DxT2,
+        ExT2,
+        Acc[CrudT3, RwT2],
+        CtxT2,
+        RichIdx | None,
+    ]:
+        """Chain prop onto data object."""
+        return left[self]
 
 
 @dataclass(kw_only=True, eq=False)
