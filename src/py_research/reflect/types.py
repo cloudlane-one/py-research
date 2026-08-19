@@ -59,7 +59,13 @@ _type_alias_classes: dict[TypeAliasType, type] = {}
 
 def typedef_to_typeset(
     typedef: SingleTypeDef | UnionType | None,
-    typevar_map: dict[TypeVar | ExtTypeVar, TypeRef] | None = None,
+    typevar_map: (
+        dict[
+            TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+            TypeRef | tuple[TypeRef, ...],
+        ]
+        | None
+    ) = None,
     ctx_module: ModuleType | None = None,
     remove_null: bool = False,
 ) -> set[type]:
@@ -339,7 +345,10 @@ class TypeRef(Generic[T]):
     ctx: dict[str, Any] = field(default_factory=dict)
     """Context mapping for resolving forward-referenced types."""
 
-    subs: Mapping[TypeVar | ExtTypeVar, TypeRef] = field(default_factory=dict)
+    subs: Mapping[
+        TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+        TypeRef | tuple[TypeRef, ...],
+    ] = field(default_factory=dict)
     """Substitutions for type variables."""
 
     overrides: Mapping[TypeVar | ExtTypeVar, TypeRef] = field(default_factory=dict)
@@ -355,7 +364,14 @@ class TypeRef(Generic[T]):
                     **globals(),
                     **(vars(self.ctx_module) if self.ctx_module else {}),
                     **self.ctx,
-                    **{k.__name__: v.hint for k, v in self.subs.items()},
+                    **{
+                        k.__name__: (
+                            v.hint
+                            if isinstance(v, TypeRef)
+                            else tuple(t.hint for t in v)
+                        )
+                        for k, v in self.subs.items()
+                    },
                     **{k.__name__: v.hint for k, v in self.overrides.items()},
                 },
             )
@@ -373,7 +389,14 @@ class TypeRef(Generic[T]):
                     **globals(),
                     **(vars(self.ctx_module) if self.ctx_module else {}),
                     **self.ctx,
-                    **{k.__name__: v.hint for k, v in self.subs.items()},
+                    **{
+                        k.__name__: (
+                            v.hint
+                            if isinstance(v, TypeRef)
+                            else tuple(t.hint for t in v)
+                        )
+                        for k, v in self.subs.items()
+                    },
                     **{k.__name__: v.hint for k, v in self.overrides.items()},
                 },
                 None,
@@ -404,6 +427,7 @@ class TypeRef(Generic[T]):
                 ),
             )
 
+            assert not isinstance(typeref, tuple)
             return typeref.typedef
 
         return self.hint
@@ -522,7 +546,25 @@ class TypeRef(Generic[T]):
         return tuple(bases) or (object,)
 
     @cached_property
-    def local_typevar_map(self) -> dict[TypeVar | ExtTypeVar, TypeRef]:
+    def arg_typerefs(self) -> tuple[TypeRef, ...]:
+        """TypeRefs of the type arguments."""
+        ctx_module = self.ctx_module or getmodule(self.typedef)
+
+        return tuple(
+            TypeRef(
+                v,
+                ctx_module=ctx_module,
+            )
+            for v in self.args
+        )
+
+    @cached_property
+    def local_typevar_map(
+        self,
+    ) -> Mapping[
+        TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+        TypeRef | tuple[TypeRef, ...],
+    ]:
         """Mapping of argument type variables to their values."""
         ctx_module = self.ctx_module or getmodule(self.typedef)
 
@@ -574,9 +616,19 @@ class TypeRef(Generic[T]):
             }
             | dict(self.subs)
             | {
-                k: TypeRef(
-                    v,
-                    ctx_module=ctx_module,
+                k: (
+                    tuple(
+                        TypeRef(
+                            item,
+                            ctx_module=ctx_module,
+                        )
+                        for item in v
+                    )
+                    if isinstance(v, tuple)
+                    else TypeRef(
+                        v,
+                        ctx_module=ctx_module,
+                    )
                 )
                 for k, v in raw_arg_map.items()
             }
@@ -585,17 +637,27 @@ class TypeRef(Generic[T]):
 
         # Make sure every arg-typeref can access all other arg-typerefs.
         for s in local_typevar_map.values():
-            s.subs = local_typevar_map
+            if isinstance(s, TypeRef):
+                s = [s]
+
+            for t in s:
+                t.subs = local_typevar_map
 
         return local_typevar_map
 
     @cached_property
     def typevar_map(
         self,
-    ) -> dict[TypeVar | ExtTypeVar, TypeRef]:
+    ) -> dict[
+        TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+        TypeRef | tuple[TypeRef, ...],
+    ]:
         """Return a mapping of type variables to their values, including those of bases."""
         ctx_module = self.ctx_module or getmodule(self.typedef)
-        typevar_map: dict[TypeVar | ExtTypeVar, TypeRef] = {}
+        typevar_map: dict[
+            TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+            TypeRef | tuple[TypeRef, ...],
+        ] = {}
 
         if isinstance(self.typedef, UnionType) or self.origin is Union:
             # Resolve typevar map of each union arg individually and
@@ -614,11 +676,23 @@ class TypeRef(Generic[T]):
             )
             group_values = [list(g) for _, g in groups]
             typevar_map = {
-                g[0][0]: TypeRef(
-                    reduce(operator.or_, (v.typedef for _, v in g)),
-                    subs=self.subs,
-                    overrides=self.overrides,
-                    ctx_module=ctx_module,
+                (tv := g[0][0]): (
+                    TypeRef(
+                        reduce(operator.or_, (cast(TypeRef, v).typedef for _, v in g)),
+                        subs=self.subs,
+                        overrides=self.overrides,
+                        ctx_module=ctx_module,
+                    )
+                    if isinstance(tv, TypeVar | ExtTypeVar)
+                    else tuple(
+                        TypeRef(
+                            reduce(operator.or_, (v.typedef for v in t)),
+                            subs=self.subs,
+                            overrides=self.overrides,
+                            ctx_module=ctx_module,
+                        )
+                        for t in zip(*(cast(tuple[TypeRef, ...], v) for _, v in g))
+                    )
                 )
                 for g in group_values
             }
@@ -654,9 +728,23 @@ class TypeRef(Generic[T]):
                 ).typevar_map
 
             # Merge with base typevar map.
-            typevar_map = base_arg_map | self.local_typevar_map
+            typevar_map = base_arg_map | dict(self.local_typevar_map)
 
         return typevar_map
+
+    @property
+    def scalar_typevar_map(
+        self,
+    ) -> dict[
+        TypeVar | ExtTypeVar,
+        TypeRef,
+    ]:
+        """Return a mapping of type variables to their values, excluding typevar tuples."""
+        return {
+            k: v
+            for k, v in self.typevar_map.items()
+            if isinstance(k, TypeVar | ExtTypeVar) and isinstance(v, TypeRef)
+        }
 
     @cached_property
     def typeform(self) -> SingleTypeDef[T] | UnionType | Annotated:
@@ -700,13 +788,20 @@ class TypeAwareClass:
 
     @prop(cached=True, mode="class")
     @classmethod
-    def typeargs(cls) -> dict[TypeVar | ExtTypeVar, TypeRef]:
+    def typeargs(
+        cls,
+    ) -> dict[
+        TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple,
+        TypeRef | tuple[TypeRef, ...],
+    ]:
         """Type arguments of this class."""
         return TypeRef(cls).typevar_map
 
     @prop(mode="class")
     @classmethod
-    def type_params(cls) -> tuple[TypeVar | ExtTypeVar, ...]:
+    def type_params(
+        cls,
+    ) -> tuple[TypeVar | ExtTypeVar | TypeVarTuple | ExtTypeVarTuple, ...]:
         """Type arguments of this class."""
         return cls.__dict__.get("__parameters__", ()) or cls.__dict__.get(
             "__type_params__", ()

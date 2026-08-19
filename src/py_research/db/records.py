@@ -77,7 +77,6 @@ from .data import (
     R,
     Registry,
     RichIdx,
-    Root,
     RwT,
     SxT2,
     Tab,
@@ -148,7 +147,7 @@ class Attr(
     @override
     def _frame(
         self: Data[
-            Any, Any, Col, Any, Any, Root
+            Any, Any, Col, Any, Any, Base
         ],  # needs such specific typing to get getitem to work.
     ) -> Frame[PL, Col]:
         parent = self.parent()
@@ -1015,7 +1014,7 @@ class Table(Registry[TabT, CrudT, RwT, "DataBase"]):
 
     @override
     def _frame(
-        self: Data[Any, Any, SxT2, Any, Any, Root],
+        self: Data[Any, Any, SxT2, Any, Any, Base],
     ) -> Frame[PL, SxT2]:
         raise NotImplementedError()
 
@@ -1347,7 +1346,7 @@ class DataBase(
 
     @override
     def _frame(
-        self: Data[Any, Any, SxT2, Any, Any, Root],
+        self: Data[Any, Any, SxT2, Any, Any, Base],
     ) -> Frame[PL, SxT2]:
         raise NotImplementedError()
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import operator
 import sqlite3
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from datetime import date, datetime, time, timedelta
 from functools import reduce
 from types import UnionType
@@ -15,6 +16,7 @@ import sqlalchemy as sqla
 import sqlalchemy.dialects.mysql as mysql
 import sqlalchemy.dialects.postgresql as postgresql
 import sqlalchemy.dialects.sqlite as sqlite
+import sqlparse
 from pandas.api.types import (
     is_bool_dtype,
     is_datetime64_dtype,
@@ -23,7 +25,7 @@ from pandas.api.types import (
     is_string_dtype,
 )
 
-from py_research.reflect.types import SingleTypeDef, TypeRef
+from py_research.reflect.types import SingleTypeDef, TypeRef, has_type
 from py_research.types import UUID4
 
 pl_type_map: dict[
@@ -121,6 +123,117 @@ def sql_to_py_dtype(c: sqla.ColumnElement) -> type | None:
             return bytes
         case _:
             return None
+
+
+def coalesce(
+    data: pl.DataFrame | dict[str, pl.DataFrame] | sqla.Select | dict[str, sqla.Select],
+    coalesce: Literal["left", "right"] = "left",
+) -> pl.Series | pl.DataFrame | sqla.ColumnElement | sqla.Select:
+    """Reduce the shape of a dataframe, coalescing its columns."""
+    if isinstance(data, pl.DataFrame):
+        if all(isinstance(d, pl.Boolean) for d in data.dtypes):
+            return reduce(operator.or_, data.iter_columns())
+
+        return data.select(
+            coalesced=(
+                pl.coalesce(*data.columns)
+                if coalesce == "left"
+                else pl.coalesce(*reversed(data.columns))
+            )
+        )["coalesced"]
+
+    if isinstance(data, sqla.Select):
+        if all(
+            isinstance(c.type, sqla.types.Boolean)
+            for c in data.selected_columns.values()
+        ):
+            return reduce(operator.or_, data.selected_columns.values())
+
+        return (
+            sqla.func.coalesce(*data.selected_columns.values())
+            if coalesce == "left"
+            else sqla.func.coalesce(*reversed(data.selected_columns.values()))
+        ).label("coalesced")
+
+    if has_type(data, dict[str, pl.DataFrame]):
+        all_cols = reduce(set.union, (set(d.columns) for d in data.values()))
+
+        return pl.concat(
+            [df.select(pl.all().name.prefix(prefix)) for prefix, df in data.items()],
+            how="horizontal",
+        ).select(
+            *{
+                col: (
+                    pl.coalesce(
+                        *(
+                            f"{prefix}.{col}"
+                            for prefix in data.keys()
+                            if col in data[prefix].columns
+                        )
+                    )
+                    if coalesce == "left"
+                    else pl.coalesce(
+                        *reversed(
+                            [
+                                f"{prefix}.{col}"
+                                for prefix in data.keys()
+                                if col in data[prefix].columns
+                            ]
+                        )
+                    )
+                )
+                for col in all_cols
+            }
+        )
+
+    if has_type(data, dict[str, sqla.Select]):
+        all_cols = reduce(
+            set.union,
+            (
+                set(c.key for c in t.selected_columns.values() if c.key is not None)
+                for t in data.values()
+            ),
+        )
+
+        return sqla.select(
+            *(
+                (
+                    sqla.func.coalesce(*(t.c[col] for t in data.values() if col in t.c))
+                    if coalesce == "left"
+                    else sqla.func.coalesce(
+                        *reversed([t.c[col] for t in data.values() if col in t.c])
+                    )
+                ).label(col)
+                for col in all_cols
+            )
+        )
+
+    raise ValueError("Incompatible data type for coalescent union: " f"{type(data)}")
+
+
+def isin(
+    data: pl.Series | sqla.ColumnElement,
+    values: Collection | slice,
+) -> pl.Series | sqla.ColumnElement:
+    """Check if the values are in the frame."""
+    series = None
+    column = None
+
+    if isinstance(values, slice):
+        if isinstance(data, pl.Series):
+            series = values.start <= data <= values.stop
+        else:
+            column = data.between(values.start, values.stop)
+    else:
+        if isinstance(data, pl.Series):
+            series = data.is_in(values)
+        else:
+            column = data.in_(values)
+
+    res = series if series is not None else column
+    assert res is not None
+
+    return res
 
 
 def remove_cross_fk(table: sqla.Table):
@@ -456,3 +569,14 @@ def validate_sql_table(
         ]
 
         assert any(all(m) for m in matches)
+
+
+def pprint_select(
+    select: sqla.Select, connection: sqla.Connection | None = None
+) -> str:
+    """Return select statement for this dataset."""
+    return sqlparse.format(
+        str(select.compile(connection)),
+        reindent=True,
+        keyword_case="upper",
+    )

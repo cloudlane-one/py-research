@@ -83,24 +83,28 @@ KeyTt5 = TypeVarTuple("KeyTt5")
 OrdT = TypeVar("OrdT", bound=Ordinal)
 
 SubShapeT = TypeVar("SubShapeT", bound="Shape | None", default=Any)
+LoadT = TypeVar(
+    "LoadT", bound=pl.Series | pl.DataFrame | dict[str, pl.DataFrame], default=Any
+)
+LoadT2 = TypeVar("LoadT2", bound=pl.Series | pl.DataFrame | dict[str, pl.DataFrame])
 
 
-class Shape(Generic[SubShapeT]):
+class Shape(Generic[SubShapeT, LoadT]):
     """Base for frame data types."""
 
 
 @final
-class Col(Shape[None]):
+class Col(Shape[None, pl.Series]):
     """Singleton to mark standard columnar data."""
 
 
 @final
-class Tab(Shape[Col]):
+class Tab(Shape[Col, pl.DataFrame]):
     """Singleton to mark standard tabular data (consisting only of columns)."""
 
 
 @final
-class Tabs(Shape[Tab]):
+class Tabs(Shape[Tab, dict[str, pl.DataFrame]]):
     """Singleton to mark stacked tabular data (multiple tables or cols)."""
 
 
@@ -129,14 +133,22 @@ SxT3 = TypeVar(
     bound=Shape,
 )
 
+DefT = TypeVar("DefT", contravariant=True, default=None)
+DefT2 = TypeVar("DefT2")
 
-class PL:
-    """Polars engine."""
+
+class Def(Generic[DefT]):
+    """Declarative definition type."""
 
 
-@final
-class SQL(PL):
-    """SQLA engine, supporting polars fallback."""
+type PL = Def[None]
+
+type SQL = Def[sqla.Select | sqla.ColumnElement | dict[str, sqla.Select] | None]
+"""SQL engine."""
+
+
+class API(Def[DefT]):
+    """Custom API engine."""
 
 
 ExT = TypeVar("ExT", bound=PL, default=Any, covariant=True)
@@ -292,28 +304,110 @@ CtxT = TypeVar("CtxT", bound=Ctx, default=Any, covariant=True)
 CtxT2 = TypeVar("CtxT2", bound=Ctx)
 CtxT3 = TypeVar("CtxT3", bound=Ctx)
 
+ClsT = TypeVar("ClsT", bound=Indexable, contravariant=True, default=Any)
 
-class Root(Ctx[ArgT, Any, Any], Realm, Generic[ArgT]):
+ColT = TypeVar("ColT", default=Any)
+ColT2 = TypeVar("ColT2")
+
+TabT = TypeVar("TabT", default=Any)
+TabT2 = TypeVar("TabT2")
+
+TabsT = TypeVar("TabsT", default=Any)
+TabsT2 = TypeVar("TabsT2")
+
+
+class Base(
+    Ctx[None, Any, Any], Realm, Generic[ClsT, ExT, CrudT, ColT, TabT, TabsT], ABC
+):
     """Base for retrieving/storing data."""
 
-
-RootT = TypeVar("RootT", bound=Root, covariant=True, default=Any)
-RootT2 = TypeVar("RootT2", bound=Root)
-
-
-class Base(Root[ArgT], Generic[ArgT, CrudT]):
-    """Base for retrieving/storing data."""
-
-    @property
-    def connection(self: Root[SQL]) -> sqla.engine.Connection:
-        """SQLAlchemy connection to the database."""
+    @abstractmethod
+    def get_registry(self, cls: type[ClsT]) -> TabT:
+        """Get internal reference to registry for given class."""
         ...
 
-    def registry[T: Indexable](
-        self: Base[T], value_type: type[T]
-    ) -> Registry[T, CrudT, CrudT, Base[T, CrudT]]:
-        """Get the registry for a type in this base."""
+    @abstractmethod
+    def mutate_registry(
+        self,
+        cls: type[ClsT],
+        input_data: pl.DataFrame | Iterator[pl.DataFrame] | TabT,
+        mode: Set[type[CrudT]] = {C, U},
+    ) -> None:
+        """Mutate registry for given class."""
         ...
+
+    @overload
+    def compose(
+        self,
+        ref: ColT | TabT | TabsT,
+        dataset: Data[Any, Any, Col, Any, Any, Interface[ClsT]],
+    ) -> ColT | None: ...
+
+    @overload
+    def compose(
+        self,
+        ref: ColT | TabT | TabsT,
+        dataset: Data[Any, Any, Tab, Any, Any, Interface[ClsT]],
+    ) -> TabT | None: ...
+
+    @overload
+    def compose(
+        self,
+        ref: ColT | TabT | TabsT,
+        dataset: Data[Any, Any, Tabs, Any, Any, Interface[ClsT]],
+    ) -> TabsT | None: ...
+
+    @abstractmethod
+    def compose(
+        self,
+        ref: ColT | TabT | TabsT,
+        dataset: Data[Any, Any, Any, Any, Any, Interface[ClsT]],
+    ) -> ColT | TabT | TabsT | None:
+        """Compose an existing col/table/tables reference with a nested dataset."""
+        ...
+
+    @overload
+    def load(
+        self,
+        ref: ColT,
+        count: int | Literal["all"] | None = ...,
+        start_page: int = ...,
+    ) -> pl.Series | Iterator[pl.Series]: ...
+
+    @overload
+    def load(
+        self,
+        ref: TabT,
+        count: int | Literal["all"] | None = ...,
+        start_page: int = ...,
+    ) -> pl.DataFrame | Iterator[pl.DataFrame]: ...
+
+    @overload
+    def load(
+        self,
+        ref: TabsT,
+        count: int | Literal["all"] | None = ...,
+        start_page: int = ...,
+    ) -> dict[str, pl.DataFrame] | Iterator[dict[str, pl.DataFrame]]: ...
+
+    @abstractmethod
+    def load(
+        self,
+        ref: ColT | TabT | TabsT,
+        count: int | Literal["all"] | None = None,
+        start_page: int = 0,
+    ) -> (
+        pl.Series
+        | pl.DataFrame
+        | dict[str, pl.DataFrame]
+        | Iterator[pl.Series | pl.DataFrame | dict[str, pl.DataFrame]]
+    ):
+        """Load data for given col/table/tables reference."""
+        ...
+
+
+BaseT = TypeVar("BaseT", bound=Base, covariant=True, default=Any)
+BaseT2 = TypeVar("BaseT2", bound=Base)
 
 
 @dataclass
@@ -321,6 +415,8 @@ class Interface(Ctx[ArgT, ArgIdxT, ArgDxT]):
     """Data interface."""
 
     arg_type: SingleTypeDef[ArgT] | None = None
+    arg_idx_type: SingleTypeDef[ArgIdxT] | None = None
+    arg_dx_type: SingleTypeDef[ArgDxT] | None = None
 
 
 type InputFrame = (
@@ -340,268 +436,28 @@ type InputData[V, S, I] = Data[V] | V | Iterable[V] | Mapping[Any, V] | S | Mapp
 Params = ParamSpec("Params")
 
 
-class Frame(Generic[ExT, SxT]):
-    """Raw data."""
-
-    @overload
-    def __init__(self: Frame[SQL, Col], data: sqla.ColumnElement) -> None: ...
-
-    @overload
-    def __init__(self: Frame[SQL, Tab], data: sqla.Select) -> None: ...
-
-    @overload
-    def __init__(self: Frame[SQL, Tabs], data: dict[str, sqla.Select]) -> None: ...
-
-    @overload
-    def __init__(
-        self: Frame[PL, Col], data: pl.Series | sqla.ColumnElement
-    ) -> None: ...
-
-    @overload
-    def __init__(self: Frame[PL, Tab], data: pl.DataFrame | sqla.Select) -> None: ...
-
-    @overload
-    def __init__(
-        self: Frame[PL, Tabs], data: dict[str, pl.DataFrame] | dict[str, sqla.Select]
-    ) -> None: ...
-
-    def __init__(self: Frame, data: Any = None) -> None:  # noqa: D107
-        self._data = data
-
-    def cols(self) -> list[str]:
-        """Get the column names of this frame."""
-        match self._data:
-            case pl.DataFrame():
-                return self._data.columns
-            case pl.Series():
-                return [self._data.name if self._data.name is not None else "0"]
-            case sqla.Select():
-                return [
-                    (c.key if c.key is not None else str(i))
-                    for i, c in enumerate(self._data.selected_columns)
-                ]
-            case sqla.ColumnElement():
-                return [self._data.key if self._data.key is not None else "0"]
-            case dict() if has_type(self._data, dict[str, pl.DataFrame]):
-                return [
-                    f"{prefix}.{col}"
-                    for prefix, df in self._data.items()
-                    for col in df.columns
-                ]
-            case _:
-                raise ValueError("Unsupported data type.")
-
-    @overload
-    def get(
-        self: Frame[SQL, Col],
-    ) -> sqla.ColumnElement: ...
-
-    @overload
-    def get(
-        self: Frame[SQL, Tab],
-    ) -> sqla.Select: ...
-
-    @overload
-    def get(
-        self: Frame[SQL, Tabs],
-    ) -> dict[str, sqla.Select]: ...
-
-    @overload
-    def get(self: Frame[PL, Col]) -> pl.Series | sqla.ColumnElement: ...
-
-    @overload
-    def get(
-        self: Frame[PL, Tab],
-    ) -> pl.DataFrame | sqla.Select: ...
-
-    @overload
-    def get(
-        self: Frame[PL, Tabs],
-    ) -> dict[str, pl.DataFrame] | dict[str, sqla.Select]: ...
-
-    @overload
-    def get(
-        self: Frame[PL, Any],
-    ) -> (
-        pl.Series
-        | pl.DataFrame
-        | sqla.ColumnElement
-        | sqla.Select
-        | dict[str, pl.DataFrame]
-        | dict[str, sqla.Select]
-    ): ...
-
-    def get(self: Frame) -> Any:
-        """Get the raw data."""
-        return self._data
-
-
-def frame_coalesce(
-    frame: Frame[ExT2, Shape[SxT2]],
-    coalesce: Literal["left", "right"] = "left",
-) -> Frame[ExT2, SxT2]:
-    """Reduce the shape of a dataframe, coalescing its columns."""
-    data = frame.get()
-
-    if isinstance(data, pl.DataFrame):
-        if all(isinstance(d, pl.Boolean) for d in data.dtypes):
-            return cast(
-                Frame[ExT2, SxT2], Frame(reduce(operator.or_, data.iter_columns()))
-            )
-
-        return cast(
-            Frame[ExT2, SxT2],
-            Frame(
-                data.select(
-                    coalesced=(
-                        pl.coalesce(*data.columns)
-                        if coalesce == "left"
-                        else pl.coalesce(*reversed(data.columns))
-                    )
-                )["coalesced"]
-            ),
-        )
-
-    if isinstance(data, sqla.Select):
-        if all(
-            isinstance(c.type, sqla.types.Boolean)
-            for c in data.selected_columns.values()
-        ):
-            return cast(
-                Frame[ExT2, SxT2],
-                Frame(reduce(operator.or_, data.selected_columns.values())),
-            )
-
-        return cast(
-            Frame[ExT2, SxT2],
-            Frame(
-                (
-                    sqla.func.coalesce(*data.selected_columns.values())
-                    if coalesce == "left"
-                    else sqla.func.coalesce(*reversed(data.selected_columns.values()))
-                ).label("coalesced")
-            ),
-        )
-
-    if has_type(data, dict[str, pl.DataFrame]):
-        all_cols = reduce(set.union, (set(d.columns) for d in data.values()))
-
-        return cast(
-            Frame[ExT2, SxT2],
-            Frame(
-                pl.concat(
-                    [
-                        df.select(pl.all().name.prefix(prefix))
-                        for prefix, df in data.items()
-                    ],
-                    how="horizontal",
-                ).select(
-                    *{
-                        col: (
-                            pl.coalesce(
-                                *(
-                                    f"{prefix}.{col}"
-                                    for prefix in data.keys()
-                                    if col in data[prefix].columns
-                                )
-                            )
-                            if coalesce == "left"
-                            else pl.coalesce(
-                                *reversed(
-                                    [
-                                        f"{prefix}.{col}"
-                                        for prefix in data.keys()
-                                        if col in data[prefix].columns
-                                    ]
-                                )
-                            )
-                        )
-                        for col in all_cols
-                    }
-                )
-            ),
-        )
-
-    if has_type(data, dict[str, sqla.Select]):
-        all_cols = reduce(
-            set.union,
-            (
-                set(c.key for c in t.selected_columns.values() if c.key is not None)
-                for t in data.values()
-            ),
-        )
-
-        return cast(
-            Frame[ExT2, SxT2],
-            Frame(
-                sqla.select(
-                    *(
-                        (
-                            sqla.func.coalesce(
-                                *(t.c[col] for t in data.values() if col in t.c)
-                            )
-                            if coalesce == "left"
-                            else sqla.func.coalesce(
-                                *reversed(
-                                    [t.c[col] for t in data.values() if col in t.c]
-                                )
-                            )
-                        ).label(col)
-                        for col in all_cols
-                    )
-                ),
-            ),
-        )
-
-    raise ValueError("Incompatible data type for coalescent union: " f"{type(data)}")
-
-
-def frame_isin(
-    frame: Frame[ExT2, Col],
-    values: Collection | slice,
-) -> Frame[ExT2, Col]:
-    """Check if the values are in the frame."""
-    data = frame.get()
-    series = None
-    column = None
-
-    if isinstance(values, slice):
-        if isinstance(data, pl.Series):
-            series = values.start <= data <= values.stop
-        else:
-            column = data.between(values.start, values.stop)
-    else:
-        if isinstance(data, pl.Series):
-            series = data.is_in(values)
-        else:
-            column = data.in_(values)
-
-    data = series if series is not None else column
-    assert data is not None
-
-    return cast(Frame[ExT2, Col], Frame(data))
-
-
 class Node(Protocol):
     """Base class for graphable objects."""
 
 
-ColT = TypeVar("ColT", bound=int | slice | Iterable[int] | None, default=None)
+CdxT = TypeVar("CdxT", bound=int | slice | Iterable[int] | None, default=None)
 
 
 @dataclass
-class ColSel(Generic[ColT]):
+class ColSel(Generic[CdxT]):
     """Select columns from a dataset with tuple values."""
 
-    sel: ColT = None  # pyright: ignore[reportAssignmentType]
+    sel: CdxT = None  # pyright: ignore[reportAssignmentType]
 
-    def __getitem__(self, key: ColT) -> ColSel[ColT]:
+    def __getitem__(self, key: CdxT) -> ColSel[CdxT]:
         return copy_and_override(ColSel, self, sel=key)
 
 
 @dataclass(kw_only=True)
 class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     """Base class for all data objects."""
+
+    default_load_batchsize: ClassVar[int] = 1000
 
     # Core attributes:
 
@@ -627,22 +483,33 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def _frame(
-        self: Data[Any, Any, SxT2, Any, Any, Root],
-    ) -> Frame[PL, SxT2]:
-        """Get SQL expression or Polars data."""
+    def _define(
+        self: (
+            Data[Any, Any, Col, Def[DefT2], Any, Base[Any, Any, Any, DefT2]]
+            | Data[Any, Any, Tab, Def[DefT2], Any, Base[Any, Any, Any, Any, DefT2]]
+            | Data[
+                Any, Any, Tabs, Def[DefT2], Any, Base[Any, Any, Any, Any, Any, DefT2]
+            ]
+        ),
+        def_type: type[DefT2],
+    ) -> DefT2:
+        """Get declarative expression in language supported by base."""
         raise NotImplementedError()
 
-    def _mutation(
+    @abstractmethod
+    def _compute(
+        self: Data[Any, Any, Shape[Any, LoadT2], Any, Any, Base],
+    ) -> LoadT2:
+        """Get Polars data."""
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _mutate(
         self: Data[Any, Any, Any, Any, Acc[CrudT2]],
         input_data: InputData[ValT, InputFrame, InputFrame],
         mode: Set[type[CrudT2]] = {C, U},
-    ) -> Sequence[sqla.Executable]:
-        """Get mutation statements to set this data SQL-side."""
-        raise NotImplementedError()
-
-    def graph(self: Data[Node]) -> nx.Graph:
-        """Get the graph of this data."""
+    ) -> None:
+        """Mutate underlying registries of this dataset."""
         raise NotImplementedError()
 
     # Type:
@@ -650,7 +517,7 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     @cached_prop
     def value_typeref(self) -> TypeRef[ValT]:
         """Target typeform of this prop."""
-        return self.typeref.typevar_map[ValT]
+        return self.typeref.scalar_typevar_map[ValT]
 
     # Context:
 
@@ -697,7 +564,9 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         full_idx: tuple[Data[Any, Any, Col, Any, Acc[R, R], CtxT], ...]
 
         if rich:
-            rich_idx: type[RichIdx | None] = self.typeref.typevar_map[RdxT].common_type
+            rich_idx: type[RichIdx | None] = self.typeref.scalar_typevar_map[
+                RdxT
+            ].common_type
             assert not issubclass(rich_idx, type(None))
             full_idx = cast(
                 tuple[Data[Any, IdxT, Col, ExT, Acc[R, R], CtxT], ...],
@@ -802,6 +671,10 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
             case tuple():
                 return {i: s for i, s in zip(idx, sel)}
 
+    def graph(self: Data[Node]) -> nx.Graph:
+        """Get the graph of this data."""
+        raise NotImplementedError()
+
     # SQL:
 
     @overload
@@ -810,52 +683,11 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     ) -> sqla.Select: ...
 
     @overload
-    def select(self: Data[Any, Any, Any, PL]) -> sqla.Select | None: ...
+    def select(self: Data[Any, Any, Any, Any]) -> sqla.Select | None: ...
 
-    def select(self: Data[Any, Any, Shape]) -> sqla.Select | None:
+    def select(self: Data[Any, Any, Any]) -> sqla.Select | None:
         """Return select statement for this dataset."""
-        frame = self._frame().get()
-
-        match frame:
-            case sqla.Select():
-                return frame
-            case sqla.ColumnElement():
-                return sqla.select(frame)
-            case dict() if has_type(frame, dict[str, sqla.Select]):
-                return sqla.select(
-                    *(
-                        c.label(f"{prefix}.{c.key}")
-                        for prefix, t in frame.items()
-                        for c in t.selected_columns
-                    )
-                )
-            case _:
-                return None
-
-    @overload
-    def select_str(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, SQL, Any, Base],
-    ) -> str: ...
-
-    @overload
-    def select_str(
-        self: Data[Any, Any, Any, PL],
-    ) -> None: ...
-
-    def select_str(self) -> str | None:
-        """Return select statement for this dataset."""
-        select = self.select()
-        if select is None:
-            return None
-
-        root = self.root()
-        assert isinstance(root, Base)
-
-        return sqlparse.format(
-            str(select.compile(root.connection)),
-            reindent=True,
-            keyword_case="upper",
-        )
+        return self._define(sqla.Select)
 
     @overload
     def query(  # pyright: ignore[reportOverlappingOverload]
@@ -882,27 +714,87 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
 
     @overload
     def load(
-        self: Data[Any, Any, Col, Any, Any, Root],
+        self: Data[Any, Any, Col, SQL | API, Any, Base],
+        count: Literal["all"],
+        start_page: int = ...,
     ) -> pl.Series: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Tab, Any, Any, Root],
+        self: Data[Any, Any, Tab, SQL | API, Any, Base],
+        count: Literal["all"],
+        start_page: int = ...,
     ) -> pl.DataFrame: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Tabs, Any, Any, Root],
+        self: Data[Any, Any, Tabs, SQL | API, Any, Base],
+        count: Literal["all"],
+        start_page: int = ...,
+    ) -> dict[str, pl.DataFrame]: ...
+
+    @overload
+    def load(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Col, SQL | API, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
+    ) -> Iterator[pl.Series]: ...
+
+    @overload
+    def load(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Tab, SQL | API, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
+    ) -> Iterator[pl.DataFrame]: ...
+
+    @overload
+    def load(  # pyright: ignore[reportOverlappingOverload]
+        self: Data[Any, Any, Tabs, SQL | API, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
+    ) -> Iterator[dict[str, pl.DataFrame]]: ...
+
+    @overload
+    def load(
+        self: Data[Any, Any, Col, PL, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
+    ) -> pl.Series: ...
+
+    @overload
+    def load(
+        self: Data[Any, Any, Tab, PL, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
+    ) -> pl.DataFrame: ...
+
+    @overload
+    def load(
+        self: Data[Any, Any, Tabs, PL, Any, Base],
+        count: int | None = ...,
+        start_page: int = ...,
     ) -> dict[str, pl.DataFrame]: ...
 
     @overload
     def load(
-        self: Data[Any, Any, Shape, Any, Any, Root],
-    ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]: ...
+        self: Data[Any, Any, Shape, Any, Any, Base],
+    ) -> (
+        pl.Series
+        | pl.DataFrame
+        | dict[str, pl.DataFrame]
+        | Iterator[pl.Series | pl.DataFrame | dict[str, pl.DataFrame]]
+    ): ...
 
     def load(
-        self: Data[Any, Any, Any, PL, Any, Root],
-    ) -> pl.Series | pl.DataFrame | dict[str, pl.DataFrame]:
+        self: Data[Any, Any, Any, PL, Any, Base],
+        count: int | Literal["all"] | None = None,
+        start_page: int = 0,
+    ) -> (
+        pl.Series
+        | pl.DataFrame
+        | dict[str, pl.DataFrame]
+        | Iterator[pl.Series | pl.DataFrame | dict[str, pl.DataFrame]]
+    ):
         """Load dataset as dataframe."""
         frame = self._frame().get()
 
@@ -917,109 +809,133 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         base = self.root()
         assert isinstance(base, Base)
 
-        res = pl.read_database(
-            select,
-            base.connection,
+        res = (
+            pl.read_database(
+                select,
+                base.connection,
+            )
+            if count == "all"
+            else pl.read_database(
+                select,
+                base.connection,
+                iter_batches=True,
+                batch_size=count if count is not None else self.default_load_batchsize,
+            )
         )
 
-        if isinstance(frame, dict):
-            return {
-                k: res.select(
-                    *(
-                        pl.col(c).alias(c.split(".")[-1])
-                        for c in res.columns
-                        if c.startswith(f"{k}.")
+        if isinstance(res, pl.DataFrame):
+            if isinstance(frame, dict):
+                return {
+                    k: res.select(
+                        *(
+                            pl.col(c).alias(c.split(".")[-1])
+                            for c in res.columns
+                            if c.startswith(f"{k}.")
+                        )
                     )
-                )
-                for k in frame.keys()
-            }
+                    for k in frame.keys()
+                }
 
-        return res
+            return res
+
+        yield from res
 
     # Collection interface:
 
     def values(
-        self: Data[Any, Any, Shape, PL, Any, Root],
-    ) -> Sequence[ValT]:
+        self: Data[Any, Any, Shape, PL, Any, Base],
+    ) -> Iterator[ValT]:
         """Iterable over this dataset's values."""
         data = self.load()
 
-        match data:
-            case pl.Series():
-                return data.to_list()
-            case pl.DataFrame():
-                constructor = self.value_typeref.common_type
-                return [constructor(d) for d in data.to_dicts()]
-            case dict():
-                return self.value_typeref.common_type(*data.values())
+        if not isinstance(data, Iterator):
+            data = [data]
+
+        main_type = self.value_typeref.common_type
+        item_types = [t.common_type for t in self.value_typeref.arg_typerefs]
+
+        for d in data:
+            match d:
+                case pl.Series():
+                    yield from d.to_list()
+                case pl.DataFrame():
+                    yield from (main_type(row) for row in d.to_dicts())
+                case dict():
+                    yield from (
+                        main_type(
+                            item_type(kwargs)
+                            for item_type, kwargs in zip(item_types, row)
+                        )
+                        for row in zip(*(df.to_dicts() for df in d.values()))
+                    )
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[KeyT2]], rich: Literal[True]
-    ) -> Sequence[KeyT2]: ...
+        self: Data[Any, Any, Any, Any, Any, Base, RichIdx[KeyT2]], rich: Literal[True]
+    ) -> Iterator[KeyT2]: ...
 
     @overload
     def keys(
-        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]], rich: Literal[True]
-    ) -> Sequence[tuple[*KeyTt2]]: ...
+        self: Data[Any, Any, Any, Any, Any, Base, RichIdx[*KeyTt2]], rich: Literal[True]
+    ) -> Iterator[tuple[*KeyTt2]]: ...
 
     @overload
     def keys(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root], rich: bool = ...
-    ) -> Sequence[KeyT2]: ...
+        self: Data[Any, Idx[KeyT2], Any, Any, Any, Base], rich: bool = ...
+    ) -> Iterator[KeyT2]: ...
 
     @overload
     def keys(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root], rich: bool = ...
-    ) -> Sequence[tuple[*KeyTt2]]: ...
+        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Base], rich: bool = ...
+    ) -> Iterator[tuple[*KeyTt2]]: ...
 
     def keys(
         self: (
-            Data[Any, IdxT, Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Any, Root, RdxT]
+            Data[Any, IdxT, Any, Any, Any, Base]
+            | Data[Any, Any, Any, Any, Any, Base, RdxT]
         ),
         rich: bool = False,
-    ) -> Sequence[Hashable]:
+    ) -> Iterator[Hashable]:
         """Iterable over index keys."""
         idx = self.index(rich)
         assert idx is not None
-        return idx.values() if idx is not None else [tuple()] * len(self)
+        return idx.values() if idx is not None else (tuple() for _ in range(len(self)))
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Idx[KeyT2], Any, Any, Any, Root], rich: Literal[False] = ...
-    ) -> Iterable[tuple[KeyT2, ValT]]: ...
+        self: Data[Any, Idx[KeyT2], Any, Any, Any, Base], rich: Literal[False] = ...
+    ) -> Iterator[tuple[KeyT2, ValT]]: ...
 
     @overload
     def items(
-        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Root], rich: Literal[False] = ...
-    ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
+        self: Data[Any, Idx[*KeyTt2], Any, Any, Any, Base], rich: Literal[False] = ...
+    ) -> Iterator[tuple[tuple[*KeyTt2], ValT]]: ...
 
     @overload
     def items(  # pyright: ignore[reportOverlappingOverload]
-        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[KeyT2]], rich: Literal[True]
-    ) -> Iterable[tuple[KeyT2, ValT]]: ...
+        self: Data[Any, Any, Any, Any, Any, Base, RichIdx[KeyT2]], rich: Literal[True]
+    ) -> Iterator[tuple[KeyT2, ValT]]: ...
 
     @overload
     def items(
-        self: Data[Any, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]], rich: Literal[True]
-    ) -> Iterable[tuple[tuple[*KeyTt2], ValT]]: ...
+        self: Data[Any, Any, Any, Any, Any, Base, RichIdx[*KeyTt2]], rich: Literal[True]
+    ) -> Iterator[tuple[tuple[*KeyTt2], ValT]]: ...
 
     def items(
         self: (
-            Data[Any, IdxT, Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Any, Root, RdxT]
+            Data[Any, IdxT, Any, Any, Any, Base]
+            | Data[Any, Any, Any, Any, Any, Base, RdxT]
         ),
         rich: bool = False,
-    ) -> Iterable[tuple[Any, ValT]]:
-        """Iterable over index keys."""
+    ) -> Iterator[tuple[Any, ValT]]:
+        """Iterator over index keys."""
         return zip(self.keys(rich), self.values())
 
     @overload
     def get(
         self: (
-            Data[Any, ExtIdx[()], Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Any, Root, RichIdx[()]]
+            Data[Any, ExtIdx[()], Any, Any, Any, Base]
+            | Data[Any, Any, Any, Any, Any, Base, RichIdx[()]]
         ),
         key: None = ...,
         default: ValTo = ...,
@@ -1028,8 +944,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     @overload
     def get(
         self: (
-            Data[ValT2, Idx[KeyT2], Any, Any, Any, Root]
-            | Data[ValT2, Any, Any, Any, Any, Root, RichIdx[KeyT2]]
+            Data[ValT2, Idx[KeyT2], Any, Any, Any, Base]
+            | Data[ValT2, Any, Any, Any, Any, Base, RichIdx[KeyT2]]
         ),
         key: KeyT2 | tuple[KeyT2],
         default: ValTo,
@@ -1038,30 +954,30 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     @overload
     def get(
         self: (
-            Data[ValT2, Idx[*KeyTt2], Any, Any, Any, Root]
-            | Data[ValT2, Any, Any, Any, Any, Root, RichIdx[*KeyTt2]]
+            Data[ValT2, Idx[*KeyTt2], Any, Any, Any, Base]
+            | Data[ValT2, Any, Any, Any, Any, Base, RichIdx[*KeyTt2]]
         ),
         key: tuple[*KeyTt2],
         default: ValTo,
     ) -> ValT | ValTo: ...
 
     def get(
-        self: Data[Any, Any, Any, Any, Any, Root, Any],
+        self: Data[Any, Any, Any, Any, Any, Base, Any],
         key: Hashable = None,
         default: ValTo = None,
     ) -> ValT | ValTo:
         """Get a record by key."""
         try:
-            return (self[key] if key is not None else self).values()[0]
+            return next((self[key] if key is not None else self).values())
         except KeyError | IndexError:
             return default
 
     def __iter__(
-        self: Data[Any, Any, Any, Any, Any, Root],
+        self: Data[Any, Any, Any, Any, Any, Base],
     ) -> Iterator[ValT]:
         return iter(self.values())
 
-    def __len__(self: Data[Any, Any, Any, Any, Any, Root]) -> int:
+    def __len__(self: Data[Any, Any, Any, Any, Any, Base]) -> int:
         """Get the number of items in the dataset."""
         frame = self._frame().get()
         if isinstance(frame, pl.Series | pl.DataFrame):
@@ -1274,8 +1190,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     @overload
     def __getitem__(
         self: (
-            Data[Any, Idx[*KeyTt3], Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Acc[RuT2], Root, RichIdx[*KeyTt3]]
+            Data[Any, Idx[*KeyTt3], Any, Any, Any, Base]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Base, RichIdx[*KeyTt3]]
         ),
         key: tuple[*KeyTt3],
     ) -> ValT: ...
@@ -1284,8 +1200,8 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
     @overload
     def __getitem__(
         self: (
-            Data[Any, Idx[KeyT3], Any, Any, Any, Root]
-            | Data[Any, Any, Any, Any, Acc[RuT2], Root, RichIdx[KeyT3]]
+            Data[Any, Idx[KeyT3], Any, Any, Any, Base]
+            | Data[Any, Any, Any, Any, Acc[RuT2], Base, RichIdx[KeyT3]]
         ),
         key: KeyT3,
     ) -> ValT: ...
@@ -1337,15 +1253,15 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
                 ):
                     key = key if isinstance(key, tuple) else (key,)
                     if len(key) == len(self._idx_components()) and is_subtype(
-                        self.typeref.typevar_map[CtxT].typeform, Root
+                        self.typeref.scalar_typevar_map[CtxT].typeform, Base
                     ):
                         rooted = True
 
                     data = self[KeySelect(cast(tuple, key))]
 
                     if rooted:
-                        vals = cast(Data[Any, Any, Any, Any, Any, Root], data).values()
-                        return vals[0]
+                        vals = cast(Data[Any, Any, Any, Any, Any, Base], data).values()
+                        return next(vals)
 
                     return data
 
@@ -2308,16 +2224,14 @@ class Data(Generic[ValT, IdxT, DxT, ExT, AccT, CtxT, RdxT], ABC):
         raise NotImplementedError()
 
 
-RegT = TypeVar("RegT", covariant=True, bound=Indexable)
-
-
 @dataclass(kw_only=True)
 class Registry(
-    Data[RegT, MainIdx[RegT], Tab, SQL, Acc[CrudT, RwT], RootT, RichIdx[RegT]], ABC
+    Data[IdxblT, MainIdx[IdxblT], Tab, ExT, Acc[CrudT, RwT], BaseT, RichIdx[IdxblT]],
+    ABC,
 ):
     """Represent a base data type collection."""
 
-    _instance_map: dict[Hashable, RegT] = field(default_factory=dict)
+    _instance_map: dict[Hashable, IdxblT] = field(default_factory=dict)
 
     @override
     def _id(self) -> str:
@@ -2364,6 +2278,14 @@ class Align(Data[TupT, IdxT, DxT, ExT, AccT, CtxT]):
     def _frame(
         self: Data[Any, Any, SxT2],
     ) -> Frame[PL, SxT2]:
+        raise NotImplementedError()
+
+    @override
+    def _mutation(
+        self: Align[Any, Any, Any, Any, Acc[CrudT2]],
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[CrudT2]] = {R},
+    ) -> Sequence[sqla.Executable]:
         raise NotImplementedError()
 
     def _get_subset(
@@ -2434,6 +2356,14 @@ class Transform(
     ) -> Frame[PL, SxT2]:
         raise NotImplementedError()
 
+    @override
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[R]] = {R},
+    ) -> Sequence[sqla.Executable]:
+        return []
+
 
 def unstable_frame_hash(
     frame: Frame[ExT, Col],
@@ -2497,10 +2427,10 @@ class Filter(
         raise NotImplementedError()
 
     @override
-    def _mutation(
-        self: Data[Any, Any, Any, Any, Acc[CrudT2]],
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self: Filter[Any, RuT2],
         input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[CrudT2]] = {U},
+        mode: Set[type[RuT2]] = {U},
     ) -> Sequence[sqla.Executable]:
         raise NotImplementedError()
 
@@ -2539,9 +2469,9 @@ class KeySelect(
         raise NotImplementedError()
 
     @override
-    def _mutation(
-        self: Data[Any, Any, Any, Any, Acc[CrudT2]],
-        input_data: InputData[ValT, InputFrame, InputFrame],
-        mode: Set[type[CrudT2]] = {U},
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        input_data: InputData[Any, InputFrame, InputFrame],
+        mode: Set[type[R]] = {R},
     ) -> Sequence[sqla.Executable]:
-        raise NotImplementedError()
+        return []

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import MISSING, Field, dataclass, field
 from functools import cache, reduce
 from inspect import get_annotations, getmodule
@@ -21,6 +21,7 @@ from typing import (
 )
 
 import polars as pl
+import sqlalchemy as sqla
 from pydantic import (
     BaseModel,
     GetJsonSchemaHandler,
@@ -53,6 +54,7 @@ from .data import (
     SQL,
     Acc,
     AccT2,
+    Base,
     C,
     CrudT,
     CrudT2,
@@ -69,6 +71,8 @@ from .data import (
     IdxT,
     IdxT2,
     Indexable,
+    InputData,
+    InputFrame,
     Interface,
     KeyTt2,
     KeyTt3,
@@ -77,7 +81,6 @@ from .data import (
     R,
     RdxT,
     RichIdx,
-    Root,
     RwT,
     RwT2,
     SxT2,
@@ -125,7 +128,7 @@ class Prop(
     @staticmethod
     def _get_default_class(typedef: SingleTypeDef, owner: type) -> type[Prop] | None:
         """Get the default subclass for this property."""
-        typevars = TypeRef(typedef).typevar_map
+        typevars = TypeRef(typedef).scalar_typevar_map
         subclasses = reversed(get_subclasses(Prop))
 
         matching = [
@@ -296,7 +299,7 @@ class Prop(
     @overload
     def __get__(
         self, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Root]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CrudT, RwT], Base]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -503,7 +506,7 @@ class Local(
     @overload
     def __get__(
         self, instance: OwnT2, owner: type[OwnT2]
-    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CruT, RwT], Root]: ...
+    ) -> Data[ValT, IdxT, DxT, ExT, Acc[CruT, RwT], Base]: ...
 
     @overload
     def __get__(self, instance: Any, owner: type | None) -> Self: ...
@@ -613,7 +616,7 @@ class ModelMeta(type):
                         field_type,
                         subs=typevar_map,
                         ctx_module=cls._src_mod,
-                        overrides={ValT: typeref.typevar_map[ValT]},
+                        overrides={ValT: typeref.scalar_typevar_map[ValT]},
                     )
 
                 if not isinstance(field_val, Prop):
@@ -786,7 +789,7 @@ ModT = TypeVar("ModT", bound="Model", covariant=True)
 
 
 @dataclass(kw_only=True)
-class Memory(Root["Model"]):
+class Memory(Base["Model"]):
     """In-memory base for models."""
 
 
@@ -815,6 +818,14 @@ class Singleton(Data[ModT, ExtIdx[()], Tab, PL, Acc[R, R], Memory]):
     ) -> Frame[PL, SxT2]:
         """Get SQL-side reference to this property."""
         raise NotImplementedError()
+
+    @override
+    def _mutation(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+        input_data: InputData[ValT, InputFrame, InputFrame],
+        mode: Set[type[R]] = {R},
+    ) -> Sequence[sqla.Executable]:
+        return []
 
 
 @dataclass_transform(
@@ -1018,7 +1029,7 @@ class Model(
         return f"{type(self).__name__}({repr(self._to_dict())})"
 
     @cached_method
-    def _data(self) -> Data[Self, ExtIdx[()], Tab, Any, Any, Root]:
+    def _data(self) -> Data[Self, ExtIdx[()], Tab, Any, Any, Base]:
         """Return the singleton class for this record."""
         return Singleton(model=self)
 
@@ -1039,7 +1050,7 @@ class Model(
         DxT2,
         ExT2,
         Acc[CrudT2, RwT2],
-        Root,
+        Base,
     ]:
         """Get the data representation of a prop."""
         return self._data()[prop]
