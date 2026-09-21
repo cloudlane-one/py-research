@@ -1,0 +1,7 @@
+py\_research.sql module
+=======================
+
+.. automodule:: py_research.sql
+   :members:
+   :undoc-members:
+   :show-inheritance:

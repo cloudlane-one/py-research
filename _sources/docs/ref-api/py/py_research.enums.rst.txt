@@ -1,0 +1,7 @@
+py\_research.enums module
+=========================
+
+.. automodule:: py_research.enums
+   :members:
+   :undoc-members:
+   :show-inheritance:

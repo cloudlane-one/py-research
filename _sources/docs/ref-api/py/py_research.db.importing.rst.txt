@@ -1,0 +1,7 @@
+py\_research.db.importing module
+================================
+
+.. automodule:: py_research.db.importing
+   :members:
+   :undoc-members:
+   :show-inheritance:

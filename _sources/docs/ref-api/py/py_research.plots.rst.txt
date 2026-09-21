@@ -1,0 +1,7 @@
+py\_research.plots package
+==========================
+
+.. automodule:: py_research.plots
+   :members:
+   :undoc-members:
+   :show-inheritance:
