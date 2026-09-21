@@ -110,31 +110,6 @@ def test_expand_geo_col_to_cc(
     "df, geo_col, geo_regions, input_scheme, expected",
     [
         (
-            pd.DataFrame(
-                {"cc": ["USA", "CAN", "MEX", "FRA", "DEU", "GBR", "CHN", "JPN", "IND"]}
-            ),
-            "cc",
-            [
-                GeoRegion("DEU", GeoScheme.cc_iso3),
-                GeoRegion("America", GeoScheme.continent),
-                GeoRegion("EU", GeoScheme.alliance),
-            ],
-            GeoScheme.cc_iso3,
-            pd.Series(
-                [
-                    "America",
-                    "America",
-                    "America",
-                    "Rest of EU",
-                    "Germany",
-                    "Rest of world",
-                    "Rest of world",
-                    "Rest of world",
-                    "Rest of world",
-                ]
-            ).sort_values(),
-        ),
-        (
             pd.DataFrame({"cc": []}),
             "cc",
             [

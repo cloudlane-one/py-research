@@ -44,7 +44,7 @@ def overrides() -> dict[str, Overrides]:
         ("de_DE", "vehicles", "bike", "Fahrzeug: Fahrrad"),
         ("de_DE", None, "bike", "Fahrrad"),
         ("de_DE", None, "house", "Haus"),
-        ("de_DE", None, "box", "Kasten"),
+        ("de_DE", None, "box", "Schaltkasten"),
         ("de_DE", "buildings", "house", "Gebäude: Haus"),
     ],
 )

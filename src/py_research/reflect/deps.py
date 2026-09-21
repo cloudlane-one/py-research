@@ -41,6 +41,7 @@ def get_all_module_dependencies(
         dep: dist.metadata["Name"]
         for dep in deps
         if (dist := get_module_distribution(dep)) is not None
+        and dist.metadata is not None
     }
     new_ext_deps = set(ext_deps_map.values()) - _ext_deps
 

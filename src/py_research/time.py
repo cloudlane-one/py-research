@@ -10,7 +10,7 @@ from typing_extensions import deprecated
 from py_research.data import parse_dtype
 
 
-def _auto_interval_format(
+def _auto_interval_format(  # noqa: C901
     time_interval: pd.offsets.BaseOffset, min_bin: datetime, max_bin: datetime
 ) -> tuple[str | Callable[[Any], str], str]:
     format_func = "%c"

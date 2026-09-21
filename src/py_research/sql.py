@@ -12,6 +12,7 @@ from typing import (
     Literal,
     ParamSpec,
     Protocol,
+    Self,
     TypeAlias,
     TypeVar,
     cast,
@@ -29,7 +30,6 @@ from pandas.api.types import (
     is_string_dtype,
 )
 from pandas.util import hash_pandas_object
-from typing_extensions import Self
 
 from py_research.reflect.runtime import get_all_subclasses
 
@@ -93,7 +93,7 @@ class Col(orm.MappedColumn[V]):
 
 
 def _wrap_mapped_col(
-    func: Callable[Params, orm.MappedColumn[V]]
+    func: Callable[Params, orm.MappedColumn[V]],
 ) -> Callable[Params, Col[V]]:
     @wraps(func)
     def inner(*args: Params.args, **kwargs: Params.kwargs) -> Col[V]:
@@ -175,9 +175,9 @@ def _cols_from_df(df: pd.DataFrame) -> dict[str, sqla.Column]:
 
     return {
         **{
-            level: sqla.Column(
-                level,
-                _map_df_dtype(df.index.get_level_values(level).to_series()),
+            str(level): sqla.Column(
+                str(level),
+                _map_df_dtype(df.index.get_level_values(str(level)).to_series()),
                 primary_key=True,
             )
             for level in df.index.names
@@ -692,7 +692,7 @@ def query(func: SelFunc[Params]) -> QueryFunc[Params, S]: ...
 
 
 @overload
-def query(
+def query(  # pyright: ignore[reportOverlappingOverload]
     *, defer: Literal[True] = ..., schema: type[S] = ...  # type: ignore
 ) -> Callable[[SelFunc[Params]], DefQueryFunc[Params, S]]: ...
 

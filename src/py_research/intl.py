@@ -9,7 +9,7 @@ from functools import partial
 from locale import LC_ALL, getlocale, normalize, setlocale
 from os import environ
 from pathlib import Path
-from typing import Any, Literal, ParamSpec, TypeVar, cast
+from typing import Any, Literal, ParamSpec, Self, TypeVar, cast
 
 import pandas as pd
 from babel import Locale, UnknownLocaleError
@@ -21,15 +21,17 @@ from babel.dates import (
     format_timedelta,
 )
 from babel.numbers import format_decimal
-from deep_translator import GoogleTranslator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
-from typing_extensions import Self
+from pyrate_limiter import Duration, Limiter, Rate
+from translate import Translator
 from yaml import CLoader, load
 
 from py_research.caching import get_cache
 from py_research.enums import StrEnum
 from py_research.geo import Country, CountryScheme, GeoScheme
 from py_research.hashing import gen_int_hash
+
+limiter = Limiter(Rate(4, Duration.SECOND))
 
 cache = get_cache()
 
@@ -355,13 +357,14 @@ def _ldml_to_posix_format(ldml: str) -> str:
 
 
 @cache.function(id_arg_subset=["lang", "text"])
-def _cached_translate(lang: str, text: str, translator: GoogleTranslator | None) -> str:
+def _cached_translate(lang: str, text: str, translator: Translator | None) -> str:
+    limiter.try_acquire()
     translator = (
         translator
         if translator is not None
-        and translator.source == "en"
-        and translator.target == lang
-        else GoogleTranslator(source="en", target=lang)
+        and translator.from_lang == "en"
+        and translator.to_lang == lang
+        else Translator(from_lang="en", to_lang=lang)
     )
     return translator.translate(text)
 
@@ -426,7 +429,7 @@ class Localization:
     def __post_init__(self):  # noqa: D105
         self.__parent = None
         self.__token = None
-        self.__translator = GoogleTranslator(source="en", target=self.locale.language)
+        self.__translator = Translator(from_lang="en", to_lang=self.locale.language)
 
     def activate(self):
         """Set this the as current localization."""
@@ -606,7 +609,7 @@ class Localization:
             else self.term(label, locale=locale)
         )
 
-    def value(
+    def value(  # noqa: C901
         self,
         v: Any,
         options: Format = Format(),
@@ -617,7 +620,6 @@ class Localization:
         Args:
             v: Value to localize.
             options: Options for formatting.
-            context: Context in which the value is used.
             locale: Locale to use for localization.
 
         Returns:

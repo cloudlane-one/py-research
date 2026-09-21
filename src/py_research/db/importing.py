@@ -407,9 +407,14 @@ def _tree_to_db(  # noqa: C901
 
                 if len(conflicts) > 0:
                     if not collect_conflicts:
-                        raise DataConflictError(conflicts)
+                        raise DataConflictError(
+                            conflicts  # pyright: ignore[reportArgumentType]
+                        )
 
-                    _all_conflicts = {**_all_conflicts, **conflicts}
+                    _all_conflicts = {
+                        **_all_conflicts,
+                        **conflicts,
+                    }  # pyright: ignore[reportAssignmentType]
             if mapping.conflict_policy == "ignore":
                 row = pd.Series(
                     {**row.loc[list(new_attrs)], **existing_row}, name=row.name
@@ -423,11 +428,11 @@ def _tree_to_db(  # noqa: C901
         database[mapping.table][row.name] = row.to_dict()
 
     # Return row (used for recursion).
-    return row, _all_conflicts
+    return row, _all_conflicts  # pyright: ignore[reportReturnType]
 
 
 @overload
-def tree_to_db(
+def tree_to_db(  # pyright: ignore[reportOverlappingOverload]
     data: dict | str,
     mapping: TableMap,
     collect_conflicts: Literal[True] = ...,

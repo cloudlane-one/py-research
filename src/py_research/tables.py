@@ -141,9 +141,9 @@ class ResultTable:
             else [f"index_{i}" for i in range(df.index.nlevels)]
         )
 
-        df = df.rename_axis(index=index_names)
+        df = df.rename_axis(index=index_names)  # pyright: ignore[reportArgumentType]
 
-        index_col_names = [name for name in index_names]
+        index_col_names = [str(name) for name in index_names]
         if df.columns.nlevels > 1:
             index_col_names = [
                 (self.index_label or "", name) for name in index_col_names
@@ -449,7 +449,7 @@ class ResultTable:
 
     @staticmethod
     def _prioritize_css(
-        css: dict[str, str] | Callable[[Any], str] | None
+        css: dict[str, str] | Callable[[Any], str] | None,
     ) -> dict[str, str] | Callable[[Any], str] | None:
         return (
             {
@@ -479,7 +479,7 @@ class ResultTable:
                 **css,
             )
         elif isinstance(css, Callable):
-            styled = styled.applymap(
+            styled = styled.applymap(  # type: ignore
                 func=css,
             )
 
@@ -503,7 +503,7 @@ class ResultTable:
                     subset=[self._to_styler_col(col)], **self.default_style.css
                 )
             elif isinstance(self.default_style.css, Callable):
-                res = res.applymap(
+                res = res.applymap(  # pyright: ignore[reportAttributeAccessIssue]
                     self.default_style.css, subset=[self._to_styler_col(col)]
                 )
 
@@ -548,7 +548,7 @@ class ResultTable:
                     **css,
                 )
             elif isinstance(css, Callable):
-                styled = styled.applymap(
+                styled = styled.applymap(  # pyright: ignore[reportAttributeAccessIssue]
                     subset=subset,  # type: ignore
                     func=css,
                 )
@@ -691,7 +691,9 @@ class ResultTable:
 
         if write_to is not None:
             with (
-                open(write_to, "w", encoding="utf-8") if isinstance(write_to, Path | str) else write_to
+                open(write_to, "w", encoding="utf-8")
+                if isinstance(write_to, Path | str)
+                else write_to
             ) as f:
                 f.write(html)
 

@@ -15,7 +15,6 @@ dependencies = [
   "stqdm<1.0.0,>=0.0.5",
   "structlog<26.0.0,>=25",
   "webcolors>=1.13",
-  "deep-translator<2.0.0,>=1.11.0",
   "babel<3.0.0,>=2.12.1",
   "numpy>=2.0.0",
   "pdfkit<2.0.0,>=1.0.0",
@@ -33,6 +32,8 @@ dependencies = [
   "ipywidgets>=8.1.1",
   "ipython>=8.21.0",
   "sphinx>=7.2.6",
+  "pyrate-limiter>=4.5.0",
+  "translate>=3.8.1",
 ]
 name = "py-research"
 description = "Collection of utilities for R&D coding in Python 🐍"
@@ -44,20 +45,6 @@ Documentation = "https://cloudlane-one.github.io/py-research/"
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
-
-[tool.pdm.dev-dependencies]
-dev = [
-  "black>=24",
-  "pytest>=7.4.3",
-  "pygments>=2.17.2",
-  "nbsphinx>=0.9.3",
-  "myst-parser>=2.0.0",
-  "pydata-sphinx-theme>=0.14.4",
-  "autodoc-pydantic>=1.9.0",
-  "deptry>=0.12.0",
-  "ruff>=0.1.7",
-  "pytest-cov>=4.1.0",
-]
 
 [tool.pdm.build]
 includes = ["src/py_research"]
@@ -97,3 +84,18 @@ reportMatchNotExhaustive = true
 reportIncompatibleVariableOverride = true
 reportIncompatibleMethodOverride = true
 reportOverlappingOverload = true
+
+[dependency-groups]
+dev = [
+    "black>=24",
+    "pytest>=7.4.3",
+    "pygments>=2.17.2",
+    "nbsphinx>=0.9.3",
+    "myst-parser>=2.0.0",
+    "pydata-sphinx-theme>=0.14.4",
+    "autodoc-pydantic>=1.9.0",
+    "deptry>=0.12.0",
+    "ruff>=0.1.7",
+    "pytest-cov>=4.1.0",
+    "pyright>=1.1.414",
+]

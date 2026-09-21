@@ -4,14 +4,13 @@ from collections import UserString
 from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import auto
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, Self, TypeAlias, cast
 
 import country_converter as coco
 import pandas as pd
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import core_schema
-from typing_extensions import Self
 
 from py_research.enums import StrEnum
 

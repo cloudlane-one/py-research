@@ -69,7 +69,11 @@ def dist_table(
     id_cols = (
         [id_cols]
         if isinstance(id_cols, str)
-        else id_cols if id_cols is not None else [n or "index" for n in df.index.names]
+        else (
+            id_cols
+            if id_cols is not None
+            else [str(n) or "index" for n in df.index.names]
+        )
     )
     category_cols = [
         *([category_cols] if isinstance(category_cols, str) else category_cols)

@@ -21,7 +21,9 @@ file_cache = get_cache()
 @cache
 def get_distributions() -> dict[str, meta.Distribution]:
     """Get all installed Python package distributions."""
-    return {d.metadata["Name"]: d for d in meta.distributions()}
+    return {
+        d.metadata["Name"]: d for d in meta.distributions() if d.metadata is not None
+    }
 
 
 def get_module_file(module: ModuleType) -> Path | None:
@@ -61,7 +63,7 @@ def get_module_distribution(module: ModuleType) -> meta.Distribution | None:
         return None
 
     dists = {
-        Path(dist.locate_file(f"{name}")): dist
+        Path(dist.locate_file(f"{name}")): dist  # pyright: ignore[reportArgumentType]
         for name, dist in get_distributions().items()
     }
 
@@ -122,7 +124,11 @@ def get_py_inventory(docs_url: str) -> dict[str, tuple[str, str, str, str]]:
 
     res.raise_for_status()
 
-    inv_dict = inv.InventoryFile.load(BytesIO(res.content), docs_url, posixpath.join)
+    inv_dict = inv.InventoryFile.load(
+        BytesIO(res.content),  # pyright: ignore[reportArgumentType]
+        docs_url,
+        posixpath.join,
+    )
     py_inv_dict = reduce(
         lambda a, b: {**a, **b}, [v for k, v in inv_dict.items() if k.startswith("py:")]
     )

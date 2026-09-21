@@ -195,7 +195,7 @@ class Table:
         # Standardize format of dataframe, making sure its columns are multi-level.
         merged = self.df
         if isinstance(self.source_map, str):
-            merged = merged.rename_axis(merged.index.name or "id", axis="index")
+            merged = merged.rename_axis(str(merged.index.name) or "id", axis="index")
             merged = merged.reset_index()
             merged.columns = pd.MultiIndex.from_product(
                 [[self.source_map], merged.columns]
@@ -472,7 +472,7 @@ class Table:
             merge_source_map[tp] = tt.name
 
             # Add to indexes
-            merge_indexes[tt.name] = tt.df.index.name or "id"
+            merge_indexes[str(tt.name)] = str(tt.df.index.name) or "id"
 
         return Table(self.db, merged, merge_source_map, merge_indexes)
 
@@ -612,7 +612,7 @@ class SingleTable(Table):
     @property
     def indexes(self) -> dict[str, str]:  # type: ignore[override]
         """Name of the source table of this table."""
-        return {self.name: self.df.index.name or "id"}
+        return {self.name: str(self.df.index.name) or "id"}
 
     # Method overrides:
 
@@ -1303,7 +1303,7 @@ class DB:
                                 right_on=tc,
                             )
                             .set_index(df.index.name)[str(c)]
-                            .groupby(df.index.name)
+                            .groupby(str(df.index.name))
                             .agg("first")
                         )
                         for c, tc in r[["source_col", "target_col"]].itertuples(
